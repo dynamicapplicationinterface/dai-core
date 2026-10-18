@@ -51,7 +51,8 @@ entries in part 4 and leaves this part. It never lives in both.**
 - **Native runners and a second engine.** Whether a phone app that owns `.dai`, and
   an engine in another language, are worth building. Unanswered because the
   evidence they need is whether documents actually get opened on phones through
-  the web opener. D16 is the parked native iOS host.
+  the web opener. D16, the native iOS host, is ruled for V1.5 (R-N), for the
+  file experience.
 
 D17's retention question is **an entry, not a question here**: its shape is known
 (a retention period, and what a late copy is told) and it waits on one specific
@@ -216,19 +217,23 @@ principle beside them.
    once. *Principle:* P3.
 2. **Object-first routing.** A delivery (link, file open, hand-off) names the
    exact document; the host opens that document's app directly, creating or
-   finding the person's working copy for it on the way. The library is
-   "Recent apps" under More, never the destination. The interaction for each
+   finding the person's working copy for it on the way. A delivery opens its
+   app, never a list. The library is the owner's home: reached from More, and
+   what owner authentication restores on any device. It is never an
+   interstitial on arrival. (Reworded 18 October, with R-B; it was "Recent
+   apps" under More, never the destination.) The interaction for each
    transition of the walk (message → useful app content → first action →
    saved work → close → same message → continued work) is written in
    [walk.md](walk.md) before that flow is built, and tested with uncoached
    people as soon as it is usable. *Rejected:* the opener or library as the
    landing page; importing, verifying or indexing as screens; designing the
    interaction in the craft phase. *Principle:* P3.
-3. **The guarantee sentence.** "A .dai file's packaged app and recorded history
-   are portable and independently verifiable in compatible hosts."
-   User-facing: "an app you can keep, change, and send." *Rejected:* one
-   sentence promising authenticity, human identity, availability and
-   collaboration. *Principle:* P0.
+3. **The guarantee sentence.** "The packaged app and its recorded history are
+   independently verifiable in compatible hosts; your records travel with
+   it." (Reworded 18 October by R-C, below, which makes the recorded history
+   a signed checkpoint chain.) User-facing: "an app you can keep, change, and
+   send." *Rejected:* one sentence promising authenticity, human identity,
+   availability and collaboration. *Principle:* P0.
 4. **A person key is a signing context.** A signing context is one browser
    store on one device. Safari and a Home Screen install on the same phone are
    two contexts; a name is a label, not proof two contexts are one person.
@@ -237,21 +242,22 @@ principle beside them.
    the line that changes when the key work lands (Phase 3.1). *Rejected:*
    extractable keys kept for an export V1 does not ship; a person-level
    identity system. *Principle:* P2.
-5. **A linked successor on loss.** A backup restored into a new context keeps
-   the old history under its original signatures and continues as a successor
-   document under the new key, the successor naming its predecessor (the
-   succession contract, `supersedes`). Old signatures are never rewritten; a
-   shared seat is never inherited by the new context. *Rejected:* silently
-   re-keying or reassigning the old author to the new context. *Principle:*
-   P1 and P2.
+5. **A new author under the same owner on loss.** (Replaced 18 October by
+   R-E, below; this was "a linked successor on loss".) A wiped or new context
+   recovers the working copy through its owner and continues it as a new
+   author of the same working document. The old history keeps its original
+   signatures; a shared seat is never inherited by the new context.
+   *Rejected:* silently re-keying or reassigning the old author to the new
+   context; a successor document per lost key. *Principle:* P1 and P2.
 6. **Four storage states, as host evidence, one status shown.** Four facts the
    host tracks: *remembered here* (indexed in this browser), *saved here* (the
    latest acknowledged change reached local storage), *ready offline* (a
-   tested offline reopen path exists), *kept outside the browser* (an export
-   the person made, with its date). The person sees one status at a time,
+   tested offline reopen path exists), *kept* (the owner's store acknowledged
+   the checkpoint; reworded 18 October by R-H, below, from "kept outside the
+   browser", an export). The person sees one status at a time,
    normally "Saved in this browser"; "ready offline" is claimed only after a
-   tested reopen; the last export date stays discoverable, with one quiet note
-   when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
+   recorded offline reopen; the last export date stays discoverable, with one
+   quiet note when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
    backups; a storage dashboard; repeated prompts. *Principle:* P3.
 7. **Three share meanings, owned by the host.** An app requests an intent and
    never chooses a destination.
@@ -310,6 +316,228 @@ principle beside them.
     code names its next action before release. Recorded in format-design.md's
     properties as a product principle, not a format rule. *Rejected:*
     technically safe dead ends; promising data survives deletion everywhere.
+
+### The owner/author rulings (18 October)
+
+Rulings R-A to R-O, each made 18 October, on the architectural readiness
+assessment and the owner/author spike (`handoff-2026-10-18.md`). Each names
+the alternative it rejects and the evidence that decided it: a section of
+that handoff, and the spike's experiment letter where one decided it.
+
+**R-A. Four identities.**
+- **Release:** which signed software.
+- **Working document:** whose dataset.
+- **Owner:** who can recover the working document and admit contexts to it.
+- **Author:** which context signed a change.
+
+One person is one owner and many authors. One person does not have to mean
+one cryptographic author ([identity.md](identity.md), "Four identities").
+*Rejected:* shared author keys, one key carried into every context of one
+person. *Evidence:* "Owner/author spike", A: one key in two contexts gave
+`AUTHOR_EQUIVOCATED` on both copies, in both readers, at the first
+concurrent offline write, and both rows were lost.
+
+**R-B. The working copy's home is an encrypted, versioned store.**
+- **The store.** Keyed by (owner, working document). Browser storage is a
+  cache of it, not its home.
+- **An append-only checkpoint log, compare-and-swap on the parent.** A
+  device uploads a checkpoint naming the head it started from. The store
+  accepts it as the new head, or keeps it as a branch. An older device never
+  overwrites a newer head. Branches are first-class.
+- **Two contexts, one copy.** Safari and an installed app are two authors of
+  one working copy. The keep sheet leaves the walk.
+- **The library is keyed by owner.** On any device, after owner
+  authentication, every working document the owner holds is listed and
+  recoverable, without a link.
+- **A recipient is an owner.** A recipient who opens a link is enrolled at
+  first save as owner of their own working copy. One link, many owners, many
+  private copies.
+- **Trust.** The store is trusted for liveness, never for content. After a
+  total wipe a dishonest store can serve an older valid checkpoint. The
+  limitations box says so.
+
+The walk's constraints from this ruling are in [walk.md](walk.md).
+*Rejected:* browser storage as the home; a signed "latest" pointer as the
+defense against staleness, since a stale signed pointer verifies too.
+*Evidence:* §3, contradiction 1 (no accounts and browser-only, against
+continuity on iPhone); "Owner/author spike", C: rows written by two authors,
+a Safari tab and the Home Screen app, survived a website-data wipe through
+the owner passkey, with their author ids intact.
+
+**R-C. Every save signs a checkpoint.**
+- **The checkpoint:** {release digest, document id, revision, database
+  digest, parent checkpoint digest(s)}, signed under the author key.
+- **The recorded history** is the chain of checkpoints, with its branches.
+  It is verifiable in any host.
+- **The guarantee sentence:** "the packaged app and its recorded history are
+  independently verifiable in compatible hosts; your records travel with
+  it." Ruling 3 above now carries it.
+
+The design note is in [format-design.md](format-design.md), "The working
+copy's checkpoint". *Rejected:* unsigned personal records; signing them
+through replication; resealing the whole container on every save, since
+content addressing makes the checkpoint its equivalent. *Evidence:* §1,
+"Where it fails", item 2, and §3, contradiction 3: `document.sqlite` is
+outside `signedEntries` (`src/core.ts:685`), and a build with its database
+replaced still verified.
+
+**R-D. Three keys, three jobs.**
+- **The passkey authenticates the owner:** at enrollment and at recovery,
+  never on each save.
+- **The author key signs changes:** non-extractable, one per context.
+- **A per-document data key encrypts the stored database.** It is wrapped
+  twice, under the key derived from the passkey's PRF output and under a
+  Credential Management keychain credential, so either path recovers it. A
+  replaced passkey means re-wrapping, not loss.
+- **Save a copy is the floor** beneath both.
+
+*Rejected:* a single wrap (PRF only); a recovery phrase. *Evidence:*
+"Owner/author spike", D: PRF gave a byte-identical secret in Safari and the
+Home Screen app, and after the wipe; the keychain credential survived the
+wipe and filled in both contexts. **A.** One phone, one account, one passkey
+provider. A second of each is read before Gate C.
+
+**R-E. A wipe makes a new author under the same owner.** The library shows
+one copy per working document, never one per author. Ruling 5 above now
+carries this. *Rejected:* a successor document per lost key (ruling 5 as
+first written), and a copy listed per author. *Evidence:* "Owner/author
+spike", C: two wipes in one sitting made two new Safari authors under one
+owner, four enrolled authors in all, and the rows of every earlier author
+came back.
+
+**R-F. Conflicts.**
+- **Different records:** merge.
+- **The same record, different fields:** merge only where the app declared
+  the fields independent.
+- **The same field:** keep both, and surface the choice on a host sheet whose
+  wording the app can customize. The resolution is a new signed change that
+  acknowledges both parents. An unresolved value is pending and does not feed
+  calculations.
+- **V1.0** implements this at checkpoint granularity: a fork is "changes
+  from your other device", and both are kept. **V1.2** implements it at row
+  granularity, through sessionless multi-author replication.
+- **The clock-tie rule** (author id order) is stated on the page as a fact
+  about convergence, and never shown as a winner.
+
+*Rejected:* showing an arbitrary winner with a flag. *Evidence:*
+"Owner/author spike", B(i): two authors on different rows converge with
+nothing lost, in both readers; B(ii): on the same row both copies converge
+on two heads, and `_current` shows one value, picked by author id on a clock
+tie (`ORDER BY _r_lc DESC, hex(_r_replica) ASC`), which to the person is
+arbitrary.
+
+**R-G. Freshness witnesses.**
+- **A surviving second client** remembers the latest head it saw. On its
+  next contact after another client recovered from the store, it reports a
+  stale recovery. It is free and needs no ceremony.
+- **WebAuthn `largeBlob` as a single-device witness:** one bounded
+  experiment. Write a checkpoint digest, wipe, read it back, and on a second
+  iPhone. If it fails, stop (D258).
+- **WebAuthn signature counters are not a source of freshness:** synced
+  passkeys report zero.
+
+*Rejected:* signature counters as a witness. *Evidence:* "Owner/author
+spike", C: the Home Screen app survived both Safari wipes with its own rows
+and author, so a surviving second client is what a phone already has; R-B's
+trust line, that a dishonest store can serve an older valid checkpoint after
+a total wipe.
+
+**R-H. Offline.** A local edit is real work once saved here: "Saved in this
+browser". It is recoverable from elsewhere only once the store acknowledges
+it: "Kept". The second word is never shown without the acknowledgment, and
+"ready offline" is never shown before a recorded offline reopen. Ruling 6
+above carries the word. *Rejected:* "Kept" for a save the store has not
+acknowledged. *Evidence:* §1, "Where it fails", item 3: no device reading of
+an offline reopen is recorded, and both WebKit offline tests are skipped
+(`tests/offline.ts:19-22`).
+
+**R-I. Successor authority.**
+- **Adopt a successor when** it is signed by the predecessor's pinned
+  publisher key, **or** when it is signed by an author key enrolled under
+  this document's owner, supersedes a document held here, and is accepted on
+  the host sheet "Use this version". Such a successor is shown as this
+  person's change. The publisher's signature on the predecessor is left
+  untouched.
+- **The host classifies** on the two signed `schema.json` entries: the same
+  schema, or additive DDL only. Migration SQL supplied by the app never runs.
+- **Three tiers.**
+  - Installation never touches the predecessor. Enforced.
+  - Compatibility holds within the additive class. Checked.
+  - After activation the new release is an app like any other, and the
+    guarantee is rollback to the predecessor with its data.
+
+This narrows ruling 8 above with an authority rule; it does not replace it.
+*Rejected:* succession by the publisher only; migrations an AI supplies; a
+classifier claimed to prove meaning. *Evidence:* §1, "Where it fails", item
+1: a successor is adopted only under the pinned publisher key
+(`main.ts:4892-4900`), so a recipient's improvement is refused by
+construction, and the only path for an additive column is app-written
+migration SQL run in the frame (`bootloader.ts:2468-2483`); §3,
+contradiction 2; §4.3.
+
+**R-J. The manifest's signed `uses` list.** A reserved, signed, optional
+list, `uses: string[]`. It is verified, and a name the reader lacks is
+ignored. `requires` stays the list that refuses. It is wired into
+`signedViewOf`/`signedBytes`, the Python reader, the CDDL and a vector
+before any public V1.0 reader ships. The design note is in
+[format-design.md](format-design.md), "A signed `uses` list". *Rejected:*
+unsigned unknown fields; a version bump per field. *Evidence:* §4.10: an
+unknown manifest field ran as `ACCEPTED (unsigned)`, and since verifiers
+rebuild the signed bytes from a fixed list (`core.ts:985-1070`), a writer
+that signs a new field fails every reader deployed today.
+
+**R-K. App and document.** A `.dai` is a working document with an embedded
+release. There is one working copy per (owner, document). "Start another
+from this app" makes a new document from the same release (Phase 2).
+*Rejected:* the app as the unit of identity. *Evidence:* §4.1,
+"Identities": `documentUuid` means both "the app every recipient shares" and
+"this person's working copy", so one context holds exactly one working copy
+of an app.
+
+**R-L. The example and its readings.** The example declares `schema.sql`,
+with its starter content as seed SQL and no seed database. It is delivered
+by `#a=` or `?open=` only. Every reading names its carrier and the opener
+build it ran on. *Rejected:* what the ruling excludes: a seed database,
+which drops out of "Send the app" (`main.ts:4277`), and readings by direct
+URL. *Evidence:* §6, Gate A4: with no schema there is no update path
+(`bootloader.ts:2939-2947`); Gate A5: `/request.dai` by direct URL runs
+outside the host, and the service worker answers it differently by device
+history (`apps/runner/public/sw.js:737-738`, `787-790`).
+
+**R-M. The Phase 2 gate.** A non-publisher changes an app through AI, adopts
+the new release, reopens their records, and sends the modified release
+without their records. The gate is the personal-app loop. *Rejected:* a
+first demonstration chosen for the protocol feature it shows (chess).
+*Evidence:*
+§1, "Where it fails", item 1, and §8: the modify-and-keep half is not a go
+until successor authority (R-I) is designed.
+
+**R-N. Deferred items reopened.**
+- **The encrypted store:** V1.0, by R-B.
+- **The native iOS host:** V1.5 (D16). It is about the file experience (the
+  file as a real file, iCloud, "Open in"), not about continuity.
+
+The assessment's other deferred items are unchanged. *Rejected:* keeping
+both deferred. *Evidence:* §3, contradiction 1, whose alternatives listed
+both as deferred; "Owner/author spike", C and D.
+
+**R-O. Universal application lifecycle.** Every application uses the same
+host-owned foundation for identity, durable state, authorship, integrity,
+recovery, portability and supported replication. AI authors and end users
+are not required to understand or implement replication. The kit and
+runtime provide an ordinary data interface that preserves the expected
+behavior of supported applications while handling versioning, signing,
+storage and replication internally. The system never silently downgrades
+durability, discards conflicting changes, or claims a synchronization that
+has not occurred. Ownership and collaboration arrangements are policies
+over this one foundation, not separate formats. Mandatory replicated
+storage for every generated app is not ruled until the data interface is
+shown to support representative applications without unacceptable
+semantic, performance or authoring restrictions. *Rejected:* the current
+replicated-table compiler as the universal payload, unproven. *Evidence:*
+§3, contradiction 6 (simple one-person apps, against replication and
+sessions); "Owner/author spike", B: sessionless replication converges for
+one person's contexts, with the same-row conflict still open.
 
 ### manifestVersion 3
 
@@ -375,7 +603,10 @@ is read and stays in the suite as a regression. What it left open is in part 4:
 - Native phone apps as a prerequisite for first use.
 - OS file association or share target as the first-use foundation.
 - A smart relay. The moment the store does more than hold bytes, the format
-  has a dependency and cannot be self-hosted in an afternoon.
+  has a dependency and cannot be self-hosted in an afternoon. The owner's
+  store (R-B) holds bytes keyed by (owner, document) and versioned; it checks
+  a checkpoint's parent, never its content. Content checks are the readers'
+  job.
 - A marketplace as the distribution model.
 - Real-time sync or two-person editing. Succession plus export, never a CRDT.
 - **Shapes a session deliberately does not support**, listed so nobody proposes
@@ -4052,7 +4283,12 @@ Three hazards, worst first:
 
 #### D16 — A native iOS host: App Clip and Messages extension
 
-*Status: parked — trigger: onboarding friction is what blocks use (see the entry).*
+*Status: ruled — not built: V1.5 (R-N, 18 October). It was parked on
+onboarding friction.*
+
+Reopened for the file experience, not for continuity, which R-B gives the
+store: the file as a real file, iCloud, and "Open in". The App Clip and the
+Messages extension below are the reasons it was first filed.
 
 Two things a web opener cannot do on an iPhone. An **App Clip** is the seamless
 first open: a QR code or link goes straight to the card, with no browser tab and
@@ -4877,10 +5113,19 @@ since the promotion is a project setting. **Change, done:** the project's
 settings were changed the same day to manual promotion: a push to main
 makes a staged production build; promotion is by hand.
 
-#### D248 — The opener re-shells a container on open
+#### D248 — A container opened outside the opener runs on the shell it was made with
 
 *Status: open. Filed 11 October, from the review of PR #6
-(`handoff-2026-10-11.md`, "Shells made before `8e14fe56` carry P1 only").*
+(`handoff-2026-10-11.md`, "Shells made before `8e14fe56` carry P1 only").
+Corrected 18 October (`handoff-2026-10-18.md`, §1 and Gate C4).*
+
+**Correction.** Hosted opens already re-shell: the opener mounts every
+verified archive in its own current shell, never the container's
+(`hostShell`, `apps/runner/src/main.ts:1528`). The residual is a container
+opened as a file (`file://`) or by a third-party host, which runs on the
+shell it was made with, so one made before `8e14fe56` runs under the first
+policy only. **Change:** document old shells under `file://`. The text
+below is the entry as filed, before the correction.
 
 The shell's second script policy (`8e14fe56`, 10 October) closes every route
 the review ran by which a nonce'd script loaded remote code: a stamped
@@ -9538,6 +9783,91 @@ fail if the opener's bundle does not carry the runtime `dist/` holds.
 
 
 ---
+
+### Readiness assessment residue (filed 18 October)
+
+From the architectural readiness assessment and the owner/author spike
+(`handoff-2026-10-18.md`), each with the id the assessment gave it. Each is
+held, not fixed. D251 and D252 are the next builder session's.
+
+#### D251 — The share fallback sends records
+
+*Status: open, held not fixed; the next builder session. Filed 18 October,
+from the assessment (B7).*
+
+If the link fails, a personal document falls back to `exportContainer()`
+(`main.ts:4669`), which reseals with the database (`main.ts:2769`) whatever
+the toggle said. `send.spec.ts:315` checks the filename only. **Change:**
+pass the chosen meaning through the fallback. **Acceptance:**
+`send.spec.ts:315` opens the file and counts zero rows.
+
+#### D252 — Deleted rows travel in the bytes that leave
+
+*Status: open, held not fixed; the next builder session. Filed 18 October,
+from the assessment (B8).*
+
+Ran on the shipped sqlite-wasm 3.53.0: `secure_delete pragma: 0`, `deleted
+text present in exported bytes: true`. No `secure_delete` or `VACUUM` is in
+`src/` or `apps/runner/src/`. **Change:** `PRAGMA secure_delete=ON` at open,
+or `VACUUM INTO` for the leaving bytes (send, Save a copy, succession).
+**Acceptance:** a sentinel test on each.
+
+#### D253 — An app that keeps its data in browser storage is accepted silently
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B15).*
+
+Ran: a conventional `localStorage` app builds with exit 0 (`dai build` runs
+no lint, `src/cli.ts:332`), MCP builds it and says send it, the opener
+accepts it, and on reload the input is gone with no sentence shown.
+**Change:** refuse `browser-storage` at build, MCP and paste, or give the
+runtime a file-backed `localStorage` shim; either way the opener does not
+show an app that will forget. **Acceptance:** parity tests across the entry
+points, and the fixture driven in the opener.
+
+#### D254 — The paste box breaks the recipe's own bundle
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B16).*
+
+The website's paste box takes a single HTML file only
+(`website/components/MakeYourOwn.vue:310`, compiled as `index.html` at
+`:83,215`). Ran: it approves a bundle in the recipe's own format, then
+builds a file that fails with `no such table: trip`. **Change:** detect
+`dai bundle v1` / `--- file:` and route it through `parseBundle`.
+**Acceptance:** the bundle, pasted, builds a file that persists.
+
+#### D255 — `await-in-classic-script` flags any line containing `await`
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B19).*
+
+`src/lint.ts:199-206`. A false positive: MCP refuses a valid app.
+**Change:** flag top-level `await` only. **Acceptance:** a regression test
+on the output that tripped it.
+
+#### D256 — App text appears in the host's chrome
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B10).*
+
+`SAVE_STATE.error` and `WRITE_RULES_REFUSED.why`/`detail` are relayed
+verbatim (`bootloader.ts:4188-4208`) into `#doc-note` (`main.ts:3309-3361`),
+so app-chosen text speaks in the host's voice. **Change:** fixed host
+sentences; log the frame's text instead of showing it. **Acceptance:** an
+e2e test with an app that cannot be trusted.
+
+#### D257 — The count gate does not cover WebKit
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (C8).*
+
+**Change:** the count gate covers WebKit, and the floor is raised to what CI
+passes.
+
+#### D258 — WebAuthn `largeBlob` as a single-device freshness witness
+
+*Status: open, held not run. Filed 18 October, from R-G.*
+
+One bounded experiment: write a checkpoint digest to the owner passkey's
+`largeBlob`, wipe the website data, read it back, and repeat on a second
+iPhone. If it fails, stop: the surviving second client stays the only
+witness (R-G).
 
 ### Branch review residue (filed 8 October)
 

@@ -1108,3 +1108,44 @@ recorded for them.
   review, A4).
 - [A parent of another entity](format.md#parent-other-entity) hides nothing:
   replicated-tables.md T1-D35.
+
+Rulings for formats not yet built
+---------------------------------
+
+Ruled 18 October (backlog.md, the owner/author rulings), before any byte is
+written. format.md does not state them yet; when it does, it governs, as
+above.
+
+### The working copy's checkpoint
+
+**Problem.** A personal document's records are outside the signed set
+(`src/core.ts:685`). A build with its database replaced and its hash updated
+still verifies, so "recorded history … independently verifiable" held for
+replicated rows only (`handoff-2026-10-18.md`, §3, contradiction 3).
+
+**Rule.** Every save signs a checkpoint under the author key: the release
+digest, the document id, the revision, the database digest and the digest of
+each parent checkpoint. The chain, with its branches, is the recorded
+history, and any host verifies it. The store keeps the log and accepts an
+upload only by compare-and-swap on the parent it names (R-B).
+
+**Rejected.** Unsigned personal records. Signing them through replication,
+which brings sessionless machinery into every personal app. Resealing the
+whole container on every save: content addressing makes the checkpoint its
+equivalent, since the database digest names the bytes.
+
+### A signed `uses` list
+
+**Problem.** Unknown manifest fields are accepted and not signed (a field
+`connectors` ran as `ACCEPTED (unsigned)`), and verifiers rebuild the signed
+bytes from a fixed list of fields (`src/core.ts:985-1070`). So a writer that
+signs a new field fails every reader deployed today as not authentic, unless
+`manifestVersion` is bumped (`handoff-2026-10-18.md`, §4.10).
+
+**Rule.** A reserved, signed, optional list, `uses: string[]`. It is
+verified, and a name the reader lacks is ignored. `requires` stays the list
+that refuses. It is wired into `signedViewOf`/`signedBytes`, the Python
+reader, the CDDL and a vector before any public V1.0 reader ships.
+
+**Rejected.** Unsigned unknown fields: anyone could add one. A version bump
+per field.
