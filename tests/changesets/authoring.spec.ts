@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../../src/compile.js";
-import { lintFiles } from "../../src/lint.js";
+import { breaking, lintFiles } from "../../src/lint.js";
 import { RECIPE } from "../../src/recipe.js";
 import { rewriteReplicated } from "../../src/replicated.js";
 
@@ -62,6 +62,29 @@ test("an id the application chooses as a literal is a lint finding with a fix", 
     }).some((f) => f.id === "literal-id"),
     "an omitted id is not",
   ).toBe(false);
+});
+
+test("a -- dai:replicated table or a session marker in an authored document is refused, with the one-shape message", () => {
+  const app = { "index.html": '<!doctype html><script type="module" src="app.js"></script>', "app.js": "const db = await window.dai.openDatabase();\n" };
+  for (const schema of [
+    "-- dai:replicated\nCREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);\n",
+    "-- dai:replicated author=creator\nCREATE TABLE asks (id INTEGER PRIMARY KEY, body TEXT);\n",
+    "-- dai:profile session max_parties=2\nCREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);\n",
+  ]) {
+    const refused = breaking(lintFiles({ ...app, "schema.sql": schema })).filter((f) => f.id === "one-shape");
+    expect(refused, schema).toHaveLength(1);
+    expect(refused[0]!.file).toBe("schema.sql");
+    expect(refused[0]!.why).toMatch(/ordinary tables/);
+    expect(refused[0]!.fix).toMatch(/Remove/);
+  }
+  for (const schema of [
+    "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);\n",
+    "CREATE TABLE places (\n  id INTEGER PRIMARY KEY,\n  lat REAL, lng REAL -- dai:coupled lat lng\n);\n",
+    "CREATE TABLE entries (\n  id INTEGER PRIMARY KEY,\n  amount INTEGER -- dai:consequential amount\n);\n",
+    "-- notes about dai:replicated tables, in prose\nCREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);\n",
+  ]) {
+    expect(lintFiles({ ...app, "schema.sql": schema }).map((f) => f.id), schema).not.toContain("one-shape");
+  }
 });
 
 test("the model file teaches one shape: no shape choice, no replicated surface, seeds run once", () => {

@@ -208,16 +208,18 @@ function filesOf(dir: string): Record<string, string> {
 }
 
 test.describe("the lint holds applications to the shared-table constraints", () => {
-  test("the correct applications pass", () => {
-    for (const dir of ["examples/packing-list", "examples/receipts", "examples/tic-tac-toe", "examples/request", "tests/fixture/chess"]) {
+  test("the correct applications pass; those built through the policy layer are refused for their markers alone (one shape)", () => {
+    expect(breaking(lintFiles(filesOf("examples/packing-list"))).map((f) => `${f.file}: ${f.id}`)).toEqual([]);
+    // Existing documents, kept building and in CI (R-P); a new document authored this way is refused.
+    for (const dir of ["examples/receipts", "examples/tic-tac-toe", "examples/request", "tests/fixture/chess"]) {
       const findings = breaking(lintFiles(filesOf(dir)));
-      expect(findings.map((f) => `${f.file}: ${f.id}`), dir).toEqual([]);
+      expect(findings.map((f) => `${f.file}: ${f.id}`), dir).toEqual(["schema.sql: one-shape"]);
     }
   });
 
-  test("the chess foil fails for exactly the lessons its README names", () => {
+  test("the chess foil fails for exactly the lessons its README names, and for its markers", () => {
     const ids = breaking(lintFiles(filesOf("examples/chess-foil"))).map((f) => f.id).sort();
-    expect(ids).toEqual(["shared-base-read", "shared-no-merge-listener", "shared-raw-write", "shared-table-constraint"]);
+    expect(ids).toEqual(["one-shape", "shared-base-read", "shared-no-merge-listener", "shared-raw-write", "shared-table-constraint"]);
   });
 
   const shared = "-- dai:replicated\nCREATE TABLE IF NOT EXISTS items (name TEXT NOT NULL);\n";
