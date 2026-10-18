@@ -224,11 +224,12 @@ principle beside them.
    people as soon as it is usable. *Rejected:* the opener or library as the
    landing page; importing, verifying or indexing as screens; designing the
    interaction in the craft phase. *Principle:* P3.
-3. **The guarantee sentence.** "A .dai file's packaged app and recorded history
-   are portable and independently verifiable in compatible hosts."
-   User-facing: "an app you can keep, change, and send." *Rejected:* one
-   sentence promising authenticity, human identity, availability and
-   collaboration. *Principle:* P0.
+3. **The guarantee sentence.** "The packaged app and its recorded history are
+   independently verifiable in compatible hosts; your records travel with
+   it." (Reworded 18 October by R-C, below, which makes the recorded history
+   a signed checkpoint chain.) User-facing: "an app you can keep, change, and
+   send." *Rejected:* one sentence promising authenticity, human identity,
+   availability and collaboration. *Principle:* P0.
 4. **A person key is a signing context.** A signing context is one browser
    store on one device. Safari and a Home Screen install on the same phone are
    two contexts; a name is a label, not proof two contexts are one person.
@@ -357,6 +358,40 @@ defense against staleness, since a stale signed pointer verifies too.
 continuity on iPhone); "Owner/author spike", C: rows written by two authors,
 a Safari tab and the Home Screen app, survived a website-data wipe through
 the owner passkey, with their author ids intact.
+
+**R-C. Every save signs a checkpoint.**
+- **The checkpoint:** {release digest, document id, revision, database
+  digest, parent checkpoint digest(s)}, signed under the author key.
+- **The recorded history** is the chain of checkpoints, with its branches.
+  It is verifiable in any host.
+- **The guarantee sentence:** "the packaged app and its recorded history are
+  independently verifiable in compatible hosts; your records travel with
+  it." Ruling 3 above now carries it.
+
+The design note is in [format-design.md](format-design.md), "The working
+copy's checkpoint". *Rejected:* unsigned personal records; signing them
+through replication; resealing the whole container on every save, since
+content addressing makes the checkpoint its equivalent. *Evidence:* §1,
+"Where it fails", item 2, and §3, contradiction 3: `document.sqlite` is
+outside `signedEntries` (`src/core.ts:685`), and a build with its database
+replaced still verified.
+
+**R-D. Three keys, three jobs.**
+- **The passkey authenticates the owner:** at enrollment and at recovery,
+  never on each save.
+- **The author key signs changes:** non-extractable, one per context.
+- **A per-document data key encrypts the stored database.** It is wrapped
+  twice, under the key derived from the passkey's PRF output and under a
+  Credential Management keychain credential, so either path recovers it. A
+  replaced passkey means re-wrapping, not loss.
+- **Save a copy is the floor** beneath both.
+
+*Rejected:* no alternative was named beyond what the ruling excludes: the
+passkey on each save, and a data key held under one path only. *Evidence:*
+"Owner/author spike", D: PRF gave a byte-identical secret in Safari and the
+Home Screen app, and after the wipe; the keychain credential survived the
+wipe and filled in both contexts. **A.** One phone, one account, one passkey
+provider. A second of each is read before Gate C.
 
 ### manifestVersion 3
 

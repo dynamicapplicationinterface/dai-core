@@ -1108,3 +1108,28 @@ recorded for them.
   review, A4).
 - [A parent of another entity](format.md#parent-other-entity) hides nothing:
   replicated-tables.md T1-D35.
+
+Rulings for formats not yet built
+---------------------------------
+
+Ruled 18 October (backlog.md, the owner/author rulings), before any byte is
+written. format.md does not state them yet; when it does, it governs, as
+above.
+
+### The working copy's checkpoint
+
+**Problem.** A personal document's records are outside the signed set
+(`src/core.ts:685`). A build with its database replaced and its hash updated
+still verifies, so "recorded history … independently verifiable" held for
+replicated rows only (`handoff-2026-10-18.md`, §3, contradiction 3).
+
+**Rule.** Every save signs a checkpoint under the author key: the release
+digest, the document id, the revision, the database digest and the digest of
+each parent checkpoint. The chain, with its branches, is the recorded
+history, and any host verifies it. The store keeps the log and accepts an
+upload only by compare-and-swap on the parent it names (R-B).
+
+**Rejected.** Unsigned personal records. Signing them through replication,
+which brings sessionless machinery into every personal app. Resealing the
+whole container on every save: content addressing makes the checkpoint its
+equivalent, since the database digest names the bytes.
