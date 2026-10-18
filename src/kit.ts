@@ -145,6 +145,31 @@ function refresh() {
   for (const view of views) view.draw();
 }
 
+/*
+ * A view's query, read over settled rows (R-F amended).
+ *
+ * A column the application declared consequential (-- dai:consequential)
+ * leaves out of what these views read any row whose value in it is pending:
+ * two copies changed it at once and nobody has chosen. The runtime keeps, per
+ * such table, the SQL of its settled rows; each one the query names goes in
+ * front of it as a common table expression under the table's own name, which
+ * SQLite reads in place of the table for that statement alone. The query is
+ * the application's, unchanged, and every other read sees the row.
+ */
+function settled(sql) {
+  if (!db.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE name = '_cs_settle'").length) return sql;
+  const head = /^\\s*(WITH(\\s+RECURSIVE)?\\b)?/i.exec(sql);
+  if (!head[1] && !/^\\s*SELECT\\b/i.test(sql)) return sql;
+  const ctes = [];
+  for (const row of db.selectObjects('SELECT tbl, body FROM _cs_settle')) {
+    const name = String(row.tbl);
+    if (!new RegExp('(^|[^\\\\w"])"?' + name.replace(/[.*+?^$|()[\\]{}\\\\]/g, '\\\\$&') + '"?($|[^\\\\w"])', 'i').test(sql)) continue;
+    ctes.push('"' + name.split('"').join('""') + '" AS (' + row.body + ')');
+  }
+  if (!ctes.length) return sql;
+  return head[1] ? head[0] + ' ' + ctes.join(', ') + ',' + sql.slice(head[0].length) : 'WITH ' + ctes.join(', ') + ' ' + sql;
+}
+
 /**
  * Reads :name parameters out of a statement.
  *
@@ -345,7 +370,7 @@ class DaiRows extends HTMLElement {
 
   draw() {
     if (!this.template) return;
-    const rows = db.selectObjects(this.getAttribute('query'));
+    const rows = db.selectObjects(settled(this.getAttribute('query')));
 
     const empty = this.getAttribute('empty');
     while (this.lastChild && this.lastChild !== this.template) {
@@ -384,7 +409,7 @@ class DaiValue extends HTMLElement {
   }
 
   draw() {
-    const rows = db.selectObjects(this.getAttribute('query'));
+    const rows = db.selectObjects(settled(this.getAttribute('query')));
     const row = rows[0];
     const value = row ? row[Object.keys(row)[0]] : '';
     this.textContent = value === null || value === undefined ? '' : String(value);

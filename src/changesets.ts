@@ -27,9 +27,13 @@
  * saw (they are superseded). Row existence is the register of column "" (1
  * alive, 0 deleted), and a delete records every data version it saw. From
  * these grow-only sets alone, so any order of arrival converges:
- *   - different rows merge; different columns of one row merge;
+ *   - different rows merge; different columns of one row merge, unless the
+ *     app declared them coupled (`-- dai:coupled a b`): a change to one
+ *     writes the group, so concurrent changes to it are one conflict;
  *   - one column with two concurrent versions keeps both, shows the later by
- *     (lc, author), and flags the row `pending`;
+ *     (lc, author), and flags the row `pending`; for a column the app
+ *     declared consequential (`-- dai:consequential c`) the kit's query
+ *     views leave the row out until it is resolved (`_cs_settle`);
  *   - a delete with a concurrent change keeps the row and flags it
  *     `delete-conflict`; a deleted row a live row still references through a
  *     declared foreign key is kept too, flagged `kept-referenced`;
@@ -69,7 +73,31 @@ CREATE TABLE IF NOT EXISTS _cs_ingested (ver TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_flag (tbl TEXT NOT NULL, pk TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT, PRIMARY KEY (tbl, pk, kind)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_held (tbl TEXT NOT NULL, pk TEXT NOT NULL, reason TEXT NOT NULL, row TEXT NOT NULL, PRIMARY KEY (tbl, pk)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_keys (tbl TEXT PRIMARY KEY, kind TEXT NOT NULL, pk TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS _cs_settle (tbl TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
 `;
+
+/**
+ * What an application declares about a table's columns (R-F amended), as line
+ * comments inside its CREATE TABLE, where SQLite keeps them in the stored
+ * schema, so every copy reads the same declaration:
+ *   -- dai:coupled lat lng        changed together: one conflict, shown together
+ *   -- dai:consequential amount   a pending value is left out of the kit's views
+ */
+export interface Declared {
+  coupled: string[][];
+  consequential: string[];
+}
+
+export function declaredIn(createSql: string): Declared {
+  const out: Declared = { coupled: [], consequential: [] };
+  for (const m of createSql.matchAll(/--[ \t]*dai:(coupled|consequential)\b([^\r\n]*)/gi)) {
+    const cols = m[2]!.split(/[\s,]+/).map((c) => c.replace(/^["`[]|["`\]]$/g, "")).filter(Boolean);
+    if (m[1]!.toLowerCase() === "coupled") {
+      if (cols.length > 1) out.coupled.push(cols);
+    } else out.consequential.push(...cols);
+  }
+  return out;
+}
 
 /** The flags a row can carry, as `_cs_flag.kind` holds them. */
 export type FlagKind = "pending" | "delete-conflict" | "kept-referenced" | "held" | "orphan";
@@ -339,6 +367,7 @@ export class Changes {
   private lastInsert: { rowid: number | null; id: unknown } = { rowid: null, id: null };
   private lastId: number | null = null;
   private readonly keysCache = new Map<string, Keys | null>();
+  private readonly declaredCache = new Map<string, Declared>();
   private readonly stmts = new Map<string, Any>();
   private readonly capture: SessionCapture;
   private readonly exec: (sql: Any) => unknown;
@@ -490,6 +519,8 @@ export class Changes {
     this.slotEveryInsert();
     this.guardTriggers();
     this.keysCache.clear();
+    this.declaredCache.clear();
+    this.settleViews();
     this.capture?.schemaChanged();
   }
 
@@ -578,6 +609,42 @@ export class Changes {
       }
     });
     return true;
+  }
+
+  declaredOf(table: string): Declared {
+    let d = this.declaredCache.get(table);
+    if (!d) {
+      d = declaredIn(String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]) ?? ""));
+      this.declaredCache.set(table, d);
+    }
+    return d;
+  }
+
+  /**
+   * For each table with a consequential column, the rows the kit's query views
+   * read: every row but one whose value in such a column is pending (R-F
+   * amended). Kept in `_cs_settle` as the body of a common table expression
+   * the kit puts in front of a view's query under the table's own name, so the
+   * view's SQL is the application's, unchanged. Every other read sees the
+   * row, holding the later value.
+   */
+  private settleViews(): void {
+    const want = new Map<string, string>();
+    for (const table of appTablesOf(this.rows)) {
+      const cols = this.declaredOf(table).consequential;
+      const keys = this.keysOf(table);
+      if (!cols.length || !keys) continue;
+      const key = keys.kind === "rowid" ? "rowid" : keys.pk.map(q).join(", ");
+      want.set(
+        table,
+        `SELECT * FROM main.${q(table)} WHERE json_array(${key}) NOT IN (SELECT f.pk FROM main._cs_flag f, json_each(f.detail) j ` +
+          `WHERE f.tbl = ${sqlText(table)} AND f.kind = 'pending' AND json_extract(j.value, '$.col') IN (${cols.map(sqlText).join(", ")}))`,
+      );
+    }
+    const have = new Map((this.db.selectObjects("SELECT tbl, body FROM _cs_settle") as Any[]).map((r) => [String(r.tbl), String(r.body)]));
+    if (want.size === have.size && [...want].every(([t, b]) => have.get(t) === b)) return;
+    this.exec("DELETE FROM _cs_settle");
+    for (const [tbl, body] of want) this.exec({ sql: "INSERT INTO _cs_settle (tbl, body) VALUES (?, ?)", bind: [tbl, body] });
   }
 
   keysOf(table: string): Keys | null {
@@ -673,6 +740,18 @@ export class Changes {
     if (code === "D") n.set("", 0);
     for (const [c, v] of Object.entries(op.new)) n.set(c, v);
     for (const [c, v] of Object.entries(op.old)) p.set(c, v);
+    // A change to any column of a coupled group writes the whole group as it stands, so the group's
+    // columns share their versions: two concurrent changes to it conflict on every column of it, and
+    // the later by (lc, author) shows on all of them together (R-F amended).
+    if (code === "U" && keys) {
+      const groups = this.declaredOf(op.table).coupled.filter((g) => g.some((c) => n.has(c)));
+      const missing = [...new Set(groups.flat())].filter((c) => !n.has(c));
+      if (missing.length) {
+        const where = keys.kind === "rowid" ? "rowid IS ?" : this.whereKey(op.table);
+        const now = this.db.selectObject(`SELECT ${missing.map(q).join(", ")} FROM ${q(op.table)} WHERE ${where}`, k) as Any;
+        if (now) for (const c of missing) n.set(c, plain(now[c]));
+      }
+    }
     const heads = this.rowHeads(op.table, pk);
     // A change to a row a delete contested also re-asserts it: editing it is keeping it.
     if (code === "U" && (heads.get("") ?? []).some((h) => Number(h.val) === 0)) n.set("", 1);

@@ -238,4 +238,87 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     expect(JSON.parse(String(await value(a, audit))).every((n: number) => n === 1), "one log row per note on A").toBe(true);
     expect(JSON.parse(String(await value(b, audit))).every((n: number) => n === 1), "one log row per note on B").toBe(true);
   });
+
+  test("6. consequential: the kit's query views leave out a row whose consequential column is pending; every other read sees the later value", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-cs-settle-"));
+    const file = await buildKitBudget(scratch);
+    const pageA = await device(browser);
+    const pageB = await device(browser);
+    const a = await firstOpen(pageA, file);
+    await expect(a.locator("#total")).toHaveText("150", { timeout: 60_000 });
+    const uuid = await uuidOf(pageA);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM entries")[0]?.["n"], { timeout: 60_000 }).toBe(2);
+    const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
+
+    const b = await firstOpen(pageB, a1);
+    await expect(b.locator("#total")).toHaveText("150", { timeout: 60_000 });
+    await typeAmount(b, "70");
+    await typeAmount(a, "60");
+    const uuidB = await uuidOf(pageB);
+    await expect.poll(async () => query(await stored(pageB, uuidB), "SELECT amount FROM entries WHERE label = 'food'")[0]?.["amount"], { timeout: 60_000 }).toBe(70);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT amount FROM entries WHERE label = 'food'")[0]?.["amount"], { timeout: 60_000 }).toBe(60);
+    const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
+
+    await pageA.setInputFiles("#file", b1);
+    await expect(pageA.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await pageA.locator("#card-open").click();
+    await expect
+      .poll(async () => query(await stored(pageA, uuid), "SELECT kind FROM _cs_flag WHERE tbl = 'entries'"), { timeout: 60_000, message: "the food row is pending" })
+      .toEqual([{ kind: "pending" }]);
+    const raw = Number(query(await stored(pageA, uuid), "SELECT sum(amount) AS s FROM entries")[0]?.["s"]);
+    expect([160, 170], "an ordinary read sees the later value").toContain(raw);
+    await expect(a.locator("#total"), "the kit's view leaves the pending row out of the sum").toHaveText("100", { timeout: 60_000 });
+    await expect(a.locator("#rows li"), "and out of a list of it").toHaveText(["rent"]);
+    await expect(a.locator("#labels li"), "a view that names another table is unchanged").toHaveText(["bills"]);
+  });
 });
+
+/** A budget written with the kit, and one listener: its amount is declared consequential. */
+async function buildKitBudget(scratch: string): Promise<string> {
+  const src = join(scratch, "src");
+  mkdirSync(src, { recursive: true });
+  writeFileSync(
+    join(src, "schema.sql"),
+    `CREATE TABLE IF NOT EXISTS entries (
+  id INTEGER PRIMARY KEY,
+  label TEXT NOT NULL,
+  amount INTEGER NOT NULL -- dai:consequential amount
+);
+CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+`,
+  );
+  writeFileSync(
+    join(src, "index.html"),
+    `<!doctype html>
+<html><head><meta charset="utf-8"><title>Budget</title></head>
+<body>
+<p id="app">ready</p>
+<script type="application/sql">
+INSERT INTO entries (label, amount) VALUES ('rent', 100);
+INSERT INTO entries (label, amount) VALUES ('food', 50);
+INSERT INTO groups (name) VALUES ('bills');
+</script>
+<p>Total: <dai-value id="total" query="SELECT sum(amount) FROM entries"></dai-value></p>
+<dai-rows id="rows" query="SELECT label FROM entries ORDER BY label DESC"><template><li data-text="label"></li></template></dai-rows>
+<dai-rows id="labels" query="SELECT name FROM groups"><template><li data-text="name"></li></template></dai-rows>
+<dai-rows id="edit" query="SELECT id, amount FROM entries WHERE label = 'food'"><template><input class="amount" data-run="UPDATE entries SET amount = :typed WHERE id = :id"></template></dai-rows>
+<script type="module" src="./dai-kit.js"></script>
+<script type="module" src="app.js"></script>
+</body></html>
+`,
+  );
+  // The kit tells the application of a merge, and the application redraws (SHARED-REDRAW-ON-MERGE).
+  writeFileSync(join(src, "app.js"), 'window.addEventListener("dai:kit-merged", () => window.daiKit.refresh());\n');
+  const built = await compileDirectory({ sourceDir: src, root: repo, appName: "Budget" });
+  const file = join(scratch, "budget.dai.html");
+  writeFileSync(file, built.html, "utf8");
+  return file;
+}
+
+/** Types a new amount for food into the kit's own control, as a person would. */
+async function typeAmount(app: FrameLocator, amount: string): Promise<void> {
+  const input = app.locator("#edit input.amount");
+  await input.fill(amount);
+  await input.press("Enter");
+  await input.blur();
+}

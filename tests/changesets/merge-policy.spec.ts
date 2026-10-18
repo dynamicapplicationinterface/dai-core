@@ -63,6 +63,111 @@ test("S3 same column: the later shows, both are kept, the row is pending", async
   close(o);
 });
 
+/**
+ * The value a pending column shows, as R-F amended says: the later by (lc,
+ * author). Read from the signed log rows of the two versions the flag names,
+ * not from the policy's own cells: higher lc first, then the greater author id.
+ */
+function laterBy(c: Copy, table: string, col: string): unknown {
+  const flag = c.flags().find((f) => f.kind === "pending" && f.tbl === table);
+  expect(flag, `${table} is pending`).toBeDefined();
+  const entry = JSON.parse(flag!.detail).find((p: { col: string }) => p.col === col);
+  const ranked = (entry.values as { ver: string; val: unknown }[]).map((v) => {
+    const [author, seq] = v.ver.split(":");
+    const lc = Number(c.rows.all("SELECT _r_lc AS lc FROM _cs_log WHERE lower(hex(_r_replica)) = ? AND _r_seq = ?", [author, Number(seq)])[0]!["lc"]);
+    return { val: v.val, lc, author: author! };
+  });
+  ranked.sort((x, y) => y.lc - x.lc || (y.author > x.author ? 1 : y.author < x.author ? -1 : 0));
+  return ranked[0]!.val;
+}
+
+test("S3 later: the shown value is the later by (lc, author), on a clock tie and when the clock and the author disagree", async () => {
+  const tie = await exchange(SCENARIOS["S3 same column"]!.write);
+  for (const c of [tie.a, tie.b]) expect(c.db.selectValue("SELECT title FROM items WHERE title LIKE 'Tent%'")).toBe(laterBy(c, "items", "title"));
+  close(tie);
+
+  // The copy with the smaller author id saves twice first, so its change carries the higher lc.
+  const skew = await exchange((a, b) => {
+    const [low, high] = [a, b].sort((x, y) => (Buffer.from(x.author.author).toString("hex") < Buffer.from(y.author.author).toString("hex") ? -1 : 1));
+    for (const n of [1, 2]) {
+      low!.db.exec({ sql: "UPDATE items SET note = ? WHERE id = ?", bind: [`warm-up ${n}`, item(low!, "Map")] });
+      low!.save();
+    }
+    low!.db.exec({ sql: "UPDATE items SET title = 'Tent (low)' WHERE id = ?", bind: [item(low!, "Tent")] });
+    high!.db.exec({ sql: "UPDATE items SET title = 'Tent (high)' WHERE id = ?", bind: [item(high!, "Tent")] });
+  });
+  judged(skew, ["pending"]);
+  expect(laterBy(skew.a, "items", "title"), "the clock outranks the author id").toBe("Tent (low)");
+  for (const c of [skew.a, skew.b]) expect(c.db.selectValue("SELECT title FROM items WHERE title LIKE 'Tent%'")).toBe("Tent (low)");
+  close(skew);
+});
+
+test("S5c later: the relative change shown is the later by (lc, author)", async () => {
+  const o = await exchange(SCENARIOS["S5c relative, different"]!.write);
+  for (const c of [o.a, o.b]) expect(c.db.selectValue("SELECT qty FROM items WHERE title = 'Bread'")).toBe(laterBy(c, "items", "qty"));
+  close(o);
+});
+
+test("S3 other column: an edit to a different column of the pending row leaves the flag, on every copy", async () => {
+  const o = await exchange(SCENARIOS["S3 same column"]!.write);
+  const shown = o.a.db.selectValue("SELECT title FROM items WHERE title LIKE 'Tent%'");
+  o.a.db.exec("UPDATE items SET qty = 9 WHERE title LIKE 'Tent%'");
+  o.a.save();
+  expect(o.a.flags().map((f) => f.kind), "still pending on the copy that edited").toContain("pending");
+  await o.b.mergeFrom(await o.a.bytes());
+  await o.a.mergeFrom(await o.b.bytes());
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectObject("SELECT title, qty FROM items WHERE title LIKE 'Tent%'")).toEqual({ title: shown, qty: 9 });
+    const pending = c.flags().filter((f) => f.kind === "pending");
+    expect(pending.map((f) => JSON.parse(f.detail).map((p: { col: string }) => p.col)), "the title is still undecided").toEqual([["title"]]);
+  }
+  expect(o.a.state()).toBe(o.b.state());
+  close(o);
+});
+
+/** Two copies of one document whose schema is `schema`, with one row in `table` both hold. */
+async function pair(schema: string, seed: string): Promise<{ a: Copy; b: Copy }> {
+  const a = await Copy.open(await person());
+  a.db.exec(schema);
+  a.db.exec(seed);
+  const b = await Copy.open(await person(), await a.bytes());
+  return { a, b };
+}
+
+async function swap(a: Copy, b: Copy): Promise<void> {
+  const [ab, bb] = [await a.bytes(), await b.bytes()];
+  await a.mergeFrom(bb);
+  await b.mergeFrom(ab);
+}
+
+test("coupled: concurrent changes to different columns of a coupled group are one conflict, shown together; undeclared columns still merge", async () => {
+  const { a, b } = await pair(
+    `CREATE TABLE places (id INTEGER PRIMARY KEY, name TEXT,
+       lat REAL NOT NULL, lng REAL NOT NULL -- dai:coupled lat lng
+     );
+     CREATE TABLE spots (id INTEGER PRIMARY KEY, name TEXT, lat REAL NOT NULL, lng REAL NOT NULL);`,
+    "INSERT INTO places (name, lat, lng) VALUES ('camp', 0, 0); INSERT INTO spots (name, lat, lng) VALUES ('camp', 0, 0);",
+  );
+  for (const t of ["places", "spots"]) {
+    a.db.exec(`UPDATE ${t} SET lat = 1 WHERE name = 'camp'`);
+    b.db.exec(`UPDATE ${t} SET lng = 2 WHERE name = 'camp'`);
+  }
+  await swap(a, b);
+  expect(a.state()).toBe(b.state());
+  for (const c of [a, b]) {
+    expect(c.db.selectObject("SELECT lat, lng FROM spots"), "undeclared: both columns land").toEqual({ lat: 1, lng: 2 });
+    expect(c.flags().filter((f) => f.tbl === "spots")).toEqual([]);
+    const pending = c.flags().find((f) => f.tbl === "places" && f.kind === "pending");
+    expect(pending, "coupled: the row is pending").toBeDefined();
+    expect(JSON.parse(pending!.detail).map((p: { col: string }) => p.col).sort()).toEqual(["lat", "lng"]);
+    const shown = c.db.selectObject("SELECT lat, lng FROM places");
+    expect([{ lat: 1, lng: 0 }, { lat: 0, lng: 2 }], "the pair comes from one change, never mixed").toContainEqual(shown);
+    expect(shown.lat).toBe(laterBy(c, "places", "lat"));
+  }
+  a.close();
+  b.close();
+});
+
 test("S3 resolved: a later local edit to the pending row clears the flag on every copy", async () => {
   const o = await exchange(SCENARIOS["S3 same column"]!.write);
   o.a.db.exec("UPDATE items SET title = 'Tent (3p)' WHERE title LIKE 'Tent%'");
