@@ -148,8 +148,13 @@ function score(prompt, directory) {
 
   // 1. Would this work inside a container at all?
   const checked = run(process.execPath, [cli, "check", directory, "--json"]);
-  const findings = checked.stdout ? JSON.parse(checked.stdout).findings ?? [] : [];
-  if (!checked.ok) {
+  const all = checked.stdout ? JSON.parse(checked.stdout).findings ?? [] : [];
+  // A shared prompt asks for the policy layer, which an authored schema may no longer declare (one
+  // shape, R-O). Those prompts keep being scored as they were (R-P), so for them alone that one
+  // refusal is set aside; every other finding still stops the candidate.
+  const findings = isShared(prompt) ? all.filter((finding) => finding.id !== "one-shape") : all;
+  const onlyOneShape = isShared(prompt) && all.length > 0 && findings.length === 0;
+  if (!checked.ok && !onlyOneShape) {
     result.failedAt = "checked";
     result.why = findings.length
       ? findings.map((finding) => `${finding.file}: ${finding.id}`).join(", ")
