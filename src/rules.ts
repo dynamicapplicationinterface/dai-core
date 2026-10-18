@@ -972,7 +972,7 @@ export const SURFACE: readonly SurfaceEntry[] = [
     call: "db.selectObjects(sql, bind?)",
     does: "Returns rows as plain objects. bind is an array for ? or an object for :name.",
     shapes: ALL,
-    anchor: { file: "src/kit.ts", contains: "db.selectObjects(this.getAttribute('query'))" },
+    anchor: { file: "src/kit.ts", contains: "db.selectObjects(settled(this.getAttribute('query')))" },
   },
   {
     call: "db.selectValue(sql, bind?)",
