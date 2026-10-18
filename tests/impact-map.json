@@ -399,6 +399,23 @@
       "tests/changesets/runtime.spec.ts",
       "tests/fixtures.ts"
     ],
+    "tests/changesets/vectors.spec.ts": [
+      "conformance/changesets/",
+      "conformance/reference/dai_changes.py",
+      "src/cbor.ts",
+      "src/changes-log.ts",
+      "src/changesets.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/session-id.ts",
+      "tests/changesets/copy.ts",
+      "tests/changesets/scenarios.ts",
+      "tests/changesets/vectors.spec.ts",
+      "tests/signed-people.ts"
+    ],
     "tests/chess.spec.ts": [
       "apps/runner/",
       "scripts/generate-key.mjs",
