@@ -491,6 +491,22 @@ from this app" makes a new document from the same release (Phase 2).
 "this person's working copy", so one context holds exactly one working copy
 of an app.
 
+**R-L. The example and its readings.** The example declares `schema.sql`,
+with its starter content as seed SQL and no seed database. It is delivered
+by `#a=` or `?open=` only. Every reading names its carrier and the opener
+build it ran on. *Rejected:* what the ruling excludes: a seed database,
+which drops out of "Send the app" (`main.ts:4277`), and readings by direct
+URL. *Evidence:* §6, Gate A4: with no schema there is no update path
+(`bootloader.ts:2939-2947`); Gate A5: `/request.dai` by direct URL runs
+outside the host, and the service worker answers it differently by device
+history (`apps/runner/public/sw.js:737-738`, `787-790`).
+
+**R-M. The Phase 2 gate.** A non-publisher changes an app through AI, adopts
+the new release, reopens their records, and sends the modified release
+without their records. *Rejected:* no alternative was named. *Evidence:*
+§1, "Where it fails", item 1, and §8: the modify-and-keep half is not a go
+until successor authority (R-I) is designed.
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.
