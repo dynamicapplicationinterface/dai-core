@@ -679,8 +679,17 @@ export class Changes {
    * Every admitted changeset not yet ingested here, in (lc, author, seq) order,
    * projected onto the application's tables. Run after the authorship merge
    * admits rows, and at open (a copy that arrived, or one rebuilt from a log).
+   *
+   * What the application changed since the last save is captured first, here
+   * and not by the caller (PR9-H1). The frame captures before it awaits the
+   * batches' verification, and a write landing inside that await was captured
+   * by nobody: projection would overwrite it, and the next save would sign
+   * the remote value as the person's own. Captured now, its bases name only
+   * what this copy had seen, so it stands as the person's change or as one
+   * side of a pending conflict.
    */
   projectAdmitted(): { changesets: number; rows: number } {
+    if (!this.inTransaction) this.save();
     const fresh = this.rows.all(
       `SELECT lower(hex(_r_replica)) AS author, _r_seq AS seq, _r_lc AS lc, payload FROM ${q(`${CHANGES_LOG}_current`)} c
         WHERE NOT EXISTS (SELECT 1 FROM _cs_ingested i WHERE i.ver = lower(hex(c._r_replica)) || ':' || c._r_seq)

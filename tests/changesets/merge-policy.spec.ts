@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { exchange, item, SCENARIOS, type Outcome } from "./scenarios.js";
-import { openBytes } from "./copy.js";
+import { base, exchange, item, SCENARIOS, type Outcome } from "./scenarios.js";
+import { DOC, openBytes } from "./copy.js";
+import * as merge from "../../src/replicated-frame.js";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const m = merge as any;
 
 /**
  * The spike's fourteen merge scenarios and S8, promoted (`handoff-2026-10-18.md`,
@@ -182,6 +186,52 @@ test("S8 app trigger: a trigger does not re-fire on merged rows", async () => {
     ).toEqual(["Lamp", "Soap"]);
   }
   close(o);
+});
+
+/**
+ * PR9-H1, the review's own run (P2): the frame captures, then awaits the
+ * batches' verification, then admits and projects. An application write that
+ * lands inside that await was captured by no save, so projection must not
+ * replace it: it survives as the person's change, or as one side of a flagged
+ * conflict, and never as a copy of the remote value signed in their name.
+ */
+test("PR9-H1: a local write during the merge's verify wait survives, as the person's change or a flagged conflict", async () => {
+  const { a, b } = await base();
+  const tent = item(a, "Tent");
+  a.db.exec({ sql: "UPDATE items SET title = 'A-remote' WHERE id = ?", bind: [tent] });
+  const aBytes = await a.bytes();
+
+  // B, step by step as the frame merges (bootloader.ts, mergeSibling).
+  b.save();
+  const sib = await openBytes(aBytes);
+  const verifying = m.verifyBatches(sib.rows, m.mergeTablesOf(sib.rows), DOC);
+  b.db.exec({ sql: "UPDATE items SET title = 'B-local' WHERE id = ?", bind: [tent] });
+  const verdicts = await verifying;
+  m.mergeVerified(b.rows, sib.rows, { document: DOC, author: b.author.author, verdicts });
+  sib.db.close();
+  b.changes.projectAdmitted();
+  b.save();
+
+  const kept = (c: typeof a): boolean => [...c.everyValue()].some((v) => JSON.parse(v)[4] === "B-local");
+  const shownOrPending = (c: typeof a): void => {
+    const title = c.db.selectValue("SELECT title FROM items WHERE id = ?", [tent]);
+    const pending = c.flags().find((f) => f.kind === "pending");
+    const values = pending ? JSON.parse(pending.detail).flatMap((p: { values: { val: unknown }[] }) => p.values.map((v) => v.val)) : [];
+    expect(title === "B-local" || (values.includes("B-local") && values.includes("A-remote")), `shown ${title}, pending ${JSON.stringify(values)}`).toBe(true);
+  };
+  expect(kept(b), "B-local is in B's cells").toBe(true);
+  shownOrPending(b);
+  // B's log names the remote value only if B wrote it: a resolution is the person's, never the projection's.
+  const bWrote = b.written().map((w) => JSON.parse(w)[4]);
+  expect(bWrote, "B's log carries what B wrote").toContain("B-local");
+  expect(bWrote, "B's log never re-signs the remote value as its own").not.toContain("A-remote");
+
+  await a.mergeFrom(await b.bytes());
+  expect(kept(a), "B-local reached A").toBe(true);
+  shownOrPending(a);
+  expect(a.state()).toBe(b.state());
+  a.close();
+  b.close();
 });
 
 test("an id the application omits comes from this author's range, and last_insert_rowid() answers it", async () => {
