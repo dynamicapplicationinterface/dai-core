@@ -425,6 +425,22 @@ export class Changes {
     return high;
   }
 
+  /**
+   * The counter, raised past an id this author logged (PR9-H4). The
+   * constructor reads the tables and cells as they are, and a copy rebuilt
+   * from an arrival has neither until its log is projected, so the counter
+   * started at 0 and the author's next inserts failed on their own earlier
+   * rows, or silently reused a deleted row's id. Every changeset this author
+   * wrote passes through `ingest`, its inserts of deleted rows included.
+   */
+  private counterAbove(table: string, k: unknown[]): void {
+    const kind = this.keysOf(table)?.kind;
+    if (kind !== "ranged" && kind !== "rowid") return;
+    const id = k[0];
+    const base = this.index * SPAN;
+    if (typeof id === "number" && id >= base && id < base + SPAN) this.counter = Math.max(this.counter, id - base);
+  }
+
   private nextId(): number {
     this.counter += 1;
     if (this.counter >= SPAN) throw new Error("ID_RANGE_EXHAUSTED");
@@ -675,6 +691,7 @@ export class Changes {
     const touched: [string, string][] = [];
     for (const [table, k, , n, , b, seen] of ops) {
       const pk = JSON.stringify(k);
+      if (author === this.authorHex) this.counterAbove(table, k);
       for (const [col, val] of n) {
         this.runCached("INSERT OR IGNORE INTO _cs_cell (tbl, pk, col, ver, val, lc, author) VALUES (?, ?, ?, ?, ?, ?, ?)", [
           table,

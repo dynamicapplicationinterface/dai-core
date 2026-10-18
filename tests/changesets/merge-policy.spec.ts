@@ -280,6 +280,42 @@ test("PR9-H3: a merged row does not become the application's last insert", async
   close(o);
 });
 
+/**
+ * PR9-H4, the review's own run (P3): a mount that rebuilds an arrival copies
+ * no application rows and no `_cs_` rows when the arrival carries the log
+ * (bootloader.ts, mergedArrival); they come back by projection. The rebuild is
+ * reproduced on the bytes: application tables and `_cs_*` emptied, the log
+ * kept, opened by the same author.
+ */
+async function rebuilt(bytes: Uint8Array): Promise<Uint8Array> {
+  const { sqlite3, db } = await openBytes(bytes);
+  const tables = db.selectValues("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE '\\_dai%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_cs\\_log%' ESCAPE '\\'");
+  for (const t of tables) db.exec(`DELETE FROM "${t}"`);
+  const out = sqlite3.capi.sqlite3_js_db_export(db.pointer);
+  db.close();
+  return out;
+}
+
+test("PR9-H4: after a rebuild from an arrival, the author's counter starts above its own highest logged id, and a deleted id is never reused", async () => {
+  const a = await Copy.open(await person());
+  a.db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
+  a.db.exec("INSERT INTO items (title) VALUES ('one'); INSERT INTO items (title) VALUES ('two'); INSERT INTO items (title) VALUES ('three');");
+  const ids = a.db.selectValues("SELECT id FROM items ORDER BY id").map(Number);
+  // Saved before the delete, as the frame saves after each write: the third id is logged, then deleted.
+  a.save();
+  a.db.exec({ sql: "DELETE FROM items WHERE id = ?", bind: [ids[2]] });
+  const bytes = await rebuilt(await a.bytes());
+
+  const again = await Copy.open(a.author, bytes);
+  expect(again.db.selectValues("SELECT id FROM items ORDER BY id").map(Number), "the author's rows came back by projection").toEqual(ids.slice(0, 2));
+  again.db.exec("INSERT INTO items (title) VALUES ('four')");
+  const four = Number(again.db.selectValue("SELECT id FROM items WHERE title = 'four'"));
+  expect(four, "above every id the author logged, the deleted one included").toBeGreaterThan(ids[2]!);
+  expect(Math.floor(four / 2 ** 32)).toBe(again.changes.index);
+  a.close();
+  again.close();
+});
+
 test("an id the application omits comes from this author's range, and last_insert_rowid() answers it", async () => {
   const o = await exchange((a) => {
     a.db.exec("INSERT INTO categories (name) VALUES ('Bath')");
