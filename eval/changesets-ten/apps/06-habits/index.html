@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Daily habits, a week at a glance, and streaks that count" />
+  <meta name="dai:does" content="Track the habits you want to keep, one tap a day" />
+  <meta name="dai:does" content="Fix a missed day with a tap if you forgot to mark it" />
+  <meta name="dai:does" content="Show your current streak and how many days you kept each habit this week" />
+  <meta name="theme-color" content="#f4f1ea" />
+  <title>Habit tracker</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only, offered once. A second open adds nothing.
+    INSERT INTO habits (id, name)
+      SELECT id, name FROM (
+        SELECT 1 AS id, 'Drink water' AS name
+        UNION ALL SELECT 2, 'Walk for 20 minutes'
+        UNION ALL SELECT 3, 'Read a few pages'
+      )
+      WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'seeded');
+
+    INSERT INTO checks (habit_id, day)
+      SELECT h, date('now', o) FROM (
+        SELECT 1 AS h, '-1 day' AS o
+        UNION ALL SELECT 1, '-2 day'
+        UNION ALL SELECT 1, '-3 day'
+        UNION ALL SELECT 2, '-1 day'
+        UNION ALL SELECT 3, '-2 day'
+      )
+      WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'seeded');
+
+    INSERT OR IGNORE INTO meta (key, value) VALUES ('seeded', '1');
+  </script>
+
+  <!-- Nothing to type into or press until app.js has started. -->
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden inert>
+    <header>
+      <h1>Habits</h1>
+      <p id="today" class="today" aria-live="polite"></p>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <ul id="list" class="list"></ul>
+
+    <div id="empty" class="empty" hidden>
+      <p><strong>No habits yet.</strong></p>
+      <p>Add one below, something small you can do every day. A tap each day builds the streak.</p>
+    </div>
+
+    <form id="add" class="add" autocomplete="off">
+      <label for="name">New habit</label>
+      <div class="row">
+        <input id="name" required maxlength="60" placeholder="e.g. Stretch for five minutes" />
+        <button type="submit">Add</button>
+      </div>
+    </form>
+
+    <details id="archived-box" class="archived" hidden>
+      <summary>Archived habits</summary>
+      <ul id="archived" class="list"></ul>
+    </details>
+
+    <footer>
+      <!-- Shown only when the file is open in a plain browser with no host. -->
+      <button id="save" type="button" class="quiet" hidden>Save to this file</button>
+    </footer>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#2f6f4f"/><path d="M20 38 50 22l30 16v32L50 86 20 70z" fill="#f4f1ea"/><path d="M20 38 50 54l30-16M50 54v32" fill="none" stroke="#2f6f4f" stroke-width="5" stroke-linejoin="round"/></svg>
+```
+
+Notes on how it behaves:
+
+- **Low stock:** each item has a "Low at" number. When the count is at or below it, the item gets a Low tag and sits at the top of the list. The header counts how many are running low.
+- **Saving:** every tap is written to the database as it happens, so there is no Save button to press. The small Save control only appears if you open the file straight in a browser with no host.
+- **Sharing:** this is a single-person document. If you later want two people, or two of your own devices, to add to the same inventory and keep both sets of changes, tell me now. That is a different design (the list becomes a shared table) and it is better to decide before the first release than to convert later.

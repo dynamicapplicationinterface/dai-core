@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Monthly spending by category, against your limits" />
+  <meta name="dai:does" content="Set a monthly limit for each category of spending" />
+  <meta name="dai:does" content="Log what you spend and see what is left in each category" />
+  <meta name="dai:does" content="Show when a category goes over, and start fresh each month" />
+  <meta name="theme-color" content="#f3f2ec" />
+  <title>Budget</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed, written once. The flag keeps a second open from adding it
+    -- again, even after the person has deleted the examples.
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+
+    INSERT INTO categories (id, name, limit_cents)
+    SELECT * FROM (VALUES
+      (1, 'Groceries', 40000),
+      (2, 'Eating out', 12000),
+      (3, 'Transport', 15000),
+      (4, 'Fun', 10000)
+    ) WHERE (SELECT seeded FROM settings WHERE id = 1) = 0;
+
+    INSERT INTO expenses (id, category_id, what, cents, spent_on)
+    SELECT * FROM (VALUES
+      (1, 1, 'Weekly shop',  8640, max(date('now','localtime','start of month'), date('now','localtime','-6 days'))),
+      (2, 1, 'Farmers market', 2350, max(date('now','localtime','start of month'), date('now','localtime','-3 days'))),
+      (3, 2, 'Pizza night',  3800, max(date('now','localtime','start of month'), date('now','localtime','-4 days'))),
+      (4, 2, 'Coffee',        675, date('now','localtime','-1 day')),
+      (5, 3, 'Gas',          4200, max(date('now','localtime','start of month'), date('now','localtime','-5 days'))),
+      (6, 4, 'Movie tickets', 3000, max(date('now','localtime','start of month'), date('now','localtime','-2 days')))
+    ) WHERE (SELECT seeded FROM settings WHERE id = 1) = 0;
+
+    UPDATE settings SET seeded = 1 WHERE id = 1;
+  </script>
+
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden inert>
+    <header>
+      <p class="eyebrow">
+        This month ·
+        <dai-value query="SELECT substr('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m','now','localtime') AS INTEGER) - 1) * 3 + 1, 3) || ' ' || strftime('%Y','now','localtime')"></dai-value>
+      </p>
+      <h1>Budget</h1>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section class="stats" aria-label="This month in total">
+      <div class="stat">
+        <span class="stat-label">Spent</span>
+        <dai-value class="stat-num" query="SELECT printf('$%.2f', COALESCE(SUM(cents), 0) / 100.0) FROM expenses WHERE substr(spent_on, 1, 7) = strftime('%Y-%m','now','localtime')"></dai-value>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Budget</span>
+        <dai-value class="stat-num" query="SELECT printf('$%.2f', COALESCE(SUM(limit_cents), 0) / 100.0) FROM categories"></dai-value>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Left</span>
+        <dai-value class="stat-num" query="SELECT CASE WHEN count(*) = 0 THEN 'No limits set' ELSE printf('%s$%.2f', CASE WHEN SUM(l - sp) &lt; 0 THEN '-' ELSE '' END, abs(SUM(l - sp)) / 100.0) END FROM (SELECT c.limit_cents AS l, COALESCE((SELECT SUM(e.cents) FROM expenses e WHERE e.category_id = c.id AND substr(e.spent_on, 1, 7) = strftime('%Y-%m','now','localtime')), 0) AS sp FROM categories c WHERE c.limit_cents &gt; 0)"></dai-value>
+      </div>
+    </section>
+
+    <section>
+      <h2>Categories</h2>
+      <div id="cats">
+        <dai-rows
+          empty="No categories yet. Add one below, like Groceries or Rent."
+          query="SELECT id, name,
+                   CASE WHEN limit_cents = 0 THEN '' ELSE printf('%.2f', limit_cents / 100.0) END AS limit_dollars,
+                   printf('$%.2f', sp / 100.0) AS spent_text,
+                   CASE WHEN limit_cents = 0 THEN 'No limit set'
+                        WHEN sp &gt; limit_cents THEN printf('$%.2f over', (sp - limit_cents) / 100.0)
+                        ELSE printf('$%.2f left', (limit_cents - sp) / 100.0) END AS left_text,
+                   CASE WHEN limit_cents &gt; 0 AND sp &gt; limit_cents THEN 1 ELSE 0 END AS over,
+                   CASE WHEN limit_cents &gt; 0 AND sp &gt; limit_cents THEN 0 ELSE 1 END AS ok,
+                   CASE WHEN limit_cents = 0 THEN ''
+                        ELSE substr('&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;', 1, MIN(10, CAST(sp * 10 / limit_cents AS INTEGER)))
+                          || substr('&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;', 1, 10 - MIN(10, CAST(sp * 10 / limit_cents AS INTEGER))) END AS bar,
+                   CASE WHEN NOT EXISTS (SELECT 1 FROM expenses x WHERE x.category_id = id) THEN 1 ELSE 0 END AS empty
+                 FROM (SELECT c.id AS id, c.name AS name, c.limit_cents AS limit_cents,
+                              COALESCE((SELECT SUM(e.cents) FROM expenses e WHERE e.category_id = c.id AND substr(e.spent_on, 1, 7) = strftime('%Y-%m','now','localtime')), 0) AS sp
+                       FROM categories c)
+                 ORDER BY name">
+          <template>
+            <div class="cat">
+              <div class="cat-top">
+                <strong class="cat-name" data-text="name"></strong>
+                <span class="cat-left" data-text="left_text"></span>
+              </div>
+              <div class="bar" aria-hidden="true">
+                <span class="bar-ok" data-when="ok" data-text="bar"></span>
+                <span class="bar-over" data-when="over" data-text="bar"></span>
+              </div>
+              <div class="cat-bottom">
+                <span class="spent"><span data-text="spent_text"></span> spent</span>
+                <label class="limit">
+                  <span>Limit</span>
+                  <input inputmode="decimal" placeholder="No limit" aria-label="Monthly limit"
+                         data-text="limit_dollars"
+                         data-run="UPDATE categories SET limit_cents = max(0, CAST(round(:typed * 100) AS INTEGER)) WHERE id = :id" />
+                </label>
+                <button type="button" class="link" data-when="empty"
+                        data-run="DELETE FROM categories WHERE id = :id AND NOT EXISTS (SELECT 1 FROM expenses WHERE category_id = :id)">Remove category</button>
+              </div>
+            </div>
+          </template>
+        </dai-rows>
+      </div>
+
+      <form id="category-form" class="card form" autocomplete="off">
+        <h3>New category</h3>
+        <div class="fields">
+          <label>Name <input id="cat-name" required maxlength="40" placeholder="e.g. Rent" /></label>
+          <label>Monthly limit <span class="optional">· optional</span>
+            <input id="cat-limit" inputmode="decimal" placeholder="0.00" /></label>
+        </div>
+        <div class="actions"><button type="submit">Add category</button></div>
+      </form>
+    </section>
+
+    <section>
+      <h2>Add an expense</h2>
+      <p id="no-cats" class="empty" hidden>Add a category first, then log what you spend in it.</p>
+      <form id="expense-form" class="card form" autocomplete="off">
+        <div class="fields">
+          <label>Amount <input id="amount" required inputmode="decimal" placeholder="0.00" /></label>
+          <label>What <input id="what" required maxlength="80" placeholder="e.g. Lunch" /></label>
+          <label>Category <select id="category" required></select></label>
+          <label>Date <input id="spent-on" type="date" required /></label>
+        </div>
+        <div class="actions"><button type="submit">Add expense</button></div>
+      </form>
+    </section>
+
+    <section>
+      <h2>This month&rsquo;s expenses</h2>
+      <dai-rows
+        empty="Nothing logged this month yet."
+        query="SELECT e.id AS id, e.what AS what, printf('$%.2f', e.cents / 100.0) AS amount_text, c.name AS category,
+                 CASE WHEN e.spent_on = date('now','localtime') THEN 'Today'
+                      WHEN e.spent_on = date('now','localtime','-1 day') THEN 'Yesterday'
+                      ELSE substr('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', e.spent_on) AS INTEGER) - 1) * 3 + 1, 3) || ' ' || CAST(strftime('%d', e.spent_on) AS INTEGER) END AS day
+               FROM expenses e JOIN categories c ON c.id = e.category_id
+               WHERE substr(e.spent_on, 1, 7) = strftime('%Y-%m','now','localtime')
+               ORDER BY e.spent_on DESC, e.id DESC LIMIT 100">
+        <template>
+          <div class="exp">
+            <div class="exp-main">
+              <strong data-text="what"></strong>
+              <span class="meta"><span data-text="day"></span> · <span data-text="category"></span></span>
+            </div>
+            <span class="amount" data-text="amount_text"></span>
+            <button type="button" class="link" data-run="DELETE FROM expenses WHERE id = :id">Delete</button>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
+
+    <footer>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{
+ "name": "07-chores",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "replicated: chores, completions, members",
+ "update": {
+  "a": "A-0-1 bravo: tap when done",
+  "b": "B-0-1 bravo: tap when done"
+ },
+ "delete": {
+  "a": "Delete"
+ },
+ "ops": {
+  "a": null,
+  "b": null
+ },
+ "typed": {
+  "a": 4,
+  "b": 4
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

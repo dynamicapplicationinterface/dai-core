@@ -1,0 +1,51 @@
+{
+ "name": "06-habits",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Mark done today",
+  "b": "Mark done today"
+ },
+ "delete": {
+  "a": null
+ },
+ "ops": {
+  "a": {
+   "I": 12,
+   "U": 0,
+   "D": 0
+  },
+  "b": {
+   "I": 3,
+   "U": 0,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 2,
+  "b": 2
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

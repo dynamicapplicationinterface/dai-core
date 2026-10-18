@@ -1,0 +1,51 @@
+{
+ "name": "10-trip",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Mark visited: A-1-0 alpha",
+  "b": "Mark visited: B-1-0 alpha"
+ },
+ "delete": {
+  "a": "Remove day Remove day 1: A-0-0 alpha"
+ },
+ "ops": {
+  "a": {
+   "I": 12,
+   "U": 1,
+   "D": 0
+  },
+  "b": {
+   "I": 4,
+   "U": 1,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 6,
+  "b": 6
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

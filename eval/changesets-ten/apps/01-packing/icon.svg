@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#2d6a73"/><rect x="22" y="34" width="56" height="46" rx="9" fill="#f4f1ea"/><path d="M38 34v-6a6 6 0 0 1 6-6h12a6 6 0 0 1 6 6v6" fill="none" stroke="#f4f1ea" stroke-width="6" stroke-linecap="round"/><path d="M36 58l9 9 19-19" fill="none" stroke="#2d6a73" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+```
+
+Notes:
+
+- **Sharing:** It is a personal list, so there is no Share button. The host's own menu can still send someone a copy. Their copy is separate, and the two will not merge.
+- **Items:** Removing an item deletes it for good. "Start over" unticks everything but keeps the items, so the list can be reused for the next trip.
+- **Dates and name:** Both are typed over in place and saved as you go. The dates are the small line above the title.
+- **Saving:** There is no save button. The kit shows a Save control only if the file is opened straight in a browser with no host.

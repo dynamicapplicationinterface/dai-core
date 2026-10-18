@@ -1,0 +1,114 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fbf6ee;
+  --card: #ffffff;
+  --ink: #2b2118;
+  --muted: #7a6b5c;
+  --line: #eadfce;
+  --accent: #b5502b;
+  --accent-ink: #ffffff;
+  --danger: #a3261f;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1d1712; --card: #2a221b; --ink: #f3e9dc; --muted: #b3a28f; --line: #3e342a;
+    --accent: #e88a63; --accent-ink: #1d1712; --danger: #ff8a80;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+
+/* Color runs to every edge; content stays clear of the strips a phone covers. */
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: calc(20px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
+    calc(40px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+}
+
+/* The top right corner belongs to the host's menu button. */
+header { display: flex; align-items: center; gap: 12px; padding-right: 56px; }
+h1 { margin: 0; flex: 1; font-size: 30px; letter-spacing: -0.02em; line-height: 1.1; }
+h2 { margin: 0 0 4px; font-size: 18px; }
+
+button, input, textarea {
+  font: inherit; color: inherit;
+}
+button {
+  min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card);
+}
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+button.quiet { background: transparent; color: var(--accent); border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--danger); border-color: var(--danger); }
+button.danger-solid { background: var(--danger); color: var(--bg); border-color: var(--danger); font-weight: 600; }
+
+input, textarea {
+  width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card);
+}
+textarea { resize: vertical; line-height: 1.5; }
+::placeholder { color: var(--muted); opacity: 0.6; font-style: italic; }
+
+label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+
+/* Filters */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border-radius: 999px; min-height: 44px; padding: 0 16px; }
+
+/* The list */
+.list { display: grid; gap: 8px; }
+.pick {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 12px;
+  width: 100%; text-align: left; padding: 10px 14px; border-radius: 12px;
+}
+.pick-title { font-weight: 600; }
+.pick-meta { grid-column: 1; font-size: 14px; color: var(--muted); }
+.pick-open { grid-column: 2; grid-row: 1 / span 2; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+
+/* A considered empty state */
+dai-rows:not(:has(*)), dai-rows > :only-child:not(button):not(article) { color: var(--muted); }
+.list > :not(button), .recipe > :not(article) {
+  margin: 0; padding: 18px; text-align: center; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: 12px;
+}
+
+/* The open recipe */
+.card {
+  display: grid; gap: 14px; padding: 16px; border-radius: 16px;
+  background: var(--card); border: 1px solid var(--line);
+}
+.name {
+  font-size: 24px; font-weight: 700; letter-spacing: -0.01em; min-height: 52px;
+  border-color: transparent; background: transparent; padding-left: 0;
+}
+.name:hover, .name:focus { border-color: var(--line); padding-left: 12px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.block textarea { background: var(--bg); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sure { padding: 12px; border-radius: 12px; border: 1px solid var(--danger); }
+.sure span { flex: 1 1 100%; color: var(--ink); }
+
+/* Add form */
+.add {
+  display: grid; gap: 12px; padding: 16px; border-radius: 16px;
+  background: var(--card); border: 1px solid var(--line);
+}
+
+footer { display: flex; justify-content: flex-end; }
+dai-save { display: inline-block; padding: 12px 22px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
+
+/* On a wide window, the same single column, a little roomier. */
+@media (min-width: 720px) {
+  main { padding-top: calc(40px + var(--dai-safe-top, 0px)); }
+  h1 { font-size: 36px; }
+}

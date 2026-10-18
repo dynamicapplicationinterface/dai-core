@@ -1,0 +1,51 @@
+{
+ "name": "04-budget",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Monthly limit  UPDATE categories SET limit_cents = max(0, CAST(round(:typed * 10",
+  "b": "Monthly limit  UPDATE categories SET limit_cents = max(0, CAST(round(:typed * 10"
+ },
+ "delete": {
+  "a": "Delete   DELETE FROM expenses WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 15,
+   "U": 0,
+   "D": 1
+  },
+  "b": {
+   "I": 4,
+   "U": 0,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 8,
+  "b": 8
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

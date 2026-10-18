@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A packing list you tick off as the bag fills" />
+  <meta name="dai:does" content="Keep everything for your trip in one list you can add to" />
+  <meta name="dai:does" content="Tick each thing off as it goes in the bag" />
+  <meta name="dai:does" content="Show what is still missing before you leave" />
+  <meta name="theme-color" content="#f4f1ea" />
+  <title>Packing list</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Seed rows: local, and safe to run on every open.
+    INSERT OR IGNORE INTO trip (id, name, dates) VALUES (1, 'My trip', 'Add your dates');
+
+    INSERT OR IGNORE INTO items (id, kind, what, packed) VALUES
+      (1, 'Documents', 'Passport or ID', 0),
+      (2, 'Documents', 'Tickets and bookings', 0),
+      (3, 'Clothes', 'Underwear and socks', 0),
+      (4, 'Clothes', 'Jacket', 0),
+      (5, 'Toiletries', 'Toothbrush', 1),
+      (6, 'Toiletries', 'Medication', 0),
+      (7, 'Tech', 'Phone charger', 1),
+      (8, 'Tech', 'Headphones', 0);
+  </script>
+
+  <main>
+    <header>
+      <!-- The trip's name and dates are typed over in place. -->
+      <dai-rows query="SELECT id, name, dates FROM trip WHERE id = 1">
+        <template>
+          <div class="trip">
+            <input class="dates" aria-label="When the trip is" data-text="dates"
+                   data-run="UPDATE trip SET dates = :typed WHERE id = 1" maxlength="40" />
+            <input class="name" aria-label="Name of the trip" data-text="name"
+                   data-run="UPDATE trip SET name = :typed WHERE id = 1" maxlength="60" />
+          </div>
+        </template>
+      </dai-rows>
+      <p class="progress">
+        <dai-value query="SELECT count(*) FROM items WHERE packed = 1"></dai-value>
+        of
+        <dai-value query="SELECT count(*) FROM items"></dai-value>
+        packed
+      </p>
+    </header>
+
+    <section aria-label="Still to pack">
+      <h2>Still to pack</h2>
+      <dai-rows query="SELECT id, kind, what FROM items WHERE packed = 0 ORDER BY kind, id"
+                empty="Everything is in the bag. Have a good trip.">
+        <template>
+          <div class="row">
+            <label class="item">
+              <input type="checkbox" data-run="UPDATE items SET packed = 1 WHERE id = :id" />
+              <span class="box" aria-hidden="true"></span>
+              <span class="what" data-text="what"></span>
+              <span class="kind" data-text="kind"></span>
+            </label>
+            <button type="button" class="remove" aria-label="Remove from the list"
+                    data-run="DELETE FROM items WHERE id = :id">×</button>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section aria-label="Packed">
+      <h2>In the bag</h2>
+      <dai-rows query="SELECT id, kind, what FROM items WHERE packed = 1 ORDER BY kind, id"
+                empty="Nothing packed yet. Tick things off above as they go in.">
+        <template>
+          <div class="row done">
+            <label class="item">
+              <input type="checkbox" checked data-run="UPDATE items SET packed = 0 WHERE id = :id" />
+              <span class="box" aria-hidden="true"></span>
+              <span class="what" data-text="what"></span>
+              <span class="kind" data-text="kind"></span>
+            </label>
+            <button type="button" class="remove" aria-label="Remove from the list"
+                    data-run="DELETE FROM items WHERE id = :id">×</button>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
+
+    <dai-form class="add" run="INSERT INTO items (kind, what) VALUES (:kind, :what)">
+      <select name="kind" aria-label="Group">
+        <option>Clothes</option>
+        <option>Toiletries</option>
+        <option>Documents</option>
+        <option>Tech</option>
+        <option>Other</option>
+      </select>
+      <input name="what" placeholder="Don't forget…" required maxlength="80" aria-label="Item" />
+      <button>Add</button>
+    </dai-form>
+
+    <footer>
+      <button type="button" class="quiet" data-run="UPDATE items SET packed = 0">Start over: untick everything</button>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./dai-kit.js"></script>
+</body>
+</html>

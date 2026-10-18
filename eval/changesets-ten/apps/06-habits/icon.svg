@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#2f7d54"/><g fill="#dcefe3"><circle cx="24" cy="68" r="7"/><circle cx="42" cy="68" r="7"/><circle cx="60" cy="68" r="7"/><circle cx="78" cy="68" r="7" opacity="0.4"/></g><path d="M26 38l16 16 32-30" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>
+```
+
+How it works:
+
+- **Shape:** solo. It's one person's habits on one device, so nothing is shared or merged. A copy you send someone is an ordinary document they can write to.
+- **Each habit** has a "Mark done today" button and a row of the last seven days. Tap any day to mark it or unmark it, which is how you fix a day you forgot.
+- **Streaks and counts** are worked out from the check-ins each time the screen is drawn. Nothing like that is stored.
+- **A streak** counts back from today, or from yesterday if today isn't marked yet. A streak doesn't break until a whole day has passed unmarked.
+- **Every tap** is saved to the document as you make it. There's no Save button under the DAI opener. A small "Save to this file" button appears only if the file is opened directly in a browser with no host.
+- **Archive** hides a habit but keeps its history, and "Bring back" restores it.
+- **Three example habits** with a few check-ins are added on first open, once. If you delete them they stay deleted.

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#2f7a4f"/><circle cx="50" cy="50" r="30" fill="#f3f2ec"/><path d="M50 22v56M38 40c0-8 24-8 24 0s-24 12-24 20 24 8 24 0" fill="none" stroke="#2f7a4f" stroke-width="7" stroke-linecap="round"/></svg>
+```
+
+A few notes on how it behaves:
+
+- **Categories.** Four examples come with it (Groceries, Eating out, Transport, Fun). Add your own below the list, and type over any limit to change it. A category with no limit still tracks spending. A category can only be removed while it has no expenses, so nothing you logged disappears by accident.
+- **Expenses.** Pick the category and the date, which defaults to today. Delete one from the list and the totals update. The list shows this month's expenses.
+- **Over budget.** The bar and the "left" figure turn red and read "$X over".
+- **Totals.** Spent, Budget and Left across all categories are always worked out from the expenses, never stored.
+- **Sharing.** This is a one-person document. If you want to share it with a partner so both of you add expenses and both sets are kept, say so. That makes it a different kind of document, with shared tables, so it needs to be built that way from the start.
+- **Untested.** I haven't run this. Open it once to check it before you rely on it.

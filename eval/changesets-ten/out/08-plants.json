@@ -1,0 +1,51 @@
+{
+ "name": "08-plants",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Watered   INSERT INTO care_log (plant_id, kind) VALUES (:id, 'water')",
+  "b": "Watered   INSERT INTO care_log (plant_id, kind) VALUES (:id, 'water')"
+ },
+ "delete": {
+  "a": "Remove Remove this plant and its history  DELETE FROM plants WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 10,
+   "U": 0,
+   "D": 1
+  },
+  "b": {
+   "I": 3,
+   "U": 0,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 4,
+  "b": 4
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

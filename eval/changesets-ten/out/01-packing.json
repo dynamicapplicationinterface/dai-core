@@ -1,0 +1,53 @@
+{
+ "name": "01-packing",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "UPDATE items SET packed = 1 WHERE id = :id",
+  "b": "UPDATE items SET packed = 1 WHERE id = :id"
+ },
+ "delete": {
+  "a": "× Remove from the list  DELETE FROM items WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 11,
+   "U": 1,
+   "D": 1
+  },
+  "b": {
+   "I": 2,
+   "U": 1,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 2,
+  "b": 2
+ },
+ "flags": [
+  "items:pending"
+ ],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}
