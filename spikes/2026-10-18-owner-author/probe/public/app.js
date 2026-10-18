@@ -101,7 +101,26 @@ async function api(path, body) {
 }
 
 // ---- Passkey (C) and PRF (D i) -------------------------------------------
-const PRF_SALT = sha256(enc.encode("dai-spike-prf-v1"));
+let PRF_SALT = null;
+
+/*
+ * Safari shows the passkey sheet only when create()/get() runs inside the
+ * tap itself: a network round trip first spends the gesture, and the call
+ * fails with NotAllowedError and no sheet. So the challenges are fetched
+ * ahead of the tap, and refreshed well inside the store's five minutes.
+ */
+const pending = { register: null, login: null };
+async function prefetch() {
+  const [register, login] = await Promise.all([api("/api/register/options", {}), api("/api/login/options", {})]);
+  pending.register = register;
+  pending.login = login;
+}
+function take(kind) {
+  const opts = pending[kind];
+  pending[kind] = null;
+  if (!opts) throw new Error("The challenge is not ready yet: wait a second and tap again.");
+  return opts;
+}
 
 function readPrf(cred, where) {
   const ext = cred.getClientExtensionResults?.() ?? {};
@@ -113,7 +132,7 @@ function readPrf(cred, where) {
 
 async function createOwner() {
   try {
-    const opts = await api("/api/register/options", {});
+    const opts = take("register");
     const cred = await navigator.credentials.create({
       publicKey: {
         challenge: b64u.to(opts.challenge),
@@ -122,7 +141,7 @@ async function createOwner() {
         pubKeyCredParams: [{ type: "public-key", alg: -7 }],
         authenticatorSelection: { authenticatorAttachment: "platform", residentKey: "required", userVerification: "required" },
         attestation: "none",
-        extensions: { prf: { eval: { first: await PRF_SALT } } },
+        extensions: { prf: { eval: { first: PRF_SALT } } },
       },
     });
     const prf = readPrf(cred, "create");
@@ -138,6 +157,7 @@ async function createOwner() {
     if (prf.secret) await takePrf(prf.secret);
     note("Owner passkey made. Signing in once more reads PRF the way every later sign-in will.");
     await enroll();
+    prefetch().catch(() => {});
   } catch (e) {
     passkeyFailed(e);
   }
@@ -145,13 +165,13 @@ async function createOwner() {
 
 async function signIn() {
   try {
-    const opts = await api("/api/login/options", {});
+    const opts = take("login");
     const cred = await navigator.credentials.get({
       publicKey: {
         challenge: b64u.to(opts.challenge),
         rpId: opts.rpId,
         userVerification: "required",
-        extensions: { prf: { eval: { first: await PRF_SALT } } },
+        extensions: { prf: { eval: { first: PRF_SALT } } },
       },
     });
     const prf = readPrf(cred, "sign-in");
@@ -167,6 +187,7 @@ async function signIn() {
     state.session = done.session;
     if (prf.secret) await takePrf(prf.secret);
     await enroll();
+    prefetch().catch(() => {});
     note("Signed in as the owner.");
   } catch (e) {
     passkeyFailed(e);
@@ -179,6 +200,7 @@ async function takePrf(secret) {
 }
 
 function passkeyFailed(e) {
+  prefetch().catch(() => {});
   note(`Passkey: ${e.name ?? "Error"}: ${e.message}`, true);
   $("nopasskey").hidden = false;
 }
@@ -415,6 +437,9 @@ const guard = (fn) => async () => {
 
 async function start() {
   state.release = hex(await sha256(enc.encode(await (await fetch("/app.js", { cache: "no-store" })).text())));
+  PRF_SALT = await sha256(enc.encode("dai-spike-prf-v1"));
+  await prefetch().catch((e) => note(`Could not reach the store: ${e.message}`, true));
+  setInterval(() => prefetch().catch(() => {}), 3 * 60_000);
   await loadAuthor();
   if (!window.PublicKeyCredential) {
     state.platformAuthenticator = "no WebAuthn";
