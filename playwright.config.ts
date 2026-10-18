@@ -13,7 +13,9 @@ import { defineConfig, devices } from "@playwright/test";
  * that merely mentions "the page" in prose stays on all three.
  */
 const specs = fileURLToPath(new URL("./tests/", import.meta.url));
-const NODE_ONLY = readdirSync(specs)
+// Recursive, so a spec in a folder (tests/changesets/) is decided the same way.
+const NODE_ONLY = (readdirSync(specs, { recursive: true }) as string[])
+  .map((file) => file.split("\\").join("/"))
   .filter((file) => file.endsWith(".spec.ts"))
   .filter((file) => !/\b(page|browser|context|browserName)\b/.test(readFileSync(specs + file, "utf8")))
   .map((file) => `**/${file}`);
