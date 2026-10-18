@@ -16,14 +16,24 @@ Before starting, note: Settings › General › About › **iOS Version**.
 
 1. Open the probe URL in Safari. The page should say *Running as: Safari
    tab*. Note the **author id** (call it S1).
-2. Tap **Create owner passkey**. Approve with Face ID and save the passkey.
-3. Tap **Sign in with passkey** once. This reads PRF the way every later
-   sign-in does.
-4. Under *Keychain secret*, tap **Make and save a secret**. The page
-   reloads.
-   - **Q1.** Did Safari offer to save the password? If yes, tap Save.
-5. Type `Safari 1` in the row field and tap **Write a row**.
-6. **Copy readings** (R1).
+2. The keychain secret: done in the first pass. Safari saved it and filled
+   it back (fingerprint `4fbcb44beb3c75bd`). Do not make another one. Fill
+   it from Passwords (lower field, then **Use this secret**). Check that the
+   fingerprint reads the same.
+   - **Q1.** Did Safari offer to save the password when you made it? (Yes,
+     going by the first pass. Confirm.)
+3. The owner passkey:
+   - If the first pass made one, tap **Sign in with passkey**.
+   - If not, tap **Create owner passkey** and save the passkey, then tap
+     **Sign in with passkey** once.
+
+   Either way, the sign-in reads PRF the way every later sign-in does.
+   - **Q1b.** Did the first pass make a passkey? Check Settings ›
+     Passwords for `opendai.workers.dev`, and say how many passkeys it
+     lists.
+4. Tap **Write a row** with `Safari 1b`. The `Safari 1` row from the first
+   pass uploads with it.
+5. **Copy readings** (R1).
 
 ## 2. Home Screen app: a second author, same owner
 

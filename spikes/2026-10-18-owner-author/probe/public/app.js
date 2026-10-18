@@ -48,9 +48,28 @@ const state = {
 function note(line, bad = false) {
   const at = new Date().toISOString().slice(11, 19);
   state.log.push(`${at} ${line}`);
+  keep();
   $("note").textContent = line;
   $("note").className = bad ? "bad" : "muted";
   render();
+}
+
+/*
+ * The keychain form's submission reloads the page (that is what makes Safari
+ * offer to save the password), so the owner session, the PRF readings and
+ * the log are kept for this tab across it. The PRF secret itself is not: a
+ * sign-in after the reload reads it again. A wipe clears all of this.
+ */
+function keep() {
+  const { owner, session, prf, platformAuthenticator, log } = state;
+  sessionStorage.setItem("dai-spike-state", JSON.stringify({ owner, session, prf: { atCreate: prf.atCreate, atSignIn: prf.atSignIn, fp: prf.fp }, platformAuthenticator, log }));
+}
+function recall() {
+  const kept = JSON.parse(sessionStorage.getItem("dai-spike-state") ?? "null");
+  if (!kept) return;
+  Object.assign(state, { owner: kept.owner, session: kept.session, log: kept.log ?? [] });
+  Object.assign(state.prf, kept.prf);
+  if (state.prf.fp) state.log.push("(reloaded: PRF secret not held until the next sign-in)");
 }
 
 // ---- IndexedDB: the author key and the local working copy ----------------
@@ -436,6 +455,7 @@ const guard = (fn) => async () => {
 };
 
 async function start() {
+  recall();
   state.release = hex(await sha256(enc.encode(await (await fetch("/app.js", { cache: "no-store" })).text())));
   PRF_SALT = await sha256(enc.encode("dai-spike-prf-v1"));
   await prefetch().catch((e) => note(`Could not reach the store: ${e.message}`, true));
