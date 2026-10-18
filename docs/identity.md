@@ -113,6 +113,8 @@ The key is stored in the host's IndexedDB under a key name owned by `src/keys.ts
 
 **Loss.** If storage is wiped, the device mints a new key and becomes a new author. Old documents stay readable and mergeable; the person can no longer write as their old author id. This is the accepted V1 behavior, stated on screen through a one-line kit hook whose default is "This device is a new player here. Your earlier moves are still on the board." Apps may say it their own way with `daiKit.onNewPlayer(fn)`; none says identity, key or storage. The host decides when it applies: it made the key on this page, and its library says this device wrote the document before (`IDENTITY-LOSS-SENTENCE` in `src/rules.ts`). Nothing pretends continuity that does not exist. The sentence covers a partial loss, where the library remembers the document and the key is gone. A full wipe cannot be detected from what is left on the device: with the library gone too, the device has nothing that says it ever wrote the document, and it opens as a new player without being told. A recovery phrase is what would change that, by letting the old key come back; it is not built.
 
+**Under an owner** (ruled 18 October, backlog R-B and R-E), a wipe still makes a new author, and it no longer loses the working copy: the new context authenticates as the owner, recovers the copy from the owner's store, and continues it as a new author of the same working document. The library shows one copy per working document, never one per author. Not built.
+
 **Second device.** Two ways one author can write from two devices; neither is built:
 
 - Consumer: the person carries the key. A recovery phrase (the wallet and password-manager pattern) shown from a "Your key" screen, or the key wrapped under a passphrase and moved through the store. Until they do it, phone and laptop are two authors, correctly.
@@ -181,3 +183,4 @@ Each is written and shown red before any runtime change, per the standing rule. 
 ## Rulings (18 Oct)
 
 - [x] Four identities: release, working document, owner, author. One person is one owner and many authors; shared author keys are rejected (above, "Four identities"; backlog R-A).
+- [x] Wipes: a wipe makes a new author under the same owner; the library shows one copy per working document, never one per author (above, under Loss; backlog R-E).

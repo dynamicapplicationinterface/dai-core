@@ -238,21 +238,22 @@ principle beside them.
    the line that changes when the key work lands (Phase 3.1). *Rejected:*
    extractable keys kept for an export V1 does not ship; a person-level
    identity system. *Principle:* P2.
-5. **A linked successor on loss.** A backup restored into a new context keeps
-   the old history under its original signatures and continues as a successor
-   document under the new key, the successor naming its predecessor (the
-   succession contract, `supersedes`). Old signatures are never rewritten; a
-   shared seat is never inherited by the new context. *Rejected:* silently
-   re-keying or reassigning the old author to the new context. *Principle:*
-   P1 and P2.
+5. **A new author under the same owner on loss.** (Replaced 18 October by
+   R-E, below; this was "a linked successor on loss".) A wiped or new context
+   recovers the working copy through its owner and continues it as a new
+   author of the same working document. The old history keeps its original
+   signatures; a shared seat is never inherited by the new context.
+   *Rejected:* silently re-keying or reassigning the old author to the new
+   context; a successor document per lost key. *Principle:* P1 and P2.
 6. **Four storage states, as host evidence, one status shown.** Four facts the
    host tracks: *remembered here* (indexed in this browser), *saved here* (the
    latest acknowledged change reached local storage), *ready offline* (a
-   tested offline reopen path exists), *kept outside the browser* (an export
-   the person made, with its date). The person sees one status at a time,
+   tested offline reopen path exists), *kept* (the owner's store acknowledged
+   the checkpoint; reworded 18 October by R-H, below, from "kept outside the
+   browser", an export). The person sees one status at a time,
    normally "Saved in this browser"; "ready offline" is claimed only after a
-   tested reopen; the last export date stays discoverable, with one quiet note
-   when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
+   recorded offline reopen; the last export date stays discoverable, with one
+   quiet note when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
    backups; a storage dashboard; repeated prompts. *Principle:* P3.
 7. **Three share meanings, owned by the host.** An app requests an intent and
    never chooses a destination.
@@ -392,6 +393,39 @@ passkey on each save, and a data key held under one path only. *Evidence:*
 Home Screen app, and after the wipe; the keychain credential survived the
 wipe and filled in both contexts. **A.** One phone, one account, one passkey
 provider. A second of each is read before Gate C.
+
+**R-E. A wipe makes a new author under the same owner.** The library shows
+one copy per working document, never one per author. Ruling 5 above now
+carries this. *Rejected:* a successor document per lost key (ruling 5 as
+first written), and a copy listed per author. *Evidence:* "Owner/author
+spike", C: two wipes in one sitting made two new Safari authors under one
+owner, four enrolled authors in all, and the rows of every earlier author
+came back.
+
+**R-G. Freshness witnesses.**
+- **A surviving second client** remembers the latest head it saw. On its
+  next contact after another client recovered from the store, it reports a
+  stale recovery. It is free and needs no ceremony.
+- **WebAuthn `largeBlob` as a single-device witness:** one bounded
+  experiment. Write a checkpoint digest, wipe, read it back, and on a second
+  iPhone. If it fails, stop.
+- **WebAuthn signature counters are not a source of freshness:** synced
+  passkeys report zero.
+
+*Rejected:* signature counters as a witness. *Evidence:* "Owner/author
+spike", C: the Home Screen app survived both Safari wipes with its own rows
+and author, so a surviving second client is what a phone already has; R-B's
+trust line, that a dishonest store can serve an older valid checkpoint after
+a total wipe.
+
+**R-H. Offline.** A local edit is real work once saved here: "Saved in this
+browser". It is recoverable from elsewhere only once the store acknowledges
+it: "Kept". The second word is never shown without the acknowledgment, and
+"ready offline" is never shown before a recorded offline reopen. Ruling 6
+above carries the word. *Rejected:* "Kept" for a save the store has not
+acknowledged. *Evidence:* §1, "Where it fails", item 3: no device reading of
+an offline reopen is recorded, and both WebKit offline tests are skipped
+(`tests/offline.ts:19-22`).
 
 ### manifestVersion 3
 
