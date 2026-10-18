@@ -1,0 +1,10 @@
+{
+  "name": "DAI owner spike",
+  "short_name": "DAI spike",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [{ "src": "/icon.png", "sizes": "180x180", "type": "image/png" }]
+}

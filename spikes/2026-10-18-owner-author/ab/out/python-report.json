@@ -1,0 +1,85 @@
+{
+  "A": {
+    "ab": {
+      "result": {
+        "applied": 0,
+        "duplicate": 1,
+        "rejected": [
+          "d2ace9cd355354227a647e968169bd2b:2"
+        ],
+        "newReplicas": 0,
+        "refusedBatches": [
+          {
+            "author": "0qzpzTVTVCJ6ZH6WgWm9Kw",
+            "reason": "AUTHOR_EQUIVOCATED"
+          }
+        ]
+      },
+      "admitted": "# receipts\nd2ace9cd355354227a647e968169bd2b:1\t0\n# holders\n# voided\n# equivocated\nd2ace9cd355354227a647e968169bd2b\treceipts\t2\n# closed\n"
+    },
+    "ba": {
+      "result": {
+        "applied": 0,
+        "duplicate": 1,
+        "rejected": [
+          "d2ace9cd355354227a647e968169bd2b:2"
+        ],
+        "newReplicas": 0,
+        "refusedBatches": [
+          {
+            "author": "0qzpzTVTVCJ6ZH6WgWm9Kw",
+            "reason": "AUTHOR_EQUIVOCATED"
+          }
+        ]
+      },
+      "admitted": "# receipts\nd2ace9cd355354227a647e968169bd2b:1\t0\n# holders\n# voided\n# equivocated\nd2ace9cd355354227a647e968169bd2b\treceipts\t2\n# closed\n"
+    },
+    "converged": false
+  },
+  "Bi": {
+    "ab": {
+      "result": {
+        "applied": 2,
+        "duplicate": 2,
+        "rejected": [],
+        "newReplicas": 1,
+        "refusedBatches": []
+      },
+      "admitted": "# receipts\nac9d92081bd3b98a2f7f63bbac4187da:3\t0\nac9d92081bd3b98a2f7f63bbac4187da:4\t0\nc2234035e72e5f255ae21d8e846f5b6d:1\t0\nc2234035e72e5f255ae21d8e846f5b6d:2\t0\n# holders\n# voided\n# equivocated\n# closed\n"
+    },
+    "ba": {
+      "result": {
+        "applied": 2,
+        "duplicate": 2,
+        "rejected": [],
+        "newReplicas": 0,
+        "refusedBatches": []
+      },
+      "admitted": "# receipts\nac9d92081bd3b98a2f7f63bbac4187da:3\t0\nac9d92081bd3b98a2f7f63bbac4187da:4\t0\nc2234035e72e5f255ae21d8e846f5b6d:1\t0\nc2234035e72e5f255ae21d8e846f5b6d:2\t0\n# holders\n# voided\n# equivocated\n# closed\n"
+    },
+    "converged": true
+  },
+  "Bii": {
+    "ab": {
+      "result": {
+        "applied": 1,
+        "duplicate": 2,
+        "rejected": [],
+        "newReplicas": 1,
+        "refusedBatches": []
+      },
+      "admitted": "# receipts\n18557d33dbcbb34441a861245f360662:1\t0\n5a5107503632140ee7275a9c075d592c:2\t0\n5a5107503632140ee7275a9c075d592c:3\t0\n# holders\n# voided\n# equivocated\n# closed\n"
+    },
+    "ba": {
+      "result": {
+        "applied": 1,
+        "duplicate": 2,
+        "rejected": [],
+        "newReplicas": 0,
+        "refusedBatches": []
+      },
+      "admitted": "# receipts\n18557d33dbcbb34441a861245f360662:1\t0\n5a5107503632140ee7275a9c075d592c:2\t0\n5a5107503632140ee7275a9c075d592c:3\t0\n# holders\n# voided\n# equivocated\n# closed\n"
+    },
+    "converged": true
+  }
+}

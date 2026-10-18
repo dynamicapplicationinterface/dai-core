@@ -1,0 +1,21 @@
+# Spike probe, 18 October (experiments C and D). Its own Worker and its own
+# Durable Object: no binding, bucket or object shared with the relay or the
+# reference store. `npx wrangler deploy` from this directory; `npx wrangler
+# delete` from here removes it when the spike is done.
+
+name = "dai-spike-owner"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "OwnerStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OwnerStore"]

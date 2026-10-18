@@ -1,0 +1,603 @@
+{
+  "A": {
+    "author": "d2ace9cd355354227a647e968169bd2b",
+    "privateKeyExtractable": false,
+    "seqAllocated": {
+      "a": 2,
+      "b": 2
+    },
+    "ab": {
+      "applied": 0,
+      "duplicate": 1,
+      "rejected": [
+        "d2ace9cd355354227a647e968169bd2b:2"
+      ],
+      "newReplicas": 0,
+      "refusedBatches": [
+        {
+          "author": "0qzpzTVTVCJ6ZH6WgWm9Kw",
+          "reason": "AUTHOR_EQUIVOCATED"
+        }
+      ],
+      "conflicts": 0
+    },
+    "ba": {
+      "applied": 0,
+      "duplicate": 1,
+      "rejected": [
+        "d2ace9cd355354227a647e968169bd2b:2"
+      ],
+      "newReplicas": 0,
+      "refusedBatches": [
+        {
+          "author": "0qzpzTVTVCJ6ZH6WgWm9Kw",
+          "reason": "AUTHOR_EQUIVOCATED"
+        }
+      ],
+      "conflicts": 0
+    },
+    "converged": false,
+    "a": {
+      "own": "d2ace9cd355354227a647e968169bd2b",
+      "rows": [
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base",
+          "cents": 100,
+          "parents": "[]",
+          "lc": 1,
+          "batch": "e213752136bb7958cd5d62022b091203"
+        },
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "written in Safari",
+          "cents": 250,
+          "parents": "[]",
+          "lc": 2,
+          "batch": "2e69c970e1940c4d79dc7df99800cb61"
+        }
+      ],
+      "heads": [
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base",
+          "cents": 100,
+          "deleted": 0
+        }
+      ],
+      "current": [
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base",
+          "cents": 100,
+          "conflicted": 0
+        }
+      ],
+      "conflicts": [],
+      "equivocated": [
+        {
+          "author": "d2ace9cd355354227a647e968169bd2b",
+          "tbl": "receipts",
+          "seq": 2
+        }
+      ]
+    },
+    "b": {
+      "own": "d2ace9cd355354227a647e968169bd2b",
+      "rows": [
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base",
+          "cents": 100,
+          "parents": "[]",
+          "lc": 1,
+          "batch": "e213752136bb7958cd5d62022b091203"
+        },
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:2",
+          "entity": "33333333333333333333333333333333",
+          "store": "written in the installed app",
+          "cents": 975,
+          "parents": "[]",
+          "lc": 2,
+          "batch": "bc327b69855ca9bb8d4b61220099c039"
+        }
+      ],
+      "heads": [
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base",
+          "cents": 100,
+          "deleted": 0
+        }
+      ],
+      "current": [
+        {
+          "id": "d2ace9cd355354227a647e968169bd2b:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base",
+          "cents": 100,
+          "conflicted": 0
+        }
+      ],
+      "conflicts": [],
+      "equivocated": [
+        {
+          "author": "d2ace9cd355354227a647e968169bd2b",
+          "tbl": "receipts",
+          "seq": 2
+        }
+      ]
+    }
+  },
+  "Bi": {
+    "authors": {
+      "a": "ac9d92081bd3b98a2f7f63bbac4187da",
+      "b": "c2234035e72e5f255ae21d8e846f5b6d"
+    },
+    "ab": {
+      "applied": 2,
+      "duplicate": 2,
+      "rejected": [],
+      "newReplicas": 1,
+      "refusedBatches": [],
+      "conflicts": 0
+    },
+    "ba": {
+      "applied": 2,
+      "duplicate": 2,
+      "rejected": [],
+      "newReplicas": 0,
+      "refusedBatches": [],
+      "conflicts": 0
+    },
+    "converged": true,
+    "a": {
+      "own": "ac9d92081bd3b98a2f7f63bbac4187da",
+      "rows": [
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base one",
+          "cents": 100,
+          "parents": "[]",
+          "lc": 1,
+          "batch": "78dd04d2003abd73715cc41e686a33ab"
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "parents": "[]",
+          "lc": 2,
+          "batch": "78dd04d2003abd73715cc41e686a33ab"
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "parents": "[\"ac9d92081bd3b98a2f7f63bbac4187da:1\"]",
+          "lc": 3,
+          "batch": "a878f5681286c662971663a77146e425"
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:4",
+          "entity": "33333333333333333333333333333333",
+          "store": "new in Safari",
+          "cents": 300,
+          "parents": "[]",
+          "lc": 4,
+          "batch": "a878f5681286c662971663a77146e425"
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:1",
+          "entity": "22222222222222222222222222222222",
+          "store": "two, edited in the app",
+          "cents": 222,
+          "parents": "[\"ac9d92081bd3b98a2f7f63bbac4187da:2\"]",
+          "lc": 3,
+          "batch": "1ba9679d8da7435df6bca82ced98b771"
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:2",
+          "entity": "44444444444444444444444444444444",
+          "store": "new in the app",
+          "cents": 400,
+          "parents": "[]",
+          "lc": 4,
+          "batch": "1ba9679d8da7435df6bca82ced98b771"
+        }
+      ],
+      "heads": [
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "deleted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:1",
+          "entity": "22222222222222222222222222222222",
+          "store": "two, edited in the app",
+          "cents": 222,
+          "deleted": 0
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:4",
+          "entity": "33333333333333333333333333333333",
+          "store": "new in Safari",
+          "cents": 300,
+          "deleted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:2",
+          "entity": "44444444444444444444444444444444",
+          "store": "new in the app",
+          "cents": 400,
+          "deleted": 0
+        }
+      ],
+      "current": [
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "conflicted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:1",
+          "entity": "22222222222222222222222222222222",
+          "store": "two, edited in the app",
+          "cents": 222,
+          "conflicted": 0
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:4",
+          "entity": "33333333333333333333333333333333",
+          "store": "new in Safari",
+          "cents": 300,
+          "conflicted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:2",
+          "entity": "44444444444444444444444444444444",
+          "store": "new in the app",
+          "cents": 400,
+          "conflicted": 0
+        }
+      ],
+      "conflicts": [],
+      "equivocated": []
+    },
+    "b": {
+      "own": "c2234035e72e5f255ae21d8e846f5b6d",
+      "rows": [
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base one",
+          "cents": 100,
+          "parents": "[]",
+          "lc": 1,
+          "batch": "78dd04d2003abd73715cc41e686a33ab"
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "parents": "[]",
+          "lc": 2,
+          "batch": "78dd04d2003abd73715cc41e686a33ab"
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "parents": "[\"ac9d92081bd3b98a2f7f63bbac4187da:1\"]",
+          "lc": 3,
+          "batch": "a878f5681286c662971663a77146e425"
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:4",
+          "entity": "33333333333333333333333333333333",
+          "store": "new in Safari",
+          "cents": 300,
+          "parents": "[]",
+          "lc": 4,
+          "batch": "a878f5681286c662971663a77146e425"
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:1",
+          "entity": "22222222222222222222222222222222",
+          "store": "two, edited in the app",
+          "cents": 222,
+          "parents": "[\"ac9d92081bd3b98a2f7f63bbac4187da:2\"]",
+          "lc": 3,
+          "batch": "1ba9679d8da7435df6bca82ced98b771"
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:2",
+          "entity": "44444444444444444444444444444444",
+          "store": "new in the app",
+          "cents": 400,
+          "parents": "[]",
+          "lc": 4,
+          "batch": "1ba9679d8da7435df6bca82ced98b771"
+        }
+      ],
+      "heads": [
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "deleted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:1",
+          "entity": "22222222222222222222222222222222",
+          "store": "two, edited in the app",
+          "cents": 222,
+          "deleted": 0
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:4",
+          "entity": "33333333333333333333333333333333",
+          "store": "new in Safari",
+          "cents": 300,
+          "deleted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:2",
+          "entity": "44444444444444444444444444444444",
+          "store": "new in the app",
+          "cents": 400,
+          "deleted": 0
+        }
+      ],
+      "current": [
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "conflicted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:1",
+          "entity": "22222222222222222222222222222222",
+          "store": "two, edited in the app",
+          "cents": 222,
+          "conflicted": 0
+        },
+        {
+          "id": "ac9d92081bd3b98a2f7f63bbac4187da:4",
+          "entity": "33333333333333333333333333333333",
+          "store": "new in Safari",
+          "cents": 300,
+          "conflicted": 0
+        },
+        {
+          "id": "c2234035e72e5f255ae21d8e846f5b6d:2",
+          "entity": "44444444444444444444444444444444",
+          "store": "new in the app",
+          "cents": 400,
+          "conflicted": 0
+        }
+      ],
+      "conflicts": [],
+      "equivocated": []
+    }
+  },
+  "Bii": {
+    "authors": {
+      "a": "5a5107503632140ee7275a9c075d592c",
+      "b": "18557d33dbcbb34441a861245f360662"
+    },
+    "ab": {
+      "applied": 1,
+      "duplicate": 2,
+      "rejected": [],
+      "newReplicas": 1,
+      "refusedBatches": [],
+      "conflicts": 1
+    },
+    "ba": {
+      "applied": 1,
+      "duplicate": 2,
+      "rejected": [],
+      "newReplicas": 0,
+      "refusedBatches": [],
+      "conflicts": 1
+    },
+    "converged": true,
+    "a": {
+      "own": "5a5107503632140ee7275a9c075d592c",
+      "rows": [
+        {
+          "id": "18557d33dbcbb34441a861245f360662:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in the app",
+          "cents": 199,
+          "parents": "[\"5a5107503632140ee7275a9c075d592c:1\"]",
+          "lc": 3,
+          "batch": "10708b64469954d3e1f04d8743822ef1"
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base one",
+          "cents": 100,
+          "parents": "[]",
+          "lc": 1,
+          "batch": "755db053bb177bd775a60ec69f588658"
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "parents": "[]",
+          "lc": 2,
+          "batch": "755db053bb177bd775a60ec69f588658"
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "parents": "[\"5a5107503632140ee7275a9c075d592c:1\"]",
+          "lc": 3,
+          "batch": "6097d4330d453f4eb2a94857046b1a1d"
+        }
+      ],
+      "heads": [
+        {
+          "id": "18557d33dbcbb34441a861245f360662:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in the app",
+          "cents": 199,
+          "deleted": 0
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "deleted": 0
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "deleted": 0
+        }
+      ],
+      "current": [
+        {
+          "id": "18557d33dbcbb34441a861245f360662:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in the app",
+          "cents": 199,
+          "conflicted": 1
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "conflicted": 0
+        }
+      ],
+      "conflicts": [
+        {
+          "entity": "11111111111111111111111111111111",
+          "heads": 2,
+          "head_ids": "[\"18557D33DBCBB34441A861245F360662:1\",\"5A5107503632140EE7275A9C075D592C:3\"]"
+        }
+      ],
+      "equivocated": []
+    },
+    "b": {
+      "own": "18557d33dbcbb34441a861245f360662",
+      "rows": [
+        {
+          "id": "18557d33dbcbb34441a861245f360662:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in the app",
+          "cents": 199,
+          "parents": "[\"5a5107503632140ee7275a9c075d592c:1\"]",
+          "lc": 3,
+          "batch": "10708b64469954d3e1f04d8743822ef1"
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "base one",
+          "cents": 100,
+          "parents": "[]",
+          "lc": 1,
+          "batch": "755db053bb177bd775a60ec69f588658"
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "parents": "[]",
+          "lc": 2,
+          "batch": "755db053bb177bd775a60ec69f588658"
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "parents": "[\"5a5107503632140ee7275a9c075d592c:1\"]",
+          "lc": 3,
+          "batch": "6097d4330d453f4eb2a94857046b1a1d"
+        }
+      ],
+      "heads": [
+        {
+          "id": "18557d33dbcbb34441a861245f360662:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in the app",
+          "cents": 199,
+          "deleted": 0
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:3",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in Safari",
+          "cents": 111,
+          "deleted": 0
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "deleted": 0
+        }
+      ],
+      "current": [
+        {
+          "id": "18557d33dbcbb34441a861245f360662:1",
+          "entity": "11111111111111111111111111111111",
+          "store": "one, edited in the app",
+          "cents": 199,
+          "conflicted": 1
+        },
+        {
+          "id": "5a5107503632140ee7275a9c075d592c:2",
+          "entity": "22222222222222222222222222222222",
+          "store": "base two",
+          "cents": 200,
+          "conflicted": 0
+        }
+      ],
+      "conflicts": [
+        {
+          "entity": "11111111111111111111111111111111",
+          "heads": 2,
+          "head_ids": "[\"18557D33DBCBB34441A861245F360662:1\",\"5A5107503632140EE7275A9C075D592C:3\"]"
+        }
+      ],
+      "equivocated": []
+    }
+  }
+}

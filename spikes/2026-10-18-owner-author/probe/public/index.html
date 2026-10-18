@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DAI spike">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.png">
+<title>Owner spike</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1b1b1b; --bg: #fafafa; --muted: #666; --line: #ddd; --ok: #1a7f37; --bad: #b42318; --card: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #111; --muted: #aaa; --line: #333; --ok: #4ac26b; --bad: #ff7b72; --card: #1b1b1b; } }
+  body { margin: 0; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); font: 16px/1.4 -apple-system, system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  code, .mono { font: 13px ui-monospace, Menlo, monospace; word-break: break-all; }
+  button { font: inherit; padding: 10px 14px; margin: 4px 4px 4px 0; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  input { font: inherit; padding: 8px; width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); margin: 4px 0; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; border-bottom: 1px solid var(--line); padding: 4px 2px; vertical-align: top; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 260px; font: 12px ui-monospace, Menlo, monospace; }
+  #note { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Owner spike</h1>
+<div class="muted">Experiments C and D, 18 October. Not a product page.</div>
+<div id="note" class="muted"></div>
+
+<section>
+  <h2>This context</h2>
+  <div>Running as: <b id="context">…</b></div>
+  <div class="muted mono" id="ua"></div>
+  <div>Author id (this context): <code id="author">…</code></div>
+  <div class="muted">Author key extractable: <span id="extractable">…</span></div>
+</section>
+
+<section>
+  <h2>Owner (passkey)</h2>
+  <div id="owner-state" class="muted">Not signed in.</div>
+  <button id="create">Create owner passkey</button>
+  <button id="signin">Sign in with passkey</button>
+  <div id="nopasskey" hidden>
+    <p class="bad">No passkey is available on this device for this page.</p>
+    <p>This copy is kept in this browser only. Erasing website data erases it. Save a copy to keep it outside this browser.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Keychain secret (D ii)</h2>
+  <div class="muted">Make one once, in Safari. After erasing website data, tap the password field and fill it from Passwords.</div>
+  <form id="save-form" method="post" action="/api/sink">
+    <input name="username" autocomplete="username" value="dai-spike-wrap" readonly>
+    <input name="password" id="new-secret" type="password" autocomplete="new-password" placeholder="(made by the page)">
+    <button type="button" id="make-secret">Make and save a secret</button>
+  </form>
+  <form id="use-form" onsubmit="return false">
+    <input name="username" autocomplete="username" value="dai-spike-wrap">
+    <input name="password" id="saved-secret" type="password" autocomplete="current-password" placeholder="Tap, then fill from Passwords">
+    <button type="button" id="use-secret">Use this secret</button>
+  </form>
+  <div>Keychain secret fingerprint: <code id="kc-fp">none</code></div>
+</section>
+
+<section>
+  <h2>Database</h2>
+  <input id="text" placeholder="A row to write">
+  <button id="add">Write a row</button>
+  <button id="restore">Restore latest</button>
+  <button id="list">List checkpoints</button>
+  <button id="save-copy">Save a copy</button>
+  <div id="db-state" class="muted"></div>
+  <table><thead><tr><th>row</th><th>author</th><th>text</th></tr></thead><tbody id="rows"></tbody></table>
+</section>
+
+<section>
+  <h2>Readings</h2>
+  <button id="copy">Copy readings</button>
+  <textarea id="readings" readonly></textarea>
+</section>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

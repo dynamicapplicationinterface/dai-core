@@ -1,0 +1,431 @@
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// worker.js
+var enc = new TextEncoder();
+var b64u = {
+  from(bytes) {
+    let s = "";
+    for (const b of new Uint8Array(bytes)) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  },
+  to(text) {
+    const s = atob(String(text).replace(/-/g, "+").replace(/_/g, "/") + "===".slice((String(text).length + 3) % 4));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+  }
+};
+var hex = /* @__PURE__ */ __name((bytes) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join(""), "hex");
+var sha256 = /* @__PURE__ */ __name(async (bytes) => new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), "sha256");
+var random = /* @__PURE__ */ __name((n) => crypto.getRandomValues(new Uint8Array(n)), "random");
+var equal = /* @__PURE__ */ __name((a, b) => a.length === b.length && a.every((x, i) => x === b[i]), "equal");
+var json = /* @__PURE__ */ __name((body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } }), "json");
+function cbor(bytes, at = 0) {
+  const head = bytes[at++];
+  const major = head >> 5;
+  let n = head & 31;
+  if (n === 24) n = bytes[at++];
+  else if (n === 25) {
+    n = bytes[at] << 8 | bytes[at + 1];
+    at += 2;
+  } else if (n === 26) {
+    n = (bytes[at] << 24 >>> 0) + (bytes[at + 1] << 16) + (bytes[at + 2] << 8) + bytes[at + 3];
+    at += 4;
+  } else if (n > 26) throw new Error("CBOR: length form not supported");
+  switch (major) {
+    case 0:
+      return { value: n, end: at };
+    case 1:
+      return { value: -1 - n, end: at };
+    case 2:
+      return { value: bytes.slice(at, at + n), end: at + n };
+    case 3:
+      return { value: new TextDecoder().decode(bytes.slice(at, at + n)), end: at + n };
+    case 4: {
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const r = cbor(bytes, at);
+        out.push(r.value);
+        at = r.end;
+      }
+      return { value: out, end: at };
+    }
+    case 5: {
+      const out = /* @__PURE__ */ new Map();
+      for (let i = 0; i < n; i++) {
+        const k = cbor(bytes, at);
+        const v = cbor(bytes, k.end);
+        out.set(k.value, v.value);
+        at = v.end;
+      }
+      return { value: out, end: at };
+    }
+    case 7:
+      return { value: n === 20 ? false : n === 21 ? true : null, end: at };
+    default:
+      throw new Error(`CBOR: major type ${major} not supported`);
+  }
+}
+__name(cbor, "cbor");
+function authData(bytes) {
+  const out = { rpIdHash: bytes.slice(0, 32), flags: bytes[32], counter: new DataView(bytes.buffer, bytes.byteOffset + 33, 4).getUint32(0) };
+  if (out.flags & 64) {
+    const len = bytes[53] << 8 | bytes[54];
+    out.credentialId = bytes.slice(55, 55 + len);
+    const key = cbor(bytes, 55 + len).value;
+    if (key.get(1) !== 2 || key.get(3) !== -7 || key.get(-1) !== 1) throw new Error("credential key is not ES256 P-256");
+    out.jwk = { kty: "EC", crv: "P-256", x: b64u.from(key.get(-2)), y: b64u.from(key.get(-3)) };
+  }
+  return out;
+}
+__name(authData, "authData");
+function derToRaw(der) {
+  let at = 2;
+  const part = /* @__PURE__ */ __name(() => {
+    if (der[at++] !== 2) throw new Error("bad DER");
+    const len = der[at++];
+    let v = der.slice(at, at + len);
+    at += len;
+    while (v.length > 32 && v[0] === 0) v = v.slice(1);
+    const out = new Uint8Array(32);
+    out.set(v, 32 - v.length);
+    return out;
+  }, "part");
+  const r = part();
+  const s = part();
+  const raw = new Uint8Array(64);
+  raw.set(r, 0);
+  raw.set(s, 32);
+  return raw;
+}
+__name(derToRaw, "derToRaw");
+var ES256 = { name: "ECDSA", namedCurve: "P-256" };
+var verifyRaw = /* @__PURE__ */ __name(async (pubRaw, sig, data) => crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, await crypto.subtle.importKey("raw", pubRaw, ES256, false, ["verify"]), sig, data), "verifyRaw");
+var OwnerStore = class {
+  static {
+    __name(this, "OwnerStore");
+  }
+  constructor(ctx) {
+    this.storage = ctx.storage;
+  }
+  async challenge(kind, extra = {}) {
+    const challenge = b64u.from(random(32));
+    await this.storage.put(`chal:${challenge}`, { kind, exp: Date.now() + 5 * 6e4, ...extra });
+    return challenge;
+  }
+  async takeChallenge(challenge, kind) {
+    const held = await this.storage.get(`chal:${challenge}`);
+    await this.storage.delete(`chal:${challenge}`);
+    if (!held || held.kind !== kind || held.exp < Date.now()) throw new Error("challenge unknown or expired");
+    return held;
+  }
+  /** clientDataJSON and authenticatorData checks every ceremony shares. */
+  async ceremony(origin, kind, clientDataB64, authB64) {
+    const clientBytes = b64u.to(clientDataB64);
+    const client = JSON.parse(new TextDecoder().decode(clientBytes));
+    if (client.type !== (kind === "register" ? "webauthn.create" : "webauthn.get")) throw new Error(`clientData type ${client.type}`);
+    if (client.origin !== origin) throw new Error(`clientData origin ${client.origin}, expected ${origin}`);
+    const held = await this.takeChallenge(client.challenge, kind);
+    const auth = kind === "register" ? cbor(b64u.to(authB64)).value.get("authData") : b64u.to(authB64);
+    const data = authData(auth);
+    if (!equal(data.rpIdHash, await sha256(enc.encode(new URL(origin).hostname)))) throw new Error("RP id hash differs");
+    if (!(data.flags & 1)) throw new Error("user not present");
+    if (!(data.flags & 4)) throw new Error("user not verified");
+    return { held, client, clientBytes, auth, data };
+  }
+  async session(owner) {
+    const token = b64u.from(random(24));
+    await this.storage.put(`sess:${token}`, { owner, exp: Date.now() + 60 * 6e4 });
+    return token;
+  }
+  async ownerOf(request) {
+    const token = (request.headers.get("authorization") ?? "").replace(/^Bearer /, "");
+    const s = token && await this.storage.get(`sess:${token}`);
+    if (!s || s.exp < Date.now()) return null;
+    return s.owner;
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    const origin = url.origin;
+    const route = `${request.method} ${url.pathname}`;
+    const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+    try {
+      switch (route) {
+        case "POST /api/register/options": {
+          const owner2 = b64u.from(random(16));
+          const challenge = await this.challenge("register", { owner: owner2 });
+          return json({ challenge, rp: { id: url.hostname, name: "DAI owner spike" }, user: { id: owner2, name: `dai-spike-${owner2.slice(0, 6)}`, displayName: "DAI spike owner" } });
+        }
+        case "POST /api/register/finish": {
+          const { held, data } = await this.ceremony(origin, "register", body.clientDataJSON, body.attestationObject);
+          if (b64u.from(data.credentialId) !== body.credentialId) throw new Error("credential id differs from the attested one");
+          await this.storage.put(`cred:${body.credentialId}`, { owner: held.owner, jwk: data.jwk, counter: data.counter, createdAt: (/* @__PURE__ */ new Date()).toISOString(), context: body.context ?? "" });
+          await this.storage.put(`owner:${held.owner}`, { owner: held.owner, createdAt: (/* @__PURE__ */ new Date()).toISOString(), creds: [body.credentialId], authors: {}, document: null, latest: 0, latestDigest: null });
+          return json({ owner: held.owner, session: await this.session(held.owner), flags: data.flags });
+        }
+        case "POST /api/login/options":
+          return json({ challenge: await this.challenge("login"), rpId: url.hostname });
+        case "POST /api/login/finish": {
+          const { clientBytes, auth, data } = await this.ceremony(origin, "login", body.clientDataJSON, body.authenticatorData);
+          const cred = await this.storage.get(`cred:${body.credentialId}`);
+          if (!cred) throw new Error("this passkey is not known to the store");
+          if (body.userHandle && body.userHandle !== cred.owner) throw new Error("user handle is not the owner this passkey was made for");
+          const signed = new Uint8Array(auth.length + 32);
+          signed.set(auth, 0);
+          signed.set(await sha256(clientBytes), auth.length);
+          const key = await crypto.subtle.importKey("jwk", cred.jwk, ES256, false, ["verify"]);
+          const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, derToRaw(b64u.to(body.signature)), signed);
+          if (!ok) throw new Error("passkey signature does not verify");
+          await this.storage.put(`cred:${body.credentialId}`, { ...cred, counter: data.counter });
+          return json({ owner: cred.owner, session: await this.session(cred.owner), flags: data.flags });
+        }
+      }
+      const owner = await this.ownerOf(request);
+      if (!owner) return json({ error: "Sign in with the passkey first." }, 401);
+      const record = await this.storage.get(`owner:${owner}`);
+      switch (route) {
+        case "GET /api/owner":
+          return json({ owner, createdAt: record.createdAt, authors: record.authors, document: record.document, latest: record.latest, latestDigest: record.latestDigest });
+        case "POST /api/enroll": {
+          const pub = b64u.to(body.pub);
+          const id = b64u.from((await sha256(pub)).slice(0, 16));
+          if (id !== body.author) throw new Error("author id is not the first 16 bytes of SHA-256 of the key");
+          const ok = await verifyRaw(pub, b64u.to(body.proof), enc.encode(`dai-spike enroll ${owner} ${id}`));
+          if (!ok) throw new Error("proof of possession does not verify");
+          if (!record.authors[id]) record.authors[id] = { pub: body.pub, enrolledAt: (/* @__PURE__ */ new Date()).toISOString(), context: body.context ?? "", ua: body.ua ?? "" };
+          await this.storage.put(`owner:${owner}`, record);
+          return json({ owner, authors: record.authors });
+        }
+        case "POST /api/checkpoint": {
+          const author = record.authors[body.author];
+          if (!author) throw new Error("the signing author is not enrolled under this owner");
+          const text = String(body.checkpoint);
+          if (!await verifyRaw(b64u.to(author.pub), b64u.to(body.signature), enc.encode(text))) throw new Error("checkpoint signature does not verify");
+          const cp = JSON.parse(text);
+          if (record.document && cp.document !== record.document) throw new Error("checkpoint names another document");
+          if (cp.revision !== record.latest + 1 || cp.previous !== record.latestDigest) {
+            return json({ error: "Not the latest: restore first, then write.", latest: record.latest, latestDigest: record.latestDigest }, 409);
+          }
+          const digest = hex(await sha256(enc.encode(text)));
+          await this.storage.put(`cp:${owner}:${String(cp.revision).padStart(8, "0")}`, {
+            checkpoint: text,
+            digest,
+            signature: body.signature,
+            author: body.author,
+            envelope: body.envelope,
+            iv: body.iv,
+            ciphertext: body.ciphertext,
+            uploadedAt: (/* @__PURE__ */ new Date()).toISOString()
+          });
+          record.document ??= cp.document;
+          record.latest = cp.revision;
+          record.latestDigest = digest;
+          await this.storage.put(`owner:${owner}`, record);
+          return json({ revision: cp.revision, digest });
+        }
+        case "GET /api/checkpoints": {
+          const list = await this.storage.list({ prefix: `cp:${owner}:` });
+          return json([...list.values()].map((c) => ({ revision: JSON.parse(c.checkpoint).revision, digest: c.digest, author: c.author, uploadedAt: c.uploadedAt, paths: Object.keys(c.envelope ?? {}) })));
+        }
+        case "GET /api/checkpoint/latest": {
+          if (!record.latest) return json({ none: true });
+          return json({ ...await this.storage.get(`cp:${owner}:${String(record.latest).padStart(8, "0")}`), authors: record.authors });
+        }
+      }
+      return json({ error: `no route ${route}` }, 404);
+    } catch (e) {
+      return json({ error: String(e?.message ?? e) }, 400);
+    }
+  }
+};
+var worker_default = {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/sink") return Response.redirect(`${url.origin}/?saved=1`, 303);
+    if (url.pathname.startsWith("/api/")) return env.STORE.get(env.STORE.idFromName("spike")).fetch(request);
+    return env.ASSETS.fetch(request);
+  }
+};
+
+// ../../../node_modules/wrangler/templates/middleware/middleware-ensure-req-body-drained.ts
+var drainBody = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx) => {
+  try {
+    return await middlewareCtx.next(request, env);
+  } finally {
+    try {
+      if (request.body !== null && !request.bodyUsed) {
+        const reader = request.body.getReader();
+        while (!(await reader.read()).done) {
+        }
+      }
+    } catch (e) {
+      console.error("Failed to drain the unused request body.", e);
+    }
+  }
+}, "drainBody");
+var middleware_ensure_req_body_drained_default = drainBody;
+
+// ../../../node_modules/wrangler/templates/middleware/middleware-miniflare3-json-error.ts
+function reduceError(e) {
+  return {
+    name: e?.name,
+    message: e?.message ?? String(e),
+    stack: e?.stack,
+    cause: e?.cause === void 0 ? void 0 : reduceError(e.cause)
+  };
+}
+__name(reduceError, "reduceError");
+var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx) => {
+  try {
+    return await middlewareCtx.next(request, env);
+  } catch (e) {
+    const error = reduceError(e);
+    const body = JSON.stringify(error);
+    const headers = {
+      "Content-Type": "application/json",
+      "MF-Experimental-Error-Stack": "true"
+    };
+    const encoded = encodeURIComponent(body);
+    if (encoded.length <= 8192) {
+      headers["MF-Experimental-Error-Stack-Payload"] = encoded;
+    }
+    return new Response(body, { status: 500, headers });
+  }
+}, "jsonError");
+var middleware_miniflare3_json_error_default = jsonError;
+
+// .wrangler/tmp/bundle-qz6R4I/middleware-insertion-facade.js
+var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
+  middleware_ensure_req_body_drained_default,
+  middleware_miniflare3_json_error_default
+];
+var middleware_insertion_facade_default = worker_default;
+
+// ../../../node_modules/wrangler/templates/middleware/common.ts
+var __facade_middleware__ = [];
+function __facade_register__(...args) {
+  __facade_middleware__.push(...args.flat());
+}
+__name(__facade_register__, "__facade_register__");
+function __facade_invokeChain__(request, env, ctx, dispatch, middlewareChain) {
+  const [head, ...tail] = middlewareChain;
+  const middlewareCtx = {
+    dispatch,
+    next(newRequest, newEnv) {
+      return __facade_invokeChain__(newRequest, newEnv, ctx, dispatch, tail);
+    }
+  };
+  return head(request, env, ctx, middlewareCtx);
+}
+__name(__facade_invokeChain__, "__facade_invokeChain__");
+function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
+  return __facade_invokeChain__(request, env, ctx, dispatch, [
+    ...__facade_middleware__,
+    finalMiddleware
+  ]);
+}
+__name(__facade_invoke__, "__facade_invoke__");
+
+// .wrangler/tmp/bundle-qz6R4I/middleware-loader.entry.ts
+var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
+  constructor(scheduledTime, cron, noRetry) {
+    this.scheduledTime = scheduledTime;
+    this.cron = cron;
+    this.#noRetry = noRetry;
+  }
+  scheduledTime;
+  cron;
+  static {
+    __name(this, "__Facade_ScheduledController__");
+  }
+  #noRetry;
+  noRetry() {
+    if (!(this instanceof ___Facade_ScheduledController__)) {
+      throw new TypeError("Illegal invocation");
+    }
+    this.#noRetry();
+  }
+};
+function wrapExportedHandler(worker) {
+  if (__INTERNAL_WRANGLER_MIDDLEWARE__ === void 0 || __INTERNAL_WRANGLER_MIDDLEWARE__.length === 0) {
+    return worker;
+  }
+  for (const middleware of __INTERNAL_WRANGLER_MIDDLEWARE__) {
+    __facade_register__(middleware);
+  }
+  const fetchDispatcher = /* @__PURE__ */ __name(function(request, env, ctx) {
+    if (worker.fetch === void 0) {
+      throw new Error("Handler does not export a fetch() function.");
+    }
+    return worker.fetch(request, env, ctx);
+  }, "fetchDispatcher");
+  return {
+    ...worker,
+    fetch(request, env, ctx) {
+      const dispatcher = /* @__PURE__ */ __name(function(type, init) {
+        if (type === "scheduled" && worker.scheduled !== void 0) {
+          const controller = new __Facade_ScheduledController__(
+            Date.now(),
+            init.cron ?? "",
+            () => {
+            }
+          );
+          return worker.scheduled(controller, env, ctx);
+        }
+      }, "dispatcher");
+      return __facade_invoke__(request, env, ctx, dispatcher, fetchDispatcher);
+    }
+  };
+}
+__name(wrapExportedHandler, "wrapExportedHandler");
+function wrapWorkerEntrypoint(klass) {
+  if (__INTERNAL_WRANGLER_MIDDLEWARE__ === void 0 || __INTERNAL_WRANGLER_MIDDLEWARE__.length === 0) {
+    return klass;
+  }
+  for (const middleware of __INTERNAL_WRANGLER_MIDDLEWARE__) {
+    __facade_register__(middleware);
+  }
+  return class extends klass {
+    #fetchDispatcher = /* @__PURE__ */ __name((request, env, ctx) => {
+      this.env = env;
+      this.ctx = ctx;
+      if (super.fetch === void 0) {
+        throw new Error("Entrypoint class does not define a fetch() function.");
+      }
+      return super.fetch(request);
+    }, "#fetchDispatcher");
+    #dispatcher = /* @__PURE__ */ __name((type, init) => {
+      if (type === "scheduled" && super.scheduled !== void 0) {
+        const controller = new __Facade_ScheduledController__(
+          Date.now(),
+          init.cron ?? "",
+          () => {
+          }
+        );
+        return super.scheduled(controller);
+      }
+    }, "#dispatcher");
+    fetch(request) {
+      return __facade_invoke__(
+        request,
+        this.env,
+        this.ctx,
+        this.#dispatcher,
+        this.#fetchDispatcher
+      );
+    }
+  };
+}
+__name(wrapWorkerEntrypoint, "wrapWorkerEntrypoint");
+var WRAPPED_ENTRY;
+if (typeof middleware_insertion_facade_default === "object") {
+  WRAPPED_ENTRY = wrapExportedHandler(middleware_insertion_facade_default);
+} else if (typeof middleware_insertion_facade_default === "function") {
+  WRAPPED_ENTRY = wrapWorkerEntrypoint(middleware_insertion_facade_default);
+}
+var middleware_loader_entry_default = WRAPPED_ENTRY;
+export {
+  OwnerStore,
+  __INTERNAL_WRANGLER_MIDDLEWARE__,
+  middleware_loader_entry_default as default
+};
+//# sourceMappingURL=worker.js.map
