@@ -430,7 +430,7 @@ arbitrary.
   stale recovery. It is free and needs no ceremony.
 - **WebAuthn `largeBlob` as a single-device witness:** one bounded
   experiment. Write a checkpoint digest, wipe, read it back, and on a second
-  iPhone. If it fails, stop.
+  iPhone. If it fails, stop (D258).
 - **WebAuthn signature counters are not a source of freshness:** synced
   passkeys report zero.
 
@@ -5096,10 +5096,19 @@ since the promotion is a project setting. **Change, done:** the project's
 settings were changed the same day to manual promotion: a push to main
 makes a staged production build; promotion is by hand.
 
-#### D248 — The opener re-shells a container on open
+#### D248 — A container opened outside the opener runs on the shell it was made with
 
 *Status: open. Filed 11 October, from the review of PR #6
-(`handoff-2026-10-11.md`, "Shells made before `8e14fe56` carry P1 only").*
+(`handoff-2026-10-11.md`, "Shells made before `8e14fe56` carry P1 only").
+Corrected 18 October (`handoff-2026-10-18.md`, §1 and Gate C4).*
+
+**Correction.** Hosted opens already re-shell: the opener mounts every
+verified archive in its own current shell, never the container's
+(`hostShell`, `apps/runner/src/main.ts:1528`). The residual is a container
+opened as a file (`file://`) or by a third-party host, which runs on the
+shell it was made with, so one made before `8e14fe56` runs under the first
+policy only. **Change:** document old shells under `file://`. The text
+below is the entry as filed, before the correction.
 
 The shell's second script policy (`8e14fe56`, 10 October) closes every route
 the review ran by which a nonce'd script loaded remote code: a stamped
@@ -9757,6 +9766,91 @@ fail if the opener's bundle does not carry the runtime `dist/` holds.
 
 
 ---
+
+### Readiness assessment residue (filed 18 October)
+
+From the architectural readiness assessment and the owner/author spike
+(`handoff-2026-10-18.md`), each with the id the assessment gave it. Each is
+held, not fixed. D251 and D252 are the next builder session's.
+
+#### D251 — The share fallback sends records
+
+*Status: open, held not fixed; the next builder session. Filed 18 October,
+from the assessment (B7).*
+
+If the link fails, a personal document falls back to `exportContainer()`
+(`main.ts:4669`), which reseals with the database (`main.ts:2769`) whatever
+the toggle said. `send.spec.ts:315` checks the filename only. **Change:**
+pass the chosen meaning through the fallback. **Acceptance:**
+`send.spec.ts:315` opens the file and counts zero rows.
+
+#### D252 — Deleted rows travel in the bytes that leave
+
+*Status: open, held not fixed; the next builder session. Filed 18 October,
+from the assessment (B8).*
+
+Ran on the shipped sqlite-wasm 3.53.0: `secure_delete pragma: 0`, `deleted
+text present in exported bytes: true`. No `secure_delete` or `VACUUM` is in
+`src/` or `apps/runner/src/`. **Change:** `PRAGMA secure_delete=ON` at open,
+or `VACUUM INTO` for the leaving bytes (send, Save a copy, succession).
+**Acceptance:** a sentinel test on each.
+
+#### D253 — An app that keeps its data in browser storage is accepted silently
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B15).*
+
+Ran: a conventional `localStorage` app builds with exit 0 (`dai build` runs
+no lint, `src/cli.ts:332`), MCP builds it and says send it, the opener
+accepts it, and on reload the input is gone with no sentence shown.
+**Change:** refuse `browser-storage` at build, MCP and paste, or give the
+runtime a file-backed `localStorage` shim; either way the opener does not
+show an app that will forget. **Acceptance:** parity tests across the entry
+points, and the fixture driven in the opener.
+
+#### D254 — The paste box breaks the recipe's own bundle
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B16).*
+
+The website's paste box takes a single HTML file only
+(`website/components/MakeYourOwn.vue:310`, compiled as `index.html` at
+`:83,215`). Ran: it approves a bundle in the recipe's own format, then
+builds a file that fails with `no such table: trip`. **Change:** detect
+`dai bundle v1` / `--- file:` and route it through `parseBundle`.
+**Acceptance:** the bundle, pasted, builds a file that persists.
+
+#### D255 — `await-in-classic-script` flags any line containing `await`
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B19).*
+
+`src/lint.ts:199-206`. A false positive: MCP refuses a valid app.
+**Change:** flag top-level `await` only. **Acceptance:** a regression test
+on the output that tripped it.
+
+#### D256 — App text appears in the host's chrome
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (B10).*
+
+`SAVE_STATE.error` and `WRITE_RULES_REFUSED.why`/`detail` are relayed
+verbatim (`bootloader.ts:4188-4208`) into `#doc-note` (`main.ts:3309-3361`),
+so app-chosen text speaks in the host's voice. **Change:** fixed host
+sentences; log the frame's text instead of showing it. **Acceptance:** an
+e2e test with an app that cannot be trusted.
+
+#### D257 — The count gate does not cover WebKit
+
+*Status: open, held not fixed. Filed 18 October, from the assessment (C8).*
+
+**Change:** the count gate covers WebKit, and the floor is raised to what CI
+passes.
+
+#### D258 — WebAuthn `largeBlob` as a single-device freshness witness
+
+*Status: open, held not run. Filed 18 October, from R-G.*
+
+One bounded experiment: write a checkpoint digest to the owner passkey's
+`largeBlob`, wipe the website data, read it back, and repeat on a second
+iPhone. If it fails, stop: the surviving second client stays the only
+witness (R-G).
 
 ### Branch review residue (filed 8 October)
 
