@@ -311,6 +311,26 @@ principle beside them.
     properties as a product principle, not a format rule. *Rejected:*
     technically safe dead ends; promising data survives deletion everywhere.
 
+### The owner/author rulings (18 October)
+
+Rulings R-A to R-O, each made 18 October, on the architectural readiness
+assessment and the owner/author spike (`handoff-2026-10-18.md`). Each names
+the alternative it rejects and the evidence that decided it: a section of
+that handoff, and the spike's experiment letter where one decided it.
+
+**R-A. Four identities.**
+- **Release:** which signed software.
+- **Working document:** whose dataset.
+- **Owner:** who can recover the working document and admit contexts to it.
+- **Author:** which context signed a change.
+
+One person is one owner and many authors. One person does not have to mean
+one cryptographic author ([identity.md](identity.md), "Four identities").
+*Rejected:* shared author keys, one key carried into every context of one
+person. *Evidence:* "Owner/author spike", A: one key in two contexts gave
+`AUTHOR_EQUIVOCATED` on both copies, in both readers, at the first
+concurrent offline write, and both rows were lost.
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.

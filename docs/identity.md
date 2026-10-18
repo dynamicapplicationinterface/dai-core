@@ -34,6 +34,24 @@ The two are separable because the bottom one works with the top one absent. Git 
 
 **Vouching reaches backward.** An authority vouches for the key, not for documents. Every document the key ever signed becomes attributable the day the key is vouched for, with no re-signing and no format change. This only holds if the person has used one durable key from their first document on. That is why the key primitive comes first: vouching reaches back only as far as the key does.
 
+## Four identities
+
+Ruled 18 October (backlog R-A). Four things are each called an identity, and
+each answers a different question:
+
+- **Release:** which signed software. The publisher's signature on a
+  container's signed set.
+- **Working document:** whose dataset. One person's records in one
+  document, kept apart from the release that runs them.
+- **Owner:** who can recover the working document and admit contexts to it.
+- **Author:** which context signed a change. An author is a person key in one
+  signing context, and its author id is the fingerprint below.
+
+One person is one owner and many authors. **One person does not have to mean
+one cryptographic author.** A shared author key is rejected: one key in two
+contexts is equivocation at the first concurrent offline write
+(`handoff-2026-10-18.md`, "Owner/author spike", A).
+
 ## Definitions
 
 One owner per name. Each of these is defined once, in the file named, and imported everywhere else.
@@ -159,3 +177,7 @@ Each is written and shown red before any runtime change, per the standing rule. 
 - [x] A move waiting on a confirmation is pending: neither admitted nor refused, with no new report field. The kit's `pendingSeat(session)` says a copy is waiting; its rows wait in `t_pending`. `SEAT_NOT_HELD` is reported only for a row naming no seat or a seat someone else holds.
 - [x] A parent outside the row's own entity hides nothing (backlog finding 5; `T1-D35` in `docs/replicated-tables.md`).
 - [x] Loss: the partial-loss trigger stays; a full wipe cannot be detected, and a recovery phrase is what would change that (above, under Loss).
+
+## Rulings (18 Oct)
+
+- [x] Four identities: release, working document, owner, author. One person is one owner and many authors; shared author keys are rejected (above, "Four identities"; backlog R-A).
