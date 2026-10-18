@@ -13,11 +13,18 @@ bookkeeping (`_cs_cell`, `_cs_flag`, ...) is never read, so agreement is about
 the policy, not about two copies of one state.
 
     python conformance/reference/dai_changes.py <dir>
+    python conformance/reference/dai_changes.py --vectors conformance/changesets
 
 `<dir>` holds pairs `<name>-a.db`, `<name>-b.db` and `<name>-verdicts.json`
 ({"a": {...}, "b": {...}}, each header's verdict by id). For each pair and
 each direction it merges with dai_merge.merge, applies the log, and prints one
 JSON object per line: {"name", "direction", "tables", "flags", "held"}.
+
+With --vectors, each subdirectory of the folder is one checked-in vector
+(`a.db`, `b.db`, `verdicts.json`, `expected.json`; see its README). Both
+directions are merged and applied, and the result is diffed against
+`expected.json`. One line per vector and direction, then the count; the exit
+status is 1 if any differs.
 """
 
 from __future__ import annotations
@@ -359,5 +366,45 @@ def main(folder: Path) -> None:
             print(json.dumps(out, ensure_ascii=False, default=str))
 
 
+def merged(folder: Path, mine: str, theirs: str, verdicts: dict) -> dict:
+    """One direction of a vector: `mine` merges `theirs`, then the log is applied."""
+    local = dm.load(folder / f"{mine}.db")
+    sibling = dm.load(folder / f"{theirs}.db")
+    result = dm.merge(local, sibling, verdicts[theirs], {}, verdicts[mine], {})
+    apply_log(local)
+    out = judged(local)
+    out["refused"] = [r.get("reason") if isinstance(r, dict) else r for r in result["refusedBatches"]]
+    return out
+
+
+def vectors(root: Path) -> int:
+    failed = 0
+    total = 0
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        expected = json.loads((folder / "expected.json").read_text(encoding="utf-8"))
+        verdicts = json.loads((folder / "verdicts.json").read_text(encoding="utf-8"))
+        for direction, (mine, theirs) in (("ab", ("a", "b")), ("ba", ("b", "a"))):
+            total += 1
+            got = merged(folder, mine, theirs, verdicts)
+            want = expected[direction]
+            problems = []
+            if got["refused"]:
+                problems.append(f"refused batches {got['refused']}")
+            if got["tables"] != want["tables"]:
+                problems.append(f"tables differ: got {json.dumps(got['tables'])}, want {json.dumps(want['tables'])}")
+            for part in ("flags", "held"):
+                if sorted(got[part]) != sorted(want[part]):
+                    problems.append(f"{part} differ: got {got[part]}, want {want[part]}")
+            if problems:
+                failed += 1
+                print(f"FAIL {folder.name} {direction}: " + "; ".join(problems))
+            else:
+                print(f"ok   {folder.name} {direction}")
+    print(f"{total - failed}/{total} passed")
+    return 1 if failed or total == 0 else 0
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "--vectors":
+        sys.exit(vectors(Path(sys.argv[2])))
     main(Path(sys.argv[1]))

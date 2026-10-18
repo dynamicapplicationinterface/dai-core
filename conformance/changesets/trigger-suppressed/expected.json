@@ -1,0 +1,235 @@
+{
+  "scenario": "S8 app trigger",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 5205367218765826,
+          "item_id": 5205367218765825,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350980,
+          "item_id": 7650758388350979,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350982,
+          "item_id": 7650758388350981,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350984,
+          "item_id": 7650758388350983,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350986,
+          "item_id": 7650758388350985,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350988,
+          "item_id": 7650758388350987,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350989,
+          "item_id": 7650758388350985,
+          "what": "packed"
+        },
+        {
+          "id": 7650758388350991,
+          "item_id": 7650758388350990,
+          "what": "created"
+        }
+      ],
+      "categories": [
+        {
+          "id": 7650758388350977,
+          "name": "Food"
+        },
+        {
+          "id": 7650758388350978,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "id": 5205367218765825,
+          "category_id": null,
+          "title": "Soap",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350979,
+          "category_id": 7650758388350977,
+          "title": "Bread",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350981,
+          "category_id": 7650758388350978,
+          "title": "Tent",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350983,
+          "category_id": null,
+          "title": "Map",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350985,
+          "category_id": null,
+          "title": "Rope",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350987,
+          "category_id": null,
+          "title": "Stove",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350990,
+          "category_id": null,
+          "title": "Lamp",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        }
+      ]
+    },
+    "flags": [],
+    "held": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 5205367218765826,
+          "item_id": 5205367218765825,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350980,
+          "item_id": 7650758388350979,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350982,
+          "item_id": 7650758388350981,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350984,
+          "item_id": 7650758388350983,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350986,
+          "item_id": 7650758388350985,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350988,
+          "item_id": 7650758388350987,
+          "what": "created"
+        },
+        {
+          "id": 7650758388350989,
+          "item_id": 7650758388350985,
+          "what": "packed"
+        },
+        {
+          "id": 7650758388350991,
+          "item_id": 7650758388350990,
+          "what": "created"
+        }
+      ],
+      "categories": [
+        {
+          "id": 7650758388350977,
+          "name": "Food"
+        },
+        {
+          "id": 7650758388350978,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "id": 5205367218765825,
+          "category_id": null,
+          "title": "Soap",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350979,
+          "category_id": 7650758388350977,
+          "title": "Bread",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350981,
+          "category_id": 7650758388350978,
+          "title": "Tent",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350983,
+          "category_id": null,
+          "title": "Map",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350985,
+          "category_id": null,
+          "title": "Rope",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350987,
+          "category_id": null,
+          "title": "Stove",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        },
+        {
+          "id": 7650758388350990,
+          "category_id": null,
+          "title": "Lamp",
+          "qty": 1,
+          "note": null,
+          "done": 0
+        }
+      ]
+    },
+    "flags": [],
+    "held": []
+  }
+}

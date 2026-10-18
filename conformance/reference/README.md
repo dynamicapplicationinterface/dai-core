@@ -40,4 +40,6 @@ policy (R-O; `src/changesets.ts`) under the runtime's policy, after `dai_merge.p
 has admitted it. It rebuilds the application's tables from the admitted log
 alone, never from the runtime's own bookkeeping, and
 `tests/changesets/python-reader.spec.ts` holds its result to the runtime's in
-every merge scenario, both directions.
+every merge scenario, both directions. With `--vectors` it reads the
+committed changeset vectors in `conformance/changesets` (R-Q) and diffs its
+result against their expected text.
