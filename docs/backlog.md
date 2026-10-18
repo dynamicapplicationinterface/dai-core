@@ -402,6 +402,27 @@ spike", C: two wipes in one sitting made two new Safari authors under one
 owner, four enrolled authors in all, and the rows of every earlier author
 came back.
 
+**R-F. Conflicts.**
+- **Different records:** merge.
+- **The same record, different fields:** merge only where the app declared
+  the fields independent.
+- **The same field:** keep both, and surface the choice on a host sheet whose
+  wording the app can customize. The resolution is a new signed change that
+  acknowledges both parents. An unresolved value is pending and does not feed
+  calculations.
+- **V1.0** implements this at checkpoint granularity: a fork is "changes
+  from your other device", and both are kept. **V1.2** implements it at row
+  granularity, through sessionless multi-author replication.
+- **The clock-tie rule** (author id order) is stated on the page as a fact
+  about convergence, and never shown as a winner.
+
+*Rejected:* showing an arbitrary winner with a flag. *Evidence:*
+"Owner/author spike", B(i): two authors on different rows converge with
+nothing lost, in both readers; B(ii): on the same row both copies converge
+on two heads, and `_current` shows one value, picked by author id on a clock
+tie (`ORDER BY _r_lc DESC, hex(_r_replica) ASC`), which to the person is
+arbitrary.
+
 **R-G. Freshness witnesses.**
 - **A surviving second client** remembers the latest head it saw. On its
   next contact after another client recovered from the store, it reports a
