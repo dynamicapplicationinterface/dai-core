@@ -22,7 +22,10 @@ From R-B (18 October, [backlog.md](backlog.md)). Return is transitions 6 and
   link is needed.
 - The link is arrival; the library is home. A link names a document, and
   the person meets it there. Returning does not depend on finding the link
-  again.
+  again. In ruling 2's words: "A delivery opens its app, never a list. The
+  library is the owner's home: reached from More, and what owner
+  authentication restores on any device. It is never an interstitial on
+  arrival."
 
 ### Keep
 

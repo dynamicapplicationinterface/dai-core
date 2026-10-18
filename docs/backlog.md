@@ -217,8 +217,11 @@ principle beside them.
    once. *Principle:* P3.
 2. **Object-first routing.** A delivery (link, file open, hand-off) names the
    exact document; the host opens that document's app directly, creating or
-   finding the person's working copy for it on the way. The library is
-   "Recent apps" under More, never the destination. The interaction for each
+   finding the person's working copy for it on the way. A delivery opens its
+   app, never a list. The library is the owner's home: reached from More, and
+   what owner authentication restores on any device. It is never an
+   interstitial on arrival. (Reworded 18 October, with R-B; it was "Recent
+   apps" under More, never the destination.) The interaction for each
    transition of the walk (message → useful app content → first action →
    saved work → close → same message → continued work) is written in
    [walk.md](walk.md) before that flow is built, and tested with uncoached
@@ -388,8 +391,7 @@ replaced still verified.
   replaced passkey means re-wrapping, not loss.
 - **Save a copy is the floor** beneath both.
 
-*Rejected:* no alternative was named beyond what the ruling excludes: the
-passkey on each save, and a data key held under one path only. *Evidence:*
+*Rejected:* a single wrap (PRF only); a recovery phrase. *Evidence:*
 "Owner/author spike", D: PRF gave a byte-identical secret in Safari and the
 Home Screen app, and after the wipe; the keychain credential survived the
 wipe and filled in both contexts. **A.** One phone, one account, one passkey
@@ -504,7 +506,9 @@ history (`apps/runner/public/sw.js:737-738`, `787-790`).
 
 **R-M. The Phase 2 gate.** A non-publisher changes an app through AI, adopts
 the new release, reopens their records, and sends the modified release
-without their records. *Rejected:* no alternative was named. *Evidence:*
+without their records. The gate is the personal-app loop. *Rejected:* a
+first demonstration chosen for the protocol feature it shows (chess).
+*Evidence:*
 §1, "Where it fails", item 1, and §8: the modify-and-keep half is not a go
 until successor authority (R-I) is designed.
 
@@ -517,13 +521,23 @@ The assessment's other deferred items are unchanged. *Rejected:* keeping
 both deferred. *Evidence:* §3, contradiction 1, whose alternatives listed
 both as deferred; "Owner/author spike", C and D.
 
-**R-O. Stop.** No new V1.1 protocol work before Gate B: no seats, rosters,
-floors, mailbox sessions, new vectors or reader levels. All of it stays in
-CI. Sessionless replication (spike B) is V1.2, and it is not session work.
-*Rejected:* extending V1.1 machinery alongside the V1.0 walk. *Evidence:*
-§1, "What to stop": the V1.1 machinery is 17–21% of source, 32% of spec
-lines and about 28 minutes of every CI run for P0–P2 alone, and none of it
-is on the V1.0 walk.
+**R-O. Universal application lifecycle.** Every application uses the same
+host-owned foundation for identity, durable state, authorship, integrity,
+recovery, portability and supported replication. AI authors and end users
+are not required to understand or implement replication. The kit and
+runtime provide an ordinary data interface that preserves the expected
+behavior of supported applications while handling versioning, signing,
+storage and replication internally. The system never silently downgrades
+durability, discards conflicting changes, or claims a synchronization that
+has not occurred. Ownership and collaboration arrangements are policies
+over this one foundation, not separate formats. Mandatory replicated
+storage for every generated app is not ruled until the data interface is
+shown to support representative applications without unacceptable
+semantic, performance or authoring restrictions. *Rejected:* the current
+replicated-table compiler as the universal payload, unproven. *Evidence:*
+§3, contradiction 6 (simple one-person apps, against replication and
+sessions); "Owner/author spike", B: sessionless replication converges for
+one person's contexts, with the same-row conflict still open.
 
 ### manifestVersion 3
 
@@ -589,7 +603,10 @@ is read and stays in the suite as a regression. What it left open is in part 4:
 - Native phone apps as a prerequisite for first use.
 - OS file association or share target as the first-use foundation.
 - A smart relay. The moment the store does more than hold bytes, the format
-  has a dependency and cannot be self-hosted in an afternoon.
+  has a dependency and cannot be self-hosted in an afternoon. The owner's
+  store (R-B) holds bytes keyed by (owner, document) and versioned; it checks
+  a checkpoint's parent, never its content. Content checks are the readers'
+  job.
 - A marketplace as the distribution model.
 - Real-time sync or two-person editing. Succession plus export, never a CRDT.
 - **Shapes a session deliberately does not support**, listed so nobody proposes
