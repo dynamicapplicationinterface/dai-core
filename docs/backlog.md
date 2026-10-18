@@ -448,6 +448,49 @@ acknowledged. *Evidence:* §1, "Where it fails", item 3: no device reading of
 an offline reopen is recorded, and both WebKit offline tests are skipped
 (`tests/offline.ts:19-22`).
 
+**R-I. Successor authority.**
+- **Adopt a successor when** it is signed by the predecessor's pinned
+  publisher key, **or** when it is signed by an author key enrolled under
+  this document's owner, supersedes a document held here, and is accepted on
+  the host sheet "Use this version". Such a successor is shown as this
+  person's change. The publisher's signature on the predecessor is left
+  untouched.
+- **The host classifies** on the two signed `schema.json` entries: the same
+  schema, or additive DDL only. Migration SQL supplied by the app never runs.
+- **Three tiers.**
+  - Installation never touches the predecessor. Enforced.
+  - Compatibility holds within the additive class. Checked.
+  - After activation the new release is an app like any other, and the
+    guarantee is rollback to the predecessor with its data.
+
+This narrows ruling 8 above with an authority rule; it does not replace it.
+*Rejected:* succession by the publisher only; migrations an AI supplies; a
+classifier claimed to prove meaning. *Evidence:* §1, "Where it fails", item
+1: a successor is adopted only under the pinned publisher key
+(`main.ts:4892-4900`), so a recipient's improvement is refused by
+construction, and the only path for an additive column is app-written
+migration SQL run in the frame (`bootloader.ts:2468-2483`); §3,
+contradiction 2; §4.3.
+
+**R-J. The manifest's signed `uses` list.** A reserved, signed, optional
+list, `uses: string[]`. It is verified, and a name the reader lacks is
+ignored. `requires` stays the list that refuses. It is wired into
+`signedViewOf`/`signedBytes`, the Python reader, the CDDL and a vector
+before any public V1.0 reader ships. The design note is in
+[format-design.md](format-design.md), "A signed `uses` list". *Rejected:*
+unsigned unknown fields; a version bump per field. *Evidence:* §4.10: an
+unknown manifest field ran as `ACCEPTED (unsigned)`, and since verifiers
+rebuild the signed bytes from a fixed list (`core.ts:985-1070`), a writer
+that signs a new field fails every reader deployed today.
+
+**R-K. App and document.** A `.dai` is a working document with an embedded
+release. There is one working copy per (owner, document). "Start another
+from this app" makes a new document from the same release (Phase 2).
+*Rejected:* the app as the unit of identity. *Evidence:* §4.1,
+"Identities": `documentUuid` means both "the app every recipient shares" and
+"this person's working copy", so one context holds exactly one working copy
+of an app.
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.

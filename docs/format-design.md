@@ -1133,3 +1133,19 @@ upload only by compare-and-swap on the parent it names (R-B).
 which brings sessionless machinery into every personal app. Resealing the
 whole container on every save: content addressing makes the checkpoint its
 equivalent, since the database digest names the bytes.
+
+### A signed `uses` list
+
+**Problem.** Unknown manifest fields are accepted and not signed (a field
+`connectors` ran as `ACCEPTED (unsigned)`), and verifiers rebuild the signed
+bytes from a fixed list of fields (`src/core.ts:985-1070`). So a writer that
+signs a new field fails every reader deployed today as not authentic, unless
+`manifestVersion` is bumped (`handoff-2026-10-18.md`, §4.10).
+
+**Rule.** A reserved, signed, optional list, `uses: string[]`. It is
+verified, and a name the reader lacks is ignored. `requires` stays the list
+that refuses. It is wired into `signedViewOf`/`signedBytes`, the Python
+reader, the CDDL and a vector before any public V1.0 reader ships.
+
+**Rejected.** Unsigned unknown fields: anyone could add one. A version bump
+per field.
