@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# A spike's local Worker state (wrangler dev).
+spikes/**/.wrangler/
 
 # Store credentials. A write credential for a bucket, and the one kind of file
 # in this project that must never be committed. .env.example is the documented
