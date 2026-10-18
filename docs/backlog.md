@@ -539,6 +539,15 @@ replicated-table compiler as the universal payload, unproven. *Evidence:*
 sessions); "Owner/author spike", B: sessionless replication converges for
 one person's contexts, with the same-row conflict still open.
 
+**R-P. Stop: no new protocol surface before Gate B.** Ruled 17 October,
+filed after R-O. No new protocol surface (seats, rosters, floors, mailbox
+sessions, new vectors, reader levels) is built before Gate B. Everything
+that exists stays in CI. R-O's lifecycle means the existing engine goes
+everywhere once its data interface is proven, not that the engine grows.
+*Rejected:* growing the protocol while the data interface is unproven.
+*Evidence:* `handoff-2026-10-18.md`, "Keep all of it in CI unchanged, but
+build nothing new there until Gate B", and Gate B under it.
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.
