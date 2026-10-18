@@ -331,6 +331,33 @@ person. *Evidence:* "Owner/author spike", A: one key in two contexts gave
 `AUTHOR_EQUIVOCATED` on both copies, in both readers, at the first
 concurrent offline write, and both rows were lost.
 
+**R-B. The working copy's home is an encrypted, versioned store.**
+- **The store.** Keyed by (owner, working document). Browser storage is a
+  cache of it, not its home.
+- **An append-only checkpoint log, compare-and-swap on the parent.** A
+  device uploads a checkpoint naming the head it started from. The store
+  accepts it as the new head, or keeps it as a branch. An older device never
+  overwrites a newer head. Branches are first-class.
+- **Two contexts, one copy.** Safari and an installed app are two authors of
+  one working copy. The keep sheet leaves the walk.
+- **The library is keyed by owner.** On any device, after owner
+  authentication, every working document the owner holds is listed and
+  recoverable, without a link.
+- **A recipient is an owner.** A recipient who opens a link is enrolled at
+  first save as owner of their own working copy. One link, many owners, many
+  private copies.
+- **Trust.** The store is trusted for liveness, never for content. After a
+  total wipe a dishonest store can serve an older valid checkpoint. The
+  limitations box says so.
+
+The walk's constraints from this ruling are in [walk.md](walk.md).
+*Rejected:* browser storage as the home; a signed "latest" pointer as the
+defense against staleness, since a stale signed pointer verifies too.
+*Evidence:* §3, contradiction 1 (no accounts and browser-only, against
+continuity on iPhone); "Owner/author spike", C: rows written by two authors,
+a Safari tab and the Home Screen app, survived a website-data wipe through
+the owner passkey, with their author ids intact.
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.
