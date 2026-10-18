@@ -426,6 +426,27 @@ on two heads, and `_current` shows one value, picked by author id on a clock
 tie (`ORDER BY _r_lc DESC, hex(_r_replica) ASC`), which to the person is
 arbitrary.
 
+**R-F amended, 18 October.** For documents under the ordinary data
+interface (R-O):
+- **Different columns of one record merge by default.** An app may declare
+  columns *coupled*. Concurrent changes to coupled columns are one conflict,
+  and the record shows the coupled values together, all from one change.
+- **The same column:** both values are kept. The row holds the later value
+  by (lc, author) and carries the pending mark. A new signed change that
+  acknowledges both parents resolves it, as before.
+- **An app may declare a column *consequential*.** For such a column, the
+  kit's query views exclude a row while its value in that column is
+  pending. Every other read sees the row with the later value.
+
+The clauses on V1.0 and V1.2 granularity and the clock-tie rule stand.
+*Rejected:* a declaration required before columns merge (R-F as first
+written), since undeclared apps then lose concurrent edits to different
+fields to a conflict nobody needed; a universal "pending never feeds
+calculations", since a list, a label or a note is better shown with its
+later value than hidden. *Evidence:* the changeset spike (S2, S3, S5b,
+S5c) and Build 1 (`tests/changesets/merge-policy.spec.ts`). The review of
+PR #9 (PR9-H2) found that the code did not match R-F as first written.
+
 **R-G. Freshness witnesses.**
 - **A surviving second client** remembers the latest head it saw. On its
   next contact after another client recovered from the store, it reports a
@@ -547,6 +568,21 @@ everywhere once its data interface is proven, not that the engine grows.
 *Rejected:* growing the protocol while the data interface is unproven.
 *Evidence:* `handoff-2026-10-18.md`, "Keep all of it in CI unchanged, but
 build nothing new there until Gate B", and Gate B under it.
+
+**R-Q. The changeset payload is R-O's data interface, not R-P's surface.**
+Ruled 18 October. The `_cs_log` payload,
+`cbor([1, [[table, key, op, new, old, bases, seen], …]])`, and the policy
+that projects it are how any reader reads a plain document's data. They
+are the data interface R-O requires, not new protocol of the kind R-P
+stops. They get readers on the same footing as the authorship layer:
+- **Now:** vectors under `conformance/changesets/`, and the Python reader
+  (`conformance/reference/dai_changes.py`) passing them;
+- **Before Gate C:** the Rust reader.
+
+*Rejected:* holding the payload back as surface under R-P, since without
+it the documents R-O makes cannot be read; and a payload that only the
+runtime reads, with no vectors (PR9-M4). *Evidence:* the review of PR #9,
+M4 and question 8.
 
 ### manifestVersion 3
 
@@ -9877,6 +9913,58 @@ One bounded experiment: write a checkpoint digest to the owner passkey's
 `largeBlob`, wipe the website data, read it back, and repeat on a second
 iPhone. If it fails, stop: the surviving second client stays the only
 witness (R-G).
+
+### PR #9 review residue (filed 18 October)
+
+#### D259 — The app can undo the three runtime rules on its own copy
+
+*Status: open, stated, not fixed. Filed 18 October, from the review of PR #9
+(PR9-M2).*
+
+The three runtime rules are set, not held:
+- **Foreign keys.** `PRAGMA foreign_keys = OFF` from the application takes
+  effect until the next projection.
+- **The keyless table's ranged rowid.** `DROP TRIGGER "_cs_rowid_<t>"` takes
+  effect, and the next row of the table gets rowid 1 on every copy.
+- **Seeds run once.** This rests on a `_dai_meta` row the application can
+  delete.
+
+The `_cs_` bookkeeping tables have no guards. A table created through
+`prepare().step()` is never adopted. A trigger whose text contains
+`dai_projecting()`, even in a comment, is never guarded.
+
+This is the dark-session boundary (ruling 10 above). The application writes
+with its user's authority, so what it undoes it undoes on its own copy:
+- the rows it writes go out signed in its own author's name;
+- it cannot forge another author or bypass another copy's verification;
+- its copy's ids, keys and constraints can diverge from what the runtime
+  set.
+
+What another copy admits is decided by that copy. Stated, not fixed.
+**Change:** none for V1.0. Revisit if a host-owned operation is reachable
+this way. **Acceptance:** the eleventh attack review names none.
+
+#### D260 — The V1 walk's update step needs a document id per release
+
+*Status: open, held. Filed 18 October, from Build 1 and the review of PR #9
+(question 7).*
+
+`v1-walk.spec.ts`, "open, write, reopen, update or not, and share", fails at
+the update step on WebKit, the only engine it runs on. It is marked
+`test.fail` with this entry.
+
+The cause is confirmed by trace:
+- `core.ts` mints a new `documentUuid` for each build that does not pass
+  one;
+- `compile.ts` records the predecessor in `supersedes`;
+- batches verify against the mount's document.
+
+So a successor release cannot admit the log its predecessor signed, and the
+merge card refuses it. Three other paths depend on the same behavior:
+succession, rebuild-refused and the reference-link card.
+
+**Change:** successor authority (R-I) and the app/document split (R-K), in
+Build 2. **Acceptance:** the walk passes and `test.fail` comes off.
 
 ### Branch review residue (filed 8 October)
 
