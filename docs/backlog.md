@@ -51,7 +51,8 @@ entries in part 4 and leaves this part. It never lives in both.**
 - **Native runners and a second engine.** Whether a phone app that owns `.dai`, and
   an engine in another language, are worth building. Unanswered because the
   evidence they need is whether documents actually get opened on phones through
-  the web opener. D16 is the parked native iOS host.
+  the web opener. D16, the native iOS host, is ruled for V1.5 (R-N), for the
+  file experience.
 
 D17's retention question is **an entry, not a question here**: its shape is known
 (a retention period, and what a late copy is told) and it waits on one specific
@@ -506,6 +507,23 @@ the new release, reopens their records, and sends the modified release
 without their records. *Rejected:* no alternative was named. *Evidence:*
 §1, "Where it fails", item 1, and §8: the modify-and-keep half is not a go
 until successor authority (R-I) is designed.
+
+**R-N. Deferred items reopened.**
+- **The encrypted store:** V1.0, by R-B.
+- **The native iOS host:** V1.5 (D16). It is about the file experience (the
+  file as a real file, iCloud, "Open in"), not about continuity.
+
+The assessment's other deferred items are unchanged. *Rejected:* keeping
+both deferred. *Evidence:* §3, contradiction 1, whose alternatives listed
+both as deferred; "Owner/author spike", C and D.
+
+**R-O. Stop.** No new V1.1 protocol work before Gate B: no seats, rosters,
+floors, mailbox sessions, new vectors or reader levels. All of it stays in
+CI. Sessionless replication (spike B) is V1.2, and it is not session work.
+*Rejected:* extending V1.1 machinery alongside the V1.0 walk. *Evidence:*
+§1, "What to stop": the V1.1 machinery is 17–21% of source, 32% of spec
+lines and about 28 minutes of every CI run for P0–P2 alone, and none of it
+is on the V1.0 walk.
 
 ### manifestVersion 3
 
@@ -4248,7 +4266,12 @@ Three hazards, worst first:
 
 #### D16 — A native iOS host: App Clip and Messages extension
 
-*Status: parked — trigger: onboarding friction is what blocks use (see the entry).*
+*Status: ruled — not built: V1.5 (R-N, 18 October). It was parked on
+onboarding friction.*
+
+Reopened for the file experience, not for continuity, which R-B gives the
+store: the file as a real file, iCloud, and "Open in". The App Clip and the
+Messages extension below are the reasons it was first filed.
 
 Two things a web opener cannot do on an iPhone. An **App Clip** is the seamless
 first open: a QR code or link goes straight to the card, with no browser tab and
