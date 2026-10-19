@@ -1180,14 +1180,14 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       runDocumentSql(db, "seed");
       return;
     }
-    db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    trusted(() => db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"));
     const ran = (db.selectObjects("SELECT 1 FROM _dai_meta WHERE key = ?", [SEEDED]) as Any[]).length > 0;
     if (ran) {
       for (const block of Array.from(document.querySelectorAll('script[type="application/sql"]'))) block.setAttribute("data-dai-ran", "1");
       return;
     }
     runDocumentSql(db, "seed");
-    db.exec({ sql: "INSERT OR IGNORE INTO _dai_meta (key, value) VALUES (?, '1')", bind: [SEEDED] });
+    trusted(() => db.exec({ sql: "INSERT OR IGNORE INTO _dai_meta (key, value) VALUES (?, '1')", bind: [SEEDED] }));
   };
 
   /*
@@ -1199,6 +1199,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * the authorship layer seals and signs like any other (src/changesets.ts).
    */
   let changes: Any | null = null;
+  /*
+   * The runtime's own writes to its own tables (the log's seal, the merge's
+   * admission, the replica, the seed record). Under the ordinary data
+   * interface SQLite's authorizer refuses a write to a `_dai*` or `_cs_*`
+   * table outside one (T11, P01): the application shares this handle.
+   */
+  const trusted = <T,>(f: () => T): T => (changes ? (changes.trusted(f) as T) : f());
   const startChanges = (db: Any, rawExec: (sql: Any) => unknown): void => {
     if (changes || !mergeModule || !sqlite3) return;
     const merge = mergeModule as Any;
@@ -1505,7 +1512,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       const rows = (db: Any): Any => ({
         all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
         run: (sql: string, params: Any[] = []) => {
-          db.exec(sql, { bind: params.slice() });
+          trusted(() => db.exec(sql, { bind: params.slice() }));
         },
       });
 
@@ -1597,7 +1604,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const frameRows = (db: Any): Any => ({
     all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
     run: (sql: string, params: Any[] = []) => {
-      db.exec(sql, { bind: params.slice() });
+      trusted(() => db.exec(sql, { bind: params.slice() }));
     },
   });
 

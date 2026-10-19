@@ -61,6 +61,7 @@ type Any = any;
 
 import { CHANGES_DECLARATION, CHANGES_LOG, HIDDEN_KEY, withHiddenKeys } from "./changes-log.js";
 import { declaredIn, type Declared } from "./declarations.js";
+import { rewriteReplicated } from "./replicated.js";
 export { CHANGES_DECLARATION, CHANGES_LOG };
 
 /** Author-ranged integer keys: the author index in bits 32..52, a counter in bits 0..31. 2^53-1 is the largest id, exact in JavaScript. */
@@ -380,7 +381,12 @@ export class Changes {
   private readonly keysCache = new Map<string, Keys | null>();
   private readonly declaredCache = new Map<string, Declared>();
   private readonly stmts = new Map<string, Any>();
-  private readonly capture: SessionCapture;
+  private capture!: SessionCapture;
+  /** How deep the runtime's own calls are: a write to a runtime table is admitted only inside one (T11, P01). */
+  private depth = 0;
+  private authorizer: unknown = null;
+  /** Triggers on runtime tables an imported schema carried, dropped at open (T11). */
+  readonly refused: string[] = [];
   private readonly exec: (sql: Any) => unknown;
   /** The Rows view the authorship layer writes the log through. */
   readonly rows: Rows;
@@ -439,11 +445,101 @@ export class Changes {
      */
     db.createFunction("last_insert_rowid", () => this.lastInsert.id ?? 0, { arity: 0, deterministic: false });
     this.exec(META);
-    // Foreign keys are enforced from open: the runtime never set it before, so a declared REFERENCES was decoration.
-    if (capi.sqlite3_get_autocommit(db.pointer)) this.exec("PRAGMA foreign_keys = ON");
-    this.capture = new SessionCapture(sqlite3, db);
-    this.adoptTables();
-    this.counter = this.highestOwnCounter();
+    // Before any write the runtime trusts: a trigger an imported schema hung on a runtime table is gone (T11).
+    this.refuseForeignTriggers();
+    this.authorize();
+    this.trusted(() => {
+      // Foreign keys are enforced from open: the runtime never set it before, so a declared REFERENCES was decoration.
+      if (capi.sqlite3_get_autocommit(db.pointer)) this.exec("PRAGMA foreign_keys = ON");
+      this.capture = new SessionCapture(sqlite3, db);
+      this.adoptTables();
+      this.counter = this.highestOwnCounter();
+    });
+  }
+
+  /**
+   * Runs `f` as the runtime: a write to the runtime's own tables is admitted
+   * only inside it (T11, P01). The frame's own writes, the log's seal and the
+   * merge's admission among them, go through it too.
+   */
+  trusted<T>(f: () => T): T {
+    this.depth += 1;
+    try {
+      return f();
+    } finally {
+      this.depth -= 1;
+    }
+  }
+
+  /**
+   * The runtime's objects are the runtime's (T11, P01, P02), held at
+   * execution by SQLite's authorizer, not by the lint. The application may
+   * read `_dai*` and `_cs_*`; it may not write them, hang a trigger or an
+   * index on them, or make, drop or alter a table or view under those names,
+   * by any route: direct SQL, quoted or schema-qualified names, a prepared
+   * statement, a TEMP trigger, a view's INSTEAD OF trigger, or a trigger on its
+   * own table. A write to a runtime table from inside any trigger but the
+   * runtime's own is refused even while the runtime writes, so nothing the
+   * application wrote runs under the runtime's authority. The authorizer acts
+   * as a statement is prepared; a trigger's body is prepared with the
+   * statement that fires it, so a trigger whose body writes a runtime table is
+   * refused when it would run.
+   */
+  private authorize(): void {
+    const capi = this.sqlite3.capi;
+    const own = new Set(runtimeTriggers(this.sqlite3).keys());
+    const writes = new Set([capi.SQLITE_INSERT, capi.SQLITE_UPDATE, capi.SQLITE_DELETE]);
+    // The action's second argument names the table.
+    const onTable = new Set([
+      capi.SQLITE_CREATE_TRIGGER,
+      capi.SQLITE_CREATE_TEMP_TRIGGER,
+      capi.SQLITE_DROP_TRIGGER,
+      capi.SQLITE_DROP_TEMP_TRIGGER,
+      capi.SQLITE_CREATE_INDEX,
+      capi.SQLITE_CREATE_TEMP_INDEX,
+      capi.SQLITE_DROP_INDEX,
+      capi.SQLITE_DROP_TEMP_INDEX,
+      capi.SQLITE_ALTER_TABLE,
+    ]);
+    // The first argument names the table or view.
+    const named = new Set([
+      capi.SQLITE_CREATE_TABLE,
+      capi.SQLITE_CREATE_TEMP_TABLE,
+      capi.SQLITE_DROP_TABLE,
+      capi.SQLITE_DROP_TEMP_TABLE,
+      capi.SQLITE_CREATE_VIEW,
+      capi.SQLITE_CREATE_TEMP_VIEW,
+      capi.SQLITE_DROP_VIEW,
+      capi.SQLITE_DROP_TEMP_VIEW,
+    ]);
+    this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, _db: unknown, trigger: unknown): number => {
+      const target = writes.has(code) || named.has(code) ? a1 : onTable.has(code) ? a2 : null;
+      if (typeof target !== "string" || !RUNTIME.test(target)) return capi.SQLITE_OK;
+      if (typeof trigger === "string" && trigger.length > 0) return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
+      return this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
+    };
+    capi.sqlite3_set_authorizer(this.db.pointer, this.authorizer, 0);
+  }
+
+  /**
+   * A trigger on a runtime table that is not the runtime's own, as an
+   * imported schema can carry one: dropped at open, before any write the
+   * runtime trusts, so it never runs under the runtime's outbox write (T11,
+   * P02). One that takes a runtime trigger's name with other text is put back
+   * as the runtime writes it. The names are kept in `refused`.
+   */
+  private refuseForeignTriggers(): void {
+    const expected = runtimeTriggers(this.sqlite3);
+    for (const schema of ["main", "temp"]) {
+      for (const t of this.db.selectObjects(`SELECT name, tbl_name, sql FROM ${schema}.sqlite_schema WHERE type = 'trigger'`) as Any[]) {
+        if (!RUNTIME.test(String(t.tbl_name))) continue;
+        const want = schema === "main" ? expected.get(String(t.name)) : undefined;
+        if (want && spaced(String(t.sql)) === spaced(want)) continue;
+        this.exec(`DROP TRIGGER ${schema}.${q(String(t.name))}`);
+        if (want) this.exec(want);
+        this.refused.push(String(t.name));
+      }
+    }
   }
 
   /** The application's handle, watched for schema changes: a table it creates is adopted before its first row. */
@@ -533,6 +629,10 @@ export class Changes {
 
   /** Each application table, once: its key kind recorded and, for an integer, text or absent key, rewritten. */
   adoptTables(): void {
+    this.trusted(() => this.adopting());
+  }
+
+  private adopting(): void {
     const db = this.db;
     const known = new Set(db.selectValues("SELECT tbl FROM _cs_keys") as string[]);
     for (const table of appTablesOf(this.rows)) {
@@ -751,6 +851,10 @@ export class Changes {
    * itself in the log and every change it held for the next save.
    */
   save(): SavedChanges | null {
+    return this.trusted(() => this.saving());
+  }
+
+  private saving(): SavedChanges | null {
     if (this.inTransaction) return null;
     const ops = this.capture.changes();
     if (ops.length === 0) {
@@ -906,6 +1010,10 @@ export class Changes {
    * side of a pending conflict.
    */
   projectAdmitted(): { changesets: number; rows: number; deferred?: boolean } {
+    return this.trusted(() => this.projectingAdmitted());
+  }
+
+  private projectingAdmitted(): { changesets: number; rows: number; deferred?: boolean } {
     /*
      * The capture-epoch boundary (R-S, C07/Q08). The session records a row's
      * values as they are when it is extracted, so a merged value written into
@@ -953,6 +1061,10 @@ export class Changes {
    * back as it was written. A trigger that cannot be put back fails the call.
    */
   withoutCapture(f: () => void): void {
+    this.trusted(() => this.withoutTemps(f));
+  }
+
+  private withoutTemps(f: () => void): void {
     const temps = this.db.selectObjects("SELECT name, sql FROM temp.sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL") as { name: string; sql: string }[];
     for (const t of temps) this.exec(`DROP TRIGGER temp.${q(t.name)}`);
     try {
@@ -1286,7 +1398,37 @@ export class Changes {
     }
     this.stmts.clear();
     this.capture.close();
+    if (this.authorizer) this.sqlite3.capi.sqlite3_set_authorizer(this.db.pointer, 0, 0);
+    this.authorizer = null;
   }
+}
+
+/** The runtime's own objects: the application reads them, and never writes them or hangs code on them (T11, P01). */
+const RUNTIME = /^(_dai|_cs_)/;
+
+/** A statement's text with its whitespace runs made one space: how a stored trigger is compared with the runtime's. */
+const spaced = (sql: string): string => sql.replace(/\s+/g, " ").trim();
+
+let ownTriggers: Map<string, string> | null = null;
+
+/**
+ * The triggers the runtime itself puts on its tables, by name, as SQLite
+ * stores them: made once, in a scratch database, from the declaration every
+ * document with no session policy carries (`rewriteReplicated`, as the
+ * compiler emits it).
+ */
+function runtimeTriggers(sqlite3: Any): Map<string, string> {
+  if (ownTriggers) return ownTriggers;
+  const scratch = new sqlite3.oo1.DB(":memory:", "c");
+  try {
+    scratch.exec(rewriteReplicated(CHANGES_DECLARATION).sql);
+    ownTriggers = new Map(
+      (scratch.selectObjects("SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL") as Any[]).map((r) => [String(r.name), String(r.sql)]),
+    );
+  } finally {
+    scratch.close();
+  }
+  return ownTriggers;
 }
 
 /** The later version first, by (lc, author, ver): the order a column's shown value is chosen in. */

@@ -95,8 +95,10 @@ export class Copy {
   }
 
   async seal(): Promise<void> {
-    for (const batch of m.pendingBatches(this.rows, this.author.author, m.mergeTablesOf(this.rows))) {
-      m.recordSeal(this.rows, await m.signBatch(batch, { document: DOC, keys: this.author.keys }));
+    // As the frame does: the runtime's own writes to its own tables are trusted (T11, P01).
+    for (const batch of this.changes.trusted(() => m.pendingBatches(this.rows, this.author.author, m.mergeTablesOf(this.rows)))) {
+      const signed = await m.signBatch(batch, { document: DOC, keys: this.author.keys });
+      this.changes.trusted(() => m.recordSeal(this.rows, signed));
     }
   }
 
@@ -112,7 +114,7 @@ export class Copy {
     this.save();
     const sib = await openBytes(bytes);
     const verdicts = await m.verifyBatches(sib.rows, m.mergeTablesOf(sib.rows), DOC);
-    const report = m.mergeVerified(this.rows, sib.rows, { document: DOC, author: this.author.author, verdicts });
+    const report = this.changes.trusted(() => m.mergeVerified(this.rows, sib.rows, { document: DOC, author: this.author.author, verdicts }));
     sib.db.close();
     const projected = this.changes.projectAdmitted();
     return { report, projected };

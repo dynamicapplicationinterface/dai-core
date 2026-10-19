@@ -315,7 +315,7 @@ test("PR9-H1: a local write during the merge's verify wait survives, as the pers
   const verifying = m.verifyBatches(sib.rows, m.mergeTablesOf(sib.rows), DOC);
   b.db.exec({ sql: "UPDATE items SET title = 'B-local' WHERE id = ?", bind: [tent] });
   const verdicts = await verifying;
-  m.mergeVerified(b.rows, sib.rows, { document: DOC, author: b.author.author, verdicts });
+  b.changes.trusted(() => m.mergeVerified(b.rows, sib.rows, { document: DOC, author: b.author.author, verdicts }));
   sib.db.close();
   b.changes.projectAdmitted();
   b.save();
@@ -482,11 +482,17 @@ test("1b-H2(a): a save that fails leaves the capture intact, and the next save l
   a.changes.declaredOf = declaredOf;
   expect(logged(), "nothing of a failed save is in the log").toBe(before);
 
-  a.db.exec("CREATE TRIGGER refuse_log BEFORE INSERT ON _cs_log BEGIN SELECT RAISE(ABORT, 'forced'); END");
+  // The log write itself fails. The review forced it with a RAISE trigger on _cs_log, which the runtime now
+  // refuses to let the application create (T11), so the error is put into the write the runtime makes.
+  const run = a.changes.rows.run;
+  a.changes.rows.run = (sql: string, params?: unknown[]) => {
+    if (/^\s*INSERT/i.test(sql) && sql.includes("_cs_log")) throw new Error("forced");
+    return run(sql, params);
+  };
   a.db.exec("INSERT INTO notes (body) VALUES ('second try')");
   expect(() => a.save()).toThrow(/forced/);
   expect(logged(), "nothing of a failed save is in the log").toBe(before);
-  a.db.exec("DROP TRIGGER refuse_log");
+  a.changes.rows.run = run;
 
   expect(a.save()?.ops, "the update and both notes, in one changeset").toBe(3);
   await b.mergeFrom(await a.bytes());

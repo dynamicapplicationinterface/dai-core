@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { base, exchange, item, SCENARIOS } from "./scenarios.js";
-import { Copy, DOC, openBytes, person } from "./copy.js";
+import { boot, Copy, DOC, openBytes, person } from "./copy.js";
+import { CHANGES_DECLARATION, withHiddenKeys } from "../../src/changes-log.js";
+import { rewriteReplicated } from "../../src/replicated.js";
 import * as merge from "../../src/replicated-frame.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -52,7 +54,7 @@ test("C07/Q08: a remote edit to another column of a locally edited row is never 
     if (held) a.db.exec("BEGIN");
     a.db.exec({ sql: "UPDATE items SET qty = 7 WHERE id = ?", bind: [bread] });
     const verdicts = await verifying;
-    m.mergeVerified(a.rows, sib.rows, { document: DOC, author: a.author.author, verdicts });
+    a.changes.trusted(() => m.mergeVerified(a.rows, sib.rows, { document: DOC, author: a.author.author, verdicts }));
     sib.db.close();
     a.changes.projectAdmitted();
     if (held) {
@@ -411,5 +413,101 @@ test("K06/K07: after high remote ids and their deletion, a local id is never reu
   const restored = await Copy.open(a.author, stored);
   allocate(restored, "restored");
   restored.close();
+  b.close();
+});
+
+/**
+ * A document with no session policy, its schema assembled as the compiler
+ * assembles it (src/core.ts, `buildContainer`: the application's schema with
+ * hidden keys, the log's declaration, rewritten), run into a fresh database.
+ */
+async function compiledBytes(): Promise<Uint8Array> {
+  const schema = "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS marks (body TEXT);\n";
+  const sql = rewriteReplicated(withHiddenKeys(schema) + CHANGES_DECLARATION).sql;
+  const sqlite3 = await boot();
+  const db = new sqlite3.oo1.DB(":memory:", "c");
+  m.stageChangeFunctions(db);
+  db.exec(sql);
+  const bytes = sqlite3.capi.sqlite3_js_db_export(db.pointer) as Uint8Array;
+  db.close();
+  return bytes;
+}
+
+/**
+ * T11 / P02, the catalog's tenth priority vector, and P01. A runtime-owned
+ * table is protected from writes and from code: an imported schema that hangs
+ * a trigger on the log (and one that puts other text under a runtime
+ * trigger's name) runs nothing under the runtime's own outbox write, because
+ * the runtime drops what is not its own at open, before any write it trusts.
+ * And the application's writes to runtime tables are refused at execution,
+ * by SQLite's authorizer, on every route the catalog names: direct, quoted,
+ * schema-qualified, prepared, a TEMP trigger, a view's INSTEAD OF trigger, a
+ * trigger on the application's own table. A document assembled as the
+ * compiler does, and a copy the runtime made, have nothing dropped.
+ */
+test("T11/P02: no trigger an imported schema hangs on a runtime table runs under the runtime's writes, and application writes to runtime tables are refused at execution", async () => {
+  const { a, b } = await base();
+  expect(a.changes.refused, "a copy the runtime made: nothing dropped").toEqual([]);
+  const compiled = await Copy.open(await person(), await compiledBytes());
+  expect(compiled.changes.refused, "a document assembled as the compiler does: nothing dropped").toEqual([]);
+  compiled.close();
+
+  // The imported schema: A's stored bytes, given two triggers outside any runtime.
+  const raw = await openBytes(await a.bytes());
+  raw.db.exec(`CREATE TRIGGER evil AFTER INSERT ON _cs_log BEGIN
+      INSERT OR REPLACE INTO _cs_flag (tbl, pk, kind, detail) VALUES ('items', '[0]', 'held', 'forged');
+      UPDATE items SET note = 'pwned';
+    END;
+    DROP TRIGGER _cs_log__no_update;
+    CREATE TRIGGER _cs_log__no_update BEFORE UPDATE OF _r_batch ON _cs_log BEGIN UPDATE items SET note = 'pwned too'; END;`);
+  const imported = raw.sqlite3.capi.sqlite3_js_db_export(raw.db.pointer) as Uint8Array;
+  raw.db.close();
+  const c = await Copy.open(a.author, imported);
+  expect.soft([...c.changes.refused].sort(), "both are dropped at open").toEqual(["_cs_log__no_update", "evil"]);
+  const triggerSql = (x: Copy, name: string): string => String(x.db.selectValue("SELECT sql FROM sqlite_schema WHERE name = ?", [name]) ?? "").replace(/\s+/g, " ");
+  expect.soft(triggerSql(c, "evil"), "the foreign trigger is gone").toBe("");
+  expect.soft(triggerSql(c, "_cs_log__no_update"), "the runtime's own text is back under its name").toBe(triggerSql(a, "_cs_log__no_update"));
+  c.db.exec("INSERT INTO items (title) VALUES ('after the import')");
+  expect(c.save(), "the runtime's outbox write").not.toBeNull();
+  await c.seal();
+  expect(c.db.selectValues("SELECT note FROM items WHERE note LIKE 'pwned%'"), "nothing the imported triggers wrote").toEqual([]);
+  expect(c.flags(), "no forged flag").toEqual([]);
+  c.close();
+
+  // The application's writes to runtime tables, refused when they execute.
+  const cells = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_cell"));
+  const before = cells();
+  const refused = (sql: string): void => expect(() => a.db.exec(sql), sql).toThrow(/not authorized/);
+  for (const sql of [
+    "INSERT INTO _cs_flag (tbl, pk, kind) VALUES ('items', '[1]', 'pending')",
+    `UPDATE "_cs_log" SET payload = x'00'`,
+    "DELETE FROM main._cs_cell",
+    "UPDATE _dai_replica SET label = 'x'",
+    "DROP TABLE _cs_flag",
+    "ALTER TABLE _cs_flag ADD COLUMN x",
+    "CREATE TRIGGER on_log AFTER INSERT ON _cs_log BEGIN SELECT 1; END",
+    "CREATE TEMP TRIGGER on_log_temp AFTER INSERT ON main._cs_log BEGIN SELECT 1; END",
+    "DROP TRIGGER _cs_log__no_update",
+    "CREATE INDEX on_cell ON _cs_cell (val)",
+    "CREATE TEMP VIEW _cs_log_current AS SELECT 1",
+  ]) {
+    refused(sql);
+  }
+  expect(() => a.db.prepare("DELETE FROM _cs_cell"), "a prepared statement").toThrow(/not authorized/);
+  // A trigger on the application's own table, and a view's INSTEAD OF trigger: refused when they would run.
+  a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END");
+  refused("INSERT INTO items (title) VALUES ('forged')");
+  a.db.exec("DROP TRIGGER items_forge");
+  a.db.exec("CREATE VIEW forge AS SELECT 1 AS x; CREATE TRIGGER forge_in INSTEAD OF INSERT ON forge BEGIN DELETE FROM _cs_cell; END;");
+  refused("INSERT INTO forge VALUES (1)");
+  a.db.exec("DROP VIEW forge");
+  expect(cells(), "the runtime's tables are as they were").toBe(before);
+
+  // And the runtime's own writes go on: a save, a seal, a merge.
+  a.db.exec("INSERT INTO items (title) VALUES ('still saved')");
+  expect(a.save()).not.toBeNull();
+  await b.mergeFrom(await a.bytes());
+  expect(b.db.selectValue("SELECT count(*) FROM items WHERE title = 'still saved'")).toBe(1);
+  a.close();
   b.close();
 });
