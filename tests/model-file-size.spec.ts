@@ -16,7 +16,13 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 33,000 bytes: R-O, Build 1, the file at 32,012 rounded up. One shape: the
+ * 34,000 bytes: Build 1d, the file at 33,754 rounded up. Three data rules
+ * (INSERT-NAMES-COLUMNS, TOTALS-IN-QUERIES, COUNTERS-ARE-FLAGGED) bought
+ * 1,742 bytes. What they buy is an author who names columns in an INSERT,
+ * computes a total in the query that shows it, and expects a counter two
+ * people change at once to be flagged rather than added up (R-T).
+ *
+ * Before that, 33,000 bytes: R-O, Build 1, the file at 32,012 rounded up. One shape: the
  * shape decision, the shared-table and session constraints, the surface, the
  * views and the two shared examples are no longer taught, because the author
  * writes ordinary tables and the host sets the policy. It freed 112,330 bytes.
@@ -48,7 +54,7 @@ import { RECIPE } from "../src/recipe.js";
  * invisible to the person, unreproducible on a desk, and routine with a live
  * opponent.
  */
-const BUDGET_BYTES = 33_000;
+const BUDGET_BYTES = 34_000;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;

@@ -304,6 +304,46 @@ export const CONSTRAINTS: readonly Constraint[] = [
     ],
   },
   {
+    id: "INSERT-NAMES-COLUMNS",
+    title: "Name the columns in every INSERT",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "Write every INSERT with its column list: INSERT INTO marks (body, at) VALUES (?, ?), never INSERT INTO marks VALUES (?, ?).",
+    why:
+      "A table that declares no primary key is given one, _dai_id, as its first column, so every copy names its rows alike. SELECT * shows it, and an INSERT that relies on column order has one value too few and fails.",
+    enforced: ["lint"],
+    lint: ["positional-insert"],
+    anchors: [
+      { file: "src/lint.ts", contains: 'id: "positional-insert"' },
+      { file: "src/changes-log.ts", contains: "export function hiddenKeyTables" },
+    ],
+  },
+  {
+    id: "TOTALS-IN-QUERIES",
+    title: "A total is a query, never a stored column",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "Compute a total, a count, a balance or a \"how many left\" in the query that shows it (SELECT count(*) FROM workouts, SELECT sum(amount) FROM entries). Never keep one in a column that a trigger or the application updates as rows are added or changed.",
+    why:
+      "Two copies that each add a row each store the total they computed, and after a merge both agree on a wrong number: two workouts, a count of 1. The runtime keeps both versions and marks the row pending; it does not guess. A total read from the rows is right on every copy.",
+    enforced: ["prose"],
+    anchors: [{ file: "src/changesets.ts", contains: "Two concurrent versions are a conflict even when their values are equal" }],
+  },
+  {
+    id: "COUNTERS-ARE-FLAGGED",
+    title: "A counter two people change at once is flagged, not added up",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "qty = qty + 1 on two copies at once is not summed when they merge: the runtime keeps both numbers, shows one, and marks the row pending until someone writes it again. For something several people add to, insert a row per addition and count the rows.",
+    why:
+      "A change travels as the value it left, not the arithmetic: qty = qty + 1 and qty = 6 are the same change. Summing would guess at intent, and a wrong guess is a silent loss; a flag is not.",
+    enforced: ["runtime"],
+    anchors: [{ file: "src/changesets.ts", contains: "Two concurrent versions are a conflict even when their values are equal" }],
+  },
+  {
     id: "WRITE-AS-IT-HAPPENS",
     title: "The database is the state",
     shapes: ALL,
