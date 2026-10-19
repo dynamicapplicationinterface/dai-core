@@ -85,19 +85,43 @@ export function jobFailed(job, tally) {
 export const CHECKS_JOBS = ["checks-fast", "checks-holdout", "checks-properties-node", "checks-properties-python"];
 
 /**
- * Every job the gate is made of, by the start of the name test.yml gives it:
- * a browser job's name goes on with its matrix values ("…, 1, 1/4, …)").
- * Firefox is a reading and is not here.
+ * The job that holds the sum of the browser parts' counts to the floor
+ * (scripts/count-parts.mjs). A part alone is a fraction by intent, so this is
+ * where the count gate covers every shard (C8).
  */
-export const EXPECTED_JOBS = [
-  "browser (chromium, whole",
+export const COUNT_JOB = "count-gate";
+
+/**
+ * The browser parts of the gate, by the start of the name test.yml gives each
+ * job: a name goes on with its matrix values ("…, 1/4)"). Chromium was one job
+ * with the node project until 19 October, when it ran past its 25-minute wall
+ * twice running; it is four shards and a node job, as WebKit is. Firefox is a
+ * reading and is not here.
+ */
+export const BROWSER_PARTS = [
+  "browser (chromium, 1",
+  "browser (chromium, 2",
+  "browser (chromium, 3",
+  "browser (chromium, 4",
+  "browser (node, whole",
   "browser (webkit, 1",
   "browser (webkit, 2",
   "browser (webkit, 3",
   "browser (webkit, 4",
   "browser (webkit, mailbox",
-  ...CHECKS_JOBS,
 ];
+
+/** Every job the gate is made of. */
+export const EXPECTED_JOBS = [...BROWSER_PARTS, ...CHECKS_JOBS, COUNT_JOB];
+
+/**
+ * The name of the count report a browser part keeps, as test.yml names it:
+ * count-<browser>-<part>, from "browser (<browser>, <part>…".
+ */
+export function countArtifact(part) {
+  const matrix = /^browser \(([^,]+), ([^,)]+)/.exec(part);
+  return matrix ? `count-${matrix[1].trim()}-${matrix[2].trim()}` : null;
+}
 
 /** Whether a job is Firefox's, a reading that never decides the gate (test.yml, ruled 25 September, D32). */
 export function isReading(name) {
@@ -125,7 +149,7 @@ export function missingJobs(names) {
  */
 export function gateLine(status, red) {
   if (status !== "completed") return `gate: not finished (${status})`;
-  if (red.length === 0) return "gate: green on chromium, webkit and every checks job; firefox above is a reading";
+  if (red.length === 0) return "gate: green on chromium, node, webkit, every checks job and the count; firefox above is a reading";
   return `gate: RED on ${red.join(", ")}; firefox above is a reading`;
 }
 
@@ -186,14 +210,14 @@ function main(argv) {
     const mark = !job.conclusion
       ? (job.status ?? "?").toUpperCase()
       : failed ? (hasTally ? "FAIL" : job.conclusion.toUpperCase()) : "PASS";
-    console.log(`  ${mark.padEnd(6)} ${job.name.padEnd(28)} ${cells}`);
+    console.log(`  ${mark.padEnd(6)} ${job.name.padEnd(28)} ${cells}${wall(job)}`);
     return { hasTally, failed: Boolean(job.conclusion) && failed };
   };
 
   let anyMissing = false;
   // The gate's jobs that are not green, by name: the summary names only these.
   const red = [];
-  console.log("  gate (chromium, webkit):");
+  console.log("  gate (chromium, node, webkit):");
   for (const job of browserJobs.filter((j) => !isReading(j.name))) {
     const r = row(job);
     if (!r.hasTally) anyMissing = true;

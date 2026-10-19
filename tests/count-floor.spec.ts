@@ -97,12 +97,15 @@ test.describe("the run the floor is measured against", () => {
       databaseId: ++id,
       passes,
     });
+    // Chromium's four shards and the node job (19 October), WebKit's five parts.
     const jobs = EXPECTED_JOBS.map((name: string) =>
-      name.includes("chromium")
-        ? job(`${name}, --project=node)`, { chromium: 805, node: 640 })
-        : name.includes("webkit")
-          ? job(`${name}, x)`, { webkit: 160 })
-          : job(name, {}),
+      name.includes("(chromium")
+        ? job(`${name}, x)`, { chromium: 200 })
+        : name.includes("(node")
+          ? job(`${name})`, { node: 640 })
+          : name.includes("(webkit")
+            ? job(`${name}, x)`, { webkit: 160 })
+            : job(name, {}),
     );
     jobs.push(job(FIREFOX, { firefox: firefoxPasses }));
     return { databaseId, headSha: `c${databaseId}`, headBranch, status: "completed", jobs };
@@ -122,15 +125,15 @@ test.describe("the run the floor is measured against", () => {
       runOf(2, "review/merged", []),
       runOf(1, "main", [EXPECTED_JOBS[2]]),
     ];
-    expect(read(runs)).toEqual(from(2, { chromium: 805, firefox: 800, webkit: 800, node: 640 }));
+    expect(read(runs)).toEqual(from(2, { chromium: 800, firefox: 800, webkit: 800, node: 640 }));
   });
 
   test("a run green except Firefox is green, and gives no Firefox figure", () => {
     const runs = [runOf(5, "main", [FIREFOX], 803), runOf(4, "main", [], 728)];
     const found = read(runs);
-    expect(found).toEqual(from(5, { chromium: 805, webkit: 800, node: 640 }));
+    expect(found).toEqual(from(5, { chromium: 800, webkit: 800, node: 640 }));
     const newest = Object.fromEntries(Object.entries(found).map(([p, s]) => [p, (s as { count: number }).count]));
-    expect(floorDrift({ chromium: 805, firefox: 794, webkit: 800, node: 638 }, newest).above).toEqual([]);
+    expect(floorDrift({ chromium: 800, firefox: 794, webkit: 800, node: 638 }, newest).above).toEqual([]);
   });
 
   test("a run not in HEAD's history, or lacking a gating job, is not the measure", () => {
@@ -142,6 +145,6 @@ test.describe("the run the floor is measured against", () => {
       jobsOf: (run: Run) => run.jobs,
       logOf: (job: Job) => lines(job.passes),
     });
-    expect(found).toEqual(from(7, { chromium: 805, firefox: 800, webkit: 800, node: 640 }));
+    expect(found).toEqual(from(7, { chromium: 800, firefox: 800, webkit: 800, node: 640 }));
   });
 });

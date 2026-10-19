@@ -40,7 +40,7 @@ test.describe("the summary line", () => {
     expect(gateLine("completed", ["checks-properties-python"])).toBe(
       "gate: RED on checks-properties-python; firefox above is a reading",
     );
-    expect(gateLine("completed", [])).toBe("gate: green on chromium, webkit and every checks job; firefox above is a reading");
+    expect(gateLine("completed", [])).toBe("gate: green on chromium, node, webkit, every checks job and the count; firefox above is a reading");
     expect(gateLine("in_progress", ["checks-fast"])).toBe("gate: not finished (in_progress)");
   });
 

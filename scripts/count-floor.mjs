@@ -49,7 +49,7 @@ const PROJECTS = ["chromium", "firefox", "webkit", "node"];
 /** Which jobs of a run carry each project, by the names test.yml gives them. */
 const CARRIERS = {
   chromium: (name) => name.startsWith("browser (chromium"),
-  node: (name) => name.startsWith("browser (chromium"),
+  node: (name) => name.startsWith("browser (node"),
   firefox: isReading,
   webkit: (name) => name.startsWith("browser (webkit"),
 };
