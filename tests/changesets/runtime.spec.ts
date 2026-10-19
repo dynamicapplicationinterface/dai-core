@@ -232,9 +232,14 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     expect(await value(a, dump), "both copies hold the same notes").toBe(await value(b, dump));
     expect(["A says", "B says"]).toContain(await value(a, "SELECT body FROM notes WHERE id = 1"));
 
+    // The conflict's own flag. Another row a conflicting save also wrote is pending as its group (M06); which
+    // writes share a save is the autosave's timing, so those are checked to name the conflict, not counted.
+    const own = "SELECT tbl, pk, kind FROM _cs_flag f WHERE kind = 'pending' AND EXISTS (SELECT 1 FROM json_each(f.detail) j WHERE json_extract(j.value, '$.group') IS NULL)";
     await expect
-      .poll(async () => query(await stored(pageA, uuid), "SELECT tbl, pk, kind FROM _cs_flag WHERE kind = 'pending'"), { timeout: 60_000, message: "the stored copy carries the flag" })
+      .poll(async () => query(await stored(pageA, uuid), own), { timeout: 60_000, message: "the stored copy carries the flag" })
       .toEqual([{ tbl: "notes", pk: "[1]", kind: "pending" }]);
+    const groups = query(await stored(pageA, uuid), "SELECT json_extract(j.value, '$.with') AS w FROM _cs_flag f, json_each(f.detail) j WHERE f.kind = 'pending' AND json_extract(j.value, '$.group') IS NOT NULL");
+    for (const g of groups) expect(JSON.parse(String(g["w"])), "a group flag names the conflict it waits on").toEqual([["notes", "[1]"]]);
 
     const audit = "SELECT json_group_array(n) FROM (SELECT count(*) AS n FROM log GROUP BY note_id ORDER BY note_id)";
     expect(JSON.parse(String(await value(a, audit))).every((n: number) => n === 1), "one log row per note on A").toBe(true);
