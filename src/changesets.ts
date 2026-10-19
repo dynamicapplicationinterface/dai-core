@@ -335,6 +335,8 @@ export function stageChangeFunctions(db: Any): void {
   db.createFunction("dai_uuid", () => crypto.randomUUID(), { arity: 0, deterministic: false });
   db.createFunction("dai_projecting", () => 0, { arity: 0, deterministic: false });
   db.createFunction("dai_inserted", () => null, { arity: 2, deterministic: false });
+  db.createFunction("dai_enter", () => null, { arity: 0, deterministic: false });
+  db.createFunction("dai_leave", () => null, { arity: 0, deterministic: false });
 }
 
 /* --------------------------------------------------------------- changes */
@@ -360,6 +362,8 @@ export class Changes {
   private counter = 0;
   private projecting = false;
   private lastInsert: { rowid: number | null; id: unknown } = { rowid: null, id: null };
+  /** The slot as each running application trigger found it (dai_enter), restored when it ends (dai_leave). */
+  private frames: { rowid: number | null; id: unknown }[] = [];
   private readonly keysCache = new Map<string, Keys | null>();
   private readonly declaredCache = new Map<string, Declared>();
   private readonly stmts = new Map<string, Any>();
@@ -397,15 +401,30 @@ export class Changes {
       },
       { arity: 2, deterministic: false },
     );
-    // The key is no longer the rowid, so last_insert_rowid() answers the application's id for the row it last inserted.
     db.createFunction(
-      "last_insert_rowid",
+      "dai_enter",
       () => {
-        const real = Number(capi.sqlite3_last_insert_rowid(db.pointer));
-        return this.lastInsert.rowid === real ? this.lastInsert.id : real;
+        this.frames.push(this.lastInsert);
+        return null;
       },
       { arity: 0, deterministic: false },
     );
+    db.createFunction(
+      "dai_leave",
+      () => {
+        this.lastInsert = this.frames.pop() ?? this.lastInsert;
+        return null;
+      },
+      { arity: 0, deterministic: false },
+    );
+    /*
+     * The key is no longer the rowid, so last_insert_rowid() answers from the
+     * slot: the application's id for a row of a rewritten integer key, the
+     * rowid SQLite would answer for any other (1b-H1). Never the connection's
+     * own last rowid, which the runtime's writes move: a save's log row, a
+     * seal, a merged row.
+     */
+    db.createFunction("last_insert_rowid", () => this.lastInsert.id ?? 0, { arity: 0, deterministic: false });
     this.exec(META);
     // Foreign keys are enforced from open: the runtime never set it before, so a declared REFERENCES was decoration.
     if (capi.sqlite3_get_autocommit(db.pointer)) this.exec("PRAGMA foreign_keys = ON");
@@ -419,10 +438,36 @@ export class Changes {
     const exec = handle.exec.bind(handle);
     handle.exec = (...args: Any[]): Any => {
       const before = handle.selectValue("PRAGMA schema_version");
-      const result = exec(...args);
+      let result: Any;
+      try {
+        result = exec(...args);
+      } finally {
+        this.settleFrames();
+      }
       if (handle.selectValue("PRAGMA schema_version") !== before) this.adoptTables();
       return result;
     };
+  }
+
+  /**
+   * After a statement: a trigger that ended without reaching dai_leave (an
+   * error, a RAISE) left its frame open. SQLite restores the last rowid to
+   * what it was when the outermost trigger began, and so does this.
+   */
+  private settleFrames(): void {
+    if (this.frames.length === 0) return;
+    this.lastInsert = this.frames[0]!;
+    this.frames = [];
+  }
+
+  /** Runtime writes to the application's tables leave the application's last insert as it was. */
+  private keepingLastInsert<T>(f: () => T): T {
+    const kept = this.lastInsert;
+    try {
+      return f();
+    } finally {
+      this.lastInsert = kept;
+    }
   }
 
   /* ------------------------------------------------------------ keys */
@@ -516,15 +561,10 @@ export class Changes {
 
   /**
    * Every other table with a rowid records its inserts in the same slot, as
-   * its own rowid: what SQLite answers for it (PR9-H3). The slot answers for
-   * the real last rowid only, and hidden rowids start at 1 in every table, so
-   * a slot that only the ranged tables wrote answered a ranged id for a text
-   * key's row inserted after it, or for a row a merge had just placed.
-   * A WITHOUT ROWID table leaves last_insert_rowid() as it was, in SQLite and
-   * here. Created before the application's triggers are guarded, which makes
-   * them newer, and SQLite fires the newest first: an application trigger
-   * that inserts elsewhere runs before this one, and the slot ends on the row
-   * the statement itself inserted.
+   * its own rowid: what SQLite answers for it (PR9-H3). A WITHOUT ROWID table
+   * leaves last_insert_rowid() as it was, in SQLite and here. An insert a
+   * trigger makes is restored away when the application's trigger ends
+   * (guardTriggers), so the order triggers fire in does not matter (1b-L4).
    */
   private slotEveryInsert(): void {
     for (const { tbl } of this.db.selectObjects("SELECT tbl FROM _cs_keys WHERE kind IN ('uuid', 'natural', 'hidden')") as Any[]) {
@@ -540,22 +580,34 @@ export class Changes {
    * copy's changeset (the session records rows a trigger writes), so firing it
    * again on the receiving copy writes rows nobody captured: a divergence
    * (the spike's S8).
+   *
+   * Each body is also framed by `dai_enter()` and `dai_leave()`, which save
+   * and restore the last-insert slot, as SQLite saves and restores the last
+   * rowid around every trigger program (1b-H1): an insert a trigger makes,
+   * fired by an INSERT, UPDATE or DELETE, is never the statement's.
    */
   private guardTriggers(): void {
     const apps = new Set(appTablesOf(this.rows));
     for (const { name, tbl_name, sql } of this.db.selectObjects(
       "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL",
     ) as Any[]) {
-      if (String(name).startsWith("_cs_") || !apps.has(tbl_name) || String(sql).includes("dai_projecting()")) continue;
+      if (String(name).startsWith("_cs_") || !apps.has(tbl_name)) continue;
       const at = String(sql).search(/\bBEGIN\b/i);
       if (at < 0) continue;
-      const head = String(sql).slice(0, at);
-      const guarded = /\bWHEN\b/i.test(head)
-        ? head.replace(/\bWHEN\b([\s\S]*)$/i, "WHEN dai_projecting() = 0 AND ($1) ")
-        : `${head.trimEnd()} WHEN dai_projecting() = 0 `;
+      let head = String(sql).slice(0, at);
+      let body = String(sql).slice(at);
+      if (!head.includes("dai_projecting()")) {
+        head = /\bWHEN\b/i.test(head)
+          ? head.replace(/\bWHEN\b([\s\S]*)$/i, "WHEN dai_projecting() = 0 AND ($1) ")
+          : `${head.trimEnd()} WHEN dai_projecting() = 0 `;
+      }
+      if (!body.includes("dai_enter()") && /\bEND\s*;?\s*$/i.test(body)) {
+        body = body.replace(/^BEGIN\b/i, "BEGIN SELECT dai_enter();").replace(/\bEND\s*;?\s*$/i, "SELECT dai_leave(); END");
+      }
+      if (head + body === String(sql)) continue;
       this.paused(() => {
         this.exec(`DROP TRIGGER ${q(name)}`);
-        this.exec(guarded + String(sql).slice(at));
+        this.exec(head + body);
       });
     }
   }
@@ -584,7 +636,7 @@ export class Changes {
     const old = `_cs_old_${table}`;
     const inTxn = !this.sqlite3.capi.sqlite3_get_autocommit(this.db.pointer);
     const fk = this.db.selectValue("PRAGMA foreign_keys");
-    this.paused(() => {
+    this.keepingLastInsert(() => this.paused(() => {
       if (!inTxn) exec("PRAGMA foreign_keys = OFF");
       exec("PRAGMA legacy_alter_table = ON");
       try {
@@ -604,7 +656,7 @@ export class Changes {
         exec("PRAGMA legacy_alter_table = OFF");
         if (fk && !inTxn) exec("PRAGMA foreign_keys = ON");
       }
-    });
+    }));
     return true;
   }
 
@@ -849,7 +901,7 @@ export class Changes {
     const exec = this.exec;
     // PRAGMA foreign_keys is a no-op inside a transaction, so it is set before the savepoint opens.
     const inTxn = this.inTransaction;
-    this.paused(() => {
+    this.keepingLastInsert(() => this.paused(() => {
       if (!inTxn) exec("PRAGMA foreign_keys = OFF");
       exec("SAVEPOINT cs_project");
       this.projecting = true;
@@ -864,7 +916,7 @@ export class Changes {
         this.projecting = false;
         if (!inTxn) exec("PRAGMA foreign_keys = ON");
       }
-    });
+    }));
   }
 
   private stateOf(table: string, pk: string): { deleted: boolean; contested: boolean; values: Record<string, unknown>; pending: Any[] } | null {

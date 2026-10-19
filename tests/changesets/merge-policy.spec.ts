@@ -493,6 +493,87 @@ test("1b-H2(a): a save that fails leaves the capture intact, and the next save l
   b.close();
 });
 
+/**
+ * 1b-H1, against native SQLite as the oracle. The same schema and statements
+ * run on a plain database (node:sqlite) and on a copy. After each step the
+ * copy's last_insert_rowid() must be native's answer exactly, except where
+ * native's names a row of a table whose integer key the runtime rewrote: there
+ * it is that row's ranged id. Native SQLite restores the last rowid when a
+ * trigger program ends, so an insert a trigger makes is never the answer; the
+ * slot the runtime kept was overwritten by it (the review's runs: an UPDATE
+ * whose trigger inserts into a text-keyed table answered a hidden rowid, the
+ * f661823d probe; into an integer-keyed table, another table's id).
+ */
+test("1b-H1: last_insert_rowid() equals native SQLite's at every step, but for the ranged id of a rewritten key", async () => {
+  const SCHEMA_H1 = `
+    CREATE TABLE lists (id INTEGER PRIMARY KEY, label TEXT);
+    CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT);
+    CREATE TABLE audit (id INTEGER PRIMARY KEY, label TEXT);
+    CREATE TABLE settings (id INTEGER PRIMARY KEY, label TEXT);
+    CREATE TABLE tags (k TEXT PRIMARY KEY, label TEXT);
+    CREATE TABLE log (k TEXT PRIMARY KEY, label TEXT);
+    CREATE TABLE marks (label TEXT);
+    CREATE TRIGGER items_tag AFTER INSERT ON items BEGIN INSERT INTO tags (k, label) VALUES ('t-' || NEW.label, 'by ' || NEW.label); END;
+    CREATE TRIGGER settings_audit AFTER UPDATE OF label ON settings WHEN NEW.label LIKE 'audit%' BEGIN INSERT INTO audit (label) VALUES ('for ' || NEW.label); END;
+    CREATE TRIGGER settings_log AFTER UPDATE OF label ON settings WHEN NEW.label LIKE 'log%' BEGIN INSERT INTO log (k, label) VALUES ('l-' || NEW.label, 'for ' || NEW.label); END;
+    CREATE TRIGGER lists_mark BEFORE INSERT ON lists WHEN NEW.label = 'L3' BEGIN INSERT INTO marks (label) VALUES ('before L3'); END;`;
+  const REWRITTEN = new Set(["lists", "items", "audit", "settings"]);
+  const { DatabaseSync } = await import("node:sqlite");
+
+  /** One copy beside its oracle. */
+  const pair = async (c: Copy): Promise<{ c: Copy; native: InstanceType<typeof DatabaseSync>; step: (sql: string, at: string, what: string) => void }> => {
+    const native = new DatabaseSync(":memory:");
+    native.exec(SCHEMA_H1);
+    const step = (sql: string, at: string, what: string): void => {
+      native.exec(sql);
+      c.db.exec(sql);
+      const want = Number(native.prepare("SELECT last_insert_rowid() AS v").get()!["v"]);
+      const got = Number(c.db.selectValue("SELECT last_insert_rowid()"));
+      if (want === 0) {
+        expect(got, `${what}: no insert yet`).toBe(0);
+        return;
+      }
+      const named = native.prepare(`SELECT label FROM ${at} WHERE rowid = ?`).get(want)?.["label"];
+      expect(named, `${what}: native's answer names a row of ${at}`).toBeDefined();
+      if (REWRITTEN.has(at)) {
+        expect(c.db.selectValue(`SELECT label FROM ${at} WHERE id = ?`, [got]), `${what}: the ranged id of the row native names`).toBe(named);
+      } else {
+        expect(got, `${what}: native's answer exactly`).toBe(want);
+        expect(c.db.selectValue(`SELECT label FROM ${at} WHERE rowid = ?`, [got]), what).toBe(named);
+      }
+    };
+    return { c, native, step };
+  };
+
+  const a = await Copy.open(await person());
+  a.db.exec(SCHEMA_H1);
+  const b = await Copy.open(await person(), await a.bytes());
+  const A = await pair(a);
+  A.step("INSERT INTO settings (label) VALUES ('S1')", "settings", "insert");
+  A.step("INSERT INTO lists (label) VALUES ('L1')", "lists", "insert into an integer-keyed table");
+  A.step("INSERT INTO items (label) VALUES ('I1')", "items", "an insert whose INSERT trigger inserts elsewhere");
+  A.step("UPDATE settings SET label = 'audit 1' WHERE label = 'S1'", "items", "inside an UPDATE trigger, into an integer-keyed table");
+  A.step("INSERT INTO lists (label) VALUES ('L2')", "lists", "insert");
+  A.step("UPDATE settings SET label = 'log 1' WHERE label = 'audit 1'", "lists", "inside an UPDATE trigger, into a text-keyed table (the f661823d probe)");
+  A.step("INSERT INTO tags (k, label) VALUES ('red', 'T1')", "tags", "into a text-keyed table");
+  A.step("UPDATE settings SET label = 'audit 2' WHERE label = 'log 1'", "tags", "an UPDATE trigger after a text-keyed insert");
+  A.step("INSERT INTO marks (label) VALUES ('M1')", "marks", "into a hidden-keyed table");
+  A.step("INSERT INTO lists (label) VALUES ('L3')", "lists", "an insert whose BEFORE trigger inserts elsewhere");
+  A.step("DELETE FROM tags WHERE k = 'red'", "lists", "a DELETE");
+  A.c.save();
+  A.step("SELECT 1", "lists", "after a save, which writes the log");
+
+  // B, after merging A's rows into every table, with no insert of its own since: native never saw a merge.
+  const B = await pair(b);
+  // A ranged id, so a merged row whose hidden rowid happens to equal native's answer cannot pass for it.
+  B.step("INSERT INTO lists (label) VALUES ('B1')", "lists", "B's own insert");
+  await b.mergeFrom(await a.bytes());
+  B.step("SELECT 1", "lists", "after a merge with no application insert");
+  B.step("UPDATE settings SET label = 'log B' WHERE label = 'audit 2'", "lists", "an UPDATE trigger on a merged row");
+  a.close();
+  b.close();
+});
+
 test("an id the application omits comes from this author's range, and last_insert_rowid() answers it", async () => {
   const o = await exchange((a) => {
     a.db.exec("INSERT INTO categories (name) VALUES ('Bath')");
