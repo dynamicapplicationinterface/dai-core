@@ -1097,7 +1097,12 @@ export class Changes {
       this.rows.run("DELETE FROM _cs_flag WHERE tbl = ? AND pk = ?", [table, pk]);
       this.rows.run("DELETE FROM _cs_held WHERE tbl = ? AND pk = ?", [table, pk]);
     }
-    for (const [table, pk] of items) this.place(table, pk);
+    // Deletes first, then every other row (D02): an INSERT OR REPLACE deletes the row holding a UNIQUE value
+    // and inserts a new one, and in key order the new row could come first, find the slot still taken by
+    // the row its own save deleted, and be held.
+    const gone = (t: string, pk: string): boolean => this.stateOf(t, pk)?.deleted === true;
+    for (const [table, pk] of items) if (gone(table, pk)) this.place(table, pk);
+    for (const [table, pk] of items) if (!gone(table, pk)) this.place(table, pk);
     this.keepReferenced();
     this.keepGroups();
   }

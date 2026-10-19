@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { base, exchange, item, SCENARIOS } from "./scenarios.js";
-import { Copy, DOC, openBytes } from "./copy.js";
+import { Copy, DOC, openBytes, person } from "./copy.js";
 import * as merge from "../../src/replicated-frame.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -310,4 +310,56 @@ test("M06: a transaction one of whose rows becomes pending leaves no other row o
   }
   o.a.close();
   o.b.close();
+});
+
+const FAMILY = `CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id) ON DELETE CASCADE, what TEXT NOT NULL);
+CREATE TABLE gone (id INTEGER PRIMARY KEY, what TEXT NOT NULL);
+CREATE TRIGGER child_gone AFTER DELETE ON child BEGIN INSERT INTO gone (what) VALUES (OLD.what); END;`;
+
+/**
+ * D02. INSERT OR REPLACE over a UNIQUE name deletes the conflicting parent
+ * and inserts a new row; the delete cascades to the parent's child, and the
+ * child's delete fires a trigger. The capture carries every surviving effect
+ * (the parent's delete and insert, the child's delete, the trigger's row), and
+ * the other copy applies each once: no second trigger row, no child, one
+ * parent named x, under the new key.
+ *
+ * Run from both copies, the replaced parent written first by one and replaced
+ * by the other, so whichever author's range sorts first, the new row is
+ * applied once in the order that would put it before the delete of the row it
+ * replaces.
+ */
+test("D02: INSERT OR REPLACE deleting a parent with a cascading child is captured whole and applied once", async () => {
+  for (const replacer of ["b", "a"] as const) {
+    const a = await Copy.open(await person());
+    a.db.exec(FAMILY);
+    const b = await Copy.open(await person(), await a.bytes());
+    const [owner, other] = replacer === "b" ? [a, b] : [b, a];
+    owner.db.exec("INSERT INTO parent (name) VALUES ('x'); INSERT INTO child (parent_id, what) VALUES (last_insert_rowid(), 'c1');");
+    await other.mergeFrom(await owner.bytes());
+    const was = other.db.selectValue("SELECT id FROM parent WHERE name = 'x'");
+    expect(was, `${replacer}: the parent arrived`).toBeDefined();
+
+    other.db.exec("INSERT OR REPLACE INTO parent (name) VALUES ('x')");
+    const now = other.db.selectValue("SELECT id FROM parent WHERE name = 'x'");
+    expect(now, `${replacer}: REPLACE made a new row`).not.toBe(was);
+    other.save();
+    const ops = [...other.opsSince(1)].map(([row, codes]) => `${row.split("|")[0]} ${[...codes].join("")}`).sort();
+    expect(ops, `${replacer}: the capture carries every surviving effect`).toEqual(
+      expect.arrayContaining([`child D`, `gone I`, `parent D`, `parent I`]),
+    );
+
+    await owner.mergeFrom(await other.bytes());
+    for (const c of [owner, other]) {
+      expect(c.db.selectObjects("SELECT id, name FROM parent"), `${replacer}: one parent named x, the new one`).toEqual([{ id: now, name: "x" }]);
+      expect(c.db.selectValue("SELECT count(*) FROM child"), `${replacer}: the child went with it`).toBe(0);
+      expect(c.db.selectValues("SELECT what FROM gone"), `${replacer}: the trigger's row, once`).toEqual(["c1"]);
+      expect(c.held(), `${replacer}: nothing held`).toEqual([]);
+      expect(c.flags(), `${replacer}: nothing flagged`).toEqual([]);
+    }
+    expect(owner.state()).toBe(other.state());
+    a.close();
+    b.close();
+  }
 });
