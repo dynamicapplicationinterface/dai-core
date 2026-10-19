@@ -209,4 +209,15 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("INSERT INTO workouts (what) VALUES ('workout B')");
     },
   },
+  // The catalog's M02: two edits to different columns, each valid, whose combination a CHECK refuses.
+  "M02 check across columns": {
+    extra: [
+      "CREATE TABLE spans (id INTEGER PRIMARY KEY, start INTEGER NOT NULL, finish INTEGER NOT NULL, CHECK (start <= finish))",
+      "INSERT INTO spans (id, start, finish) VALUES (1, 0, 10)",
+    ],
+    write: (a, b) => {
+      a.db.exec("UPDATE spans SET start = 8 WHERE id = 1");
+      b.db.exec("UPDATE spans SET finish = 5 WHERE id = 1");
+    },
+  },
 };

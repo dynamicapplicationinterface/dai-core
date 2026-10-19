@@ -194,15 +194,45 @@ def apply_log(db: sqlite3.Connection) -> None:
         data = {c: hs for c, hs in heads.items() if c != ""}
         deleted = not alive and all(v in saw for hs in data.values() for v in hs)
         values = {}
+        shown_by = {}
         pending = []
         for col, hs in data.items():
             if not hs:
                 continue
-            order = sorted(hs.items(), key=lambda kv: (-kv[1][1], _neg(kv[1][2]), _neg(kv[0])))
+            order = sorted(hs.items(), key=later)
             values[col] = order[0][1][0]
+            shown_by[col] = order[0]
             if len(hs) > 1:
                 pending.append(col)
-        return {"deleted": deleted, "contested": (not deleted) and bool(dels), "values": values, "pending": pending}
+        return {"deleted": deleted, "contested": (not deleted) and bool(dels), "values": values, "pending": pending, "shown_by": shown_by}
+
+    def within_constraints(table: str, pk: str, k: list, s: dict) -> bool:
+        """A CHECK or NOT NULL the merged values fail (R-T, M02): the latest
+        candidate the table admits, setting aside the newest versions first,
+        each column one shows going back to the latest value before it."""
+        row = cells.get((table, pk), {})
+        versions = sorted({v: x for v, x in s["shown_by"].values()}.items(), key=later)
+        for n in range(1, len(versions) + 1):
+            aside = {v for v, _ in versions[:n]}
+            values = dict(s["values"])
+            changed = False
+            for col, (ver, _x) in s["shown_by"].items():
+                if ver not in aside:
+                    continue
+                before = sorted(((v, x) for v, x in row.get(col, {}).items() if v not in aside), key=later)
+                if not before:
+                    continue
+                values[col] = before[0][1][0]
+                changed = True
+            if not changed:
+                continue
+            try:
+                write(table, k, values)
+            except sqlite3.IntegrityError:
+                continue
+            flags[(table, pk, "pending")] = s["pending"]
+            return True
+        return False
 
     def birth(table: str, pk: str):
         exists = cells.get((table, pk), {}).get("", {})
@@ -278,6 +308,8 @@ def apply_log(db: sqlite3.Connection) -> None:
                         return
                     hold(table, pk, f"UNIQUE: {other} holds the slot", s["values"])
                     return
+            if ("CHECK constraint failed" in message or "NOT NULL constraint failed" in message) and within_constraints(table, pk, k, s):
+                return
             hold(table, pk, message, s["values"])
             db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", k)
 
@@ -321,6 +353,11 @@ def apply_log(db: sqlite3.Connection) -> None:
 def _neg(s: str) -> tuple:
     """Descending order on a string, as a sort key."""
     return tuple(-ord(ch) for ch in s) + (1,)
+
+
+def later(kv: tuple) -> tuple:
+    """The later version first, by (lc, author, ver), for (ver, (val, lc, author))."""
+    return (-kv[1][1], _neg(kv[1][2]), _neg(kv[0]))
 
 
 def dump(db: sqlite3.Connection) -> dict:

@@ -38,8 +38,11 @@
  *   - a delete with a concurrent change keeps the row and flags it
  *     `delete-conflict`; a deleted row a live row still references through a
  *     declared foreign key is kept too, flagged `kept-referenced`;
- *   - a row a constraint will not admit (UNIQUE, CHECK, NOT NULL) is held,
- *     flagged `held`; for UNIQUE the earlier-born row keeps the slot.
+ *   - a row whose merged values a CHECK or NOT NULL refuses, each save valid
+ *     alone, is a constraint conflict (R-T): it shows the latest candidate the
+ *     table admits, the newest versions set aside first, and is `pending`;
+ *   - a row a constraint will not admit otherwise is held, flagged `held`;
+ *     for UNIQUE the earlier-born row keeps the slot.
  * A save over a flagged row supersedes every version it saw, so editing is
  * resolving: a new signed change that acknowledges both parents (R-F). The
  * flags are rows of `_cs_flag`, which the host reads from the stored document.
@@ -979,7 +982,10 @@ export class Changes {
     }));
   }
 
-  private stateOf(table: string, pk: string): { deleted: boolean; contested: boolean; values: Record<string, unknown>; pending: Any[] } | null {
+  private stateOf(
+    table: string,
+    pk: string,
+  ): { deleted: boolean; contested: boolean; values: Record<string, unknown>; pending: Any[]; shownBy: Record<string, Any>; cells: Any[] } | null {
     const heads = this.db.selectObjects(
       "SELECT col, ver, val, lc, author FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver)",
       [table, pk],
@@ -1000,17 +1006,59 @@ export class Changes {
     );
     const deleted = alive.length === 0 && data.every((h) => seen.has(h.ver));
     const values: Record<string, unknown> = {};
+    const shownBy: Record<string, Any> = {};
     const pending: Any[] = [];
     const byCol = new Map<string, Any[]>();
     for (const h of data) byCol.set(h.col, [...(byCol.get(h.col) ?? []), h]);
     for (const [col, hs] of byCol) {
-      hs.sort((a, b) => Number(b.lc) - Number(a.lc) || (b.author < a.author ? -1 : b.author > a.author ? 1 : 0) || (b.ver < a.ver ? -1 : 1));
+      hs.sort(later);
       values[col] = plain(hs[0].val);
+      shownBy[col] = hs[0];
       // Two concurrent versions are a conflict even when their values are equal: `qty = qty + 1` on both
       // sides writes the same value and means two increments (the spike's S5b).
       if (hs.length > 1) pending.push({ col, values: hs.map((h) => ({ ver: h.ver, val: shown(h.val) })) });
     }
-    return { deleted, contested: !deleted && dels.length > 0, values, pending };
+    const cells = () =>
+      this.db.selectObjects("SELECT col, ver, val, lc, author FROM _cs_cell WHERE tbl = ? AND pk = ? AND col <> ''", [table, pk]) as Any[];
+    return { deleted, contested: !deleted && dels.length > 0, values, pending, shownBy, get cells() { return cells(); } };
+  }
+
+  /**
+   * A row whose merged values a CHECK or NOT NULL refuses, though each save
+   * that wrote them was valid where it was made (R-T, M02). The combined
+   * candidate is not settled: the row shows the latest candidate the table
+   * admits, found by setting aside the newest versions first, each column such
+   * a version shows going back to the latest value before it. The row is
+   * flagged pending, naming for each column set aside what was proposed and
+   * what is shown, and the constraint. So the earlier edit stands and the
+   * later waits, as the earlier-born row keeps a UNIQUE slot; every value
+   * stays in the cells, and writing the row again resolves it. False when no
+   * candidate is admitted: the row is then held, as before.
+   */
+  private withinConstraints(table: string, pk: string, keys: Keys, k: unknown[], state: NonNullable<ReturnType<Changes["stateOf"]>>, reason: string): boolean {
+    const cells = state.cells;
+    const versions = [...new Map(Object.values(state.shownBy).map((h: Any) => [h.ver, h])).values()].sort(later);
+    for (let n = 1; n <= versions.length; n++) {
+      const aside = new Set(versions.slice(0, n).map((h: Any) => h.ver));
+      const values = { ...state.values };
+      const entries: Any[] = [];
+      for (const [col, h] of Object.entries(state.shownBy)) {
+        if (!aside.has(h.ver)) continue;
+        const before = cells.filter((c) => c.col === col && !aside.has(c.ver)).sort(later)[0];
+        if (!before) continue;
+        values[col] = plain(before.val);
+        entries.push({ col, constraint: reason, values: [{ ver: h.ver, val: shown(h.val) }, { ver: before.ver, val: shown(before.val) }] });
+      }
+      if (entries.length === 0) continue;
+      try {
+        this.write(table, keys, k, values);
+      } catch {
+        continue;
+      }
+      this.flag(table, pk, "pending", [...state.pending, ...entries]);
+      return true;
+    }
+    return false;
   }
 
   private birthOf(table: string, pk: string): { lc: number; author: string } | null {
@@ -1093,6 +1141,7 @@ export class Changes {
           return;
         }
       }
+      if (/(CHECK|NOT NULL) constraint failed/.test(message) && this.withinConstraints(table, pk, keys, k, state, message.replace(/^.*?: /, ""))) return;
       this.hold(table, pk, message.replace(/^.*?: /, ""), state.values);
       this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, k);
     }
@@ -1176,6 +1225,11 @@ export class Changes {
     this.stmts.clear();
     this.capture.close();
   }
+}
+
+/** The later version first, by (lc, author, ver): the order a column's shown value is chosen in. */
+function later(a: Any, b: Any): number {
+  return Number(b.lc) - Number(a.lc) || (b.author < a.author ? -1 : b.author > a.author ? 1 : 0) || (b.ver < a.ver ? -1 : 1);
 }
 
 function sqlText(s: string): string {

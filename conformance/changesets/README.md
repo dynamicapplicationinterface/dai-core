@@ -65,8 +65,13 @@ admitted log to emptied tables from the log alone:
 - A row is deleted when its existence holds only deletes, and every data
   version is one a delete saw. A delete with a concurrent change keeps the
   row, `delete-conflict`.
-- A row a constraint will not admit is held (`held`). For UNIQUE, the
-  earlier-born row keeps the slot.
+- A row whose merged values a CHECK or NOT NULL refuses, though each save
+  was valid alone, is a constraint conflict (R-T): it shows the latest
+  candidate the table admits, setting aside the newest versions first (by
+  lc, author, version), each column such a version shows going back to the
+  latest value before it, and the row is `pending`.
+- A row a constraint will not admit otherwise is held (`held`). For UNIQUE,
+  the earlier-born row keeps the slot.
 - A deleted row a live row still references is kept, `kept-referenced`.
 
 ## Running

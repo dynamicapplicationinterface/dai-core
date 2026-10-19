@@ -221,3 +221,52 @@ test("T08: a trigger-maintained total two inserts both capture as 1 is pending a
   o.a.close();
   o.b.close();
 });
+
+/** Every proposal a pending flag names for one row, as "column=value". */
+function proposed(c: Copy, table: string, pk: string): string[] {
+  const flag = c.flags().find((f: Any) => f.tbl === table && f.pk === pk && f.kind === "pending");
+  if (!flag) return [];
+  return (JSON.parse(flag.detail) as { col: string; values: { val: unknown }[] }[]).flatMap((p) => p.values.map((v) => `${p.col}=${v.val}`));
+}
+
+/**
+ * M02. CHECK (start <= finish) over (0, 10); A sets start = 8, B sets
+ * finish = 5. Each edit is valid alone; the column merge would make (8, 5).
+ * R-T: the combined candidate is validated, and an edit set it refuses is a
+ * constraint conflict, pending, never a settled invalid row. Both proposals
+ * are kept: every value either author wrote is in both copies' cells, and the
+ * row's pending flag names the one not shown.
+ *
+ * The rule (src/changesets.ts, `place`): the row shows the latest valid
+ * candidate, found by setting aside the newest proposals first, each column a
+ * proposal wrote going back to the value before it. Here that is one of
+ * (8, 10) or (0, 5), whichever edit is the earlier by (lc, author) standing:
+ * the earlier keeps, as the earlier-born row keeps a UNIQUE slot. Writing the
+ * row again resolves it.
+ */
+test("M02: two valid edits whose combination fails a CHECK are a pending constraint conflict, never the invalid row", async () => {
+  const s = SCENARIOS["M02 check across columns"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  expect(o.converged, "both copies agree").toBe(true);
+  expect(o.missing, "both proposals are in both copies' cells").toEqual([]);
+  for (const c of [o.a, o.b]) {
+    const row = c.db.selectObject("SELECT start, finish FROM spans WHERE id = 1") as Any;
+    expect(row, "the row is shown, not taken away").toBeDefined();
+    expect(row, "never the invalid combination").not.toEqual({ start: 8, finish: 5 });
+    expect([JSON.stringify({ start: 8, finish: 10 }), JSON.stringify({ start: 0, finish: 5 })]).toContain(JSON.stringify(row));
+    expect(c.flags().map((f: Any) => [f.tbl, f.pk, f.kind]), "pending, and nothing else").toEqual([["spans", "[1]", "pending"]]);
+    const named = new Set([...proposed(c, "spans", "[1]"), `start=${row.start}`, `finish=${row.finish}`]);
+    expect(named.has("start=8") && named.has("finish=5"), `both proposals are shown or named: ${[...named]}`).toBe(true);
+  }
+
+  // Writing the row again resolves it, on both copies.
+  o.a.db.exec("UPDATE spans SET start = 8, finish = 12 WHERE id = 1");
+  await o.b.mergeFrom(await o.a.bytes());
+  await o.a.mergeFrom(await o.b.bytes());
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectObject("SELECT start, finish FROM spans WHERE id = 1")).toEqual({ start: 8, finish: 12 });
+    expect(c.flags()).toEqual([]);
+  }
+  o.a.close();
+  o.b.close();
+});
