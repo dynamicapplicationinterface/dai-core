@@ -208,6 +208,8 @@ show the name, not only the sentence.
 | Reason | Recoverable | Meaning |
 |---|---|---|
 | `REPLICATED_TABLE_IMMUTABLE` | no | A write tried to change or delete a row of a shared table in place. Shared tables are append-only: a change is a new row and a removal a tombstone, both through `window.dai.replicated`. What SQLite says when an application writes one with plain SQL. |
+| `APP_TRANSACTION_OPEN` | yes | A merge arrived while the application held a transaction open. Nothing was written and the application's transaction is untouched; the merge can be asked again once it ends. |
+| `CHANGES_APPLY` | yes | A TEMP trigger the runtime lifted off while merged rows were applied could not be put back. The merged rows stand; the error names the trigger, which is missing until the application creates it again. |
 | `CHANGES_CAPTURE` | no | SQLite's session extension could not record or read back what a save changed. The save fails, is kept and is retried; nothing is written to the log half-captured. |
 | `CHANGES_KEY_UNREWRITABLE` | no | An application table's INTEGER PRIMARY KEY could not be rewritten to take author-ranged ids. Never thrown to the application: the table is kept as a natural key, and its ids are the application's. |
 | `ID_RANGE_EXHAUSTED` | no | This author has used all 4,294,967,295 ids of its range in one document. Ids are never reused, so a further insert that leaves its id to the runtime is refused. |
