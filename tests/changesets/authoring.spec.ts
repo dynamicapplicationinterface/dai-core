@@ -36,6 +36,15 @@ test("a document with no session policy is built with the changeset log declared
   expect(new TextDecoder().decode(built.archive["app/schema.sql"])).not.toContain("_cs_log");
 });
 
+test("X1: a table with no primary key is given an explicit ranged key column at compile; the author's schema.sql comes back as written", async () => {
+  const schema = "CREATE TABLE IF NOT EXISTS marks (body TEXT, at TEXT, CHECK (body <> ''));\nCREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT);\n";
+  const built = await buildFrom({ "index.html": "<!doctype html><title>Plain</title><p id=app>hi</p>", "schema.sql": schema });
+  const html = new TextDecoder().decode(built.archive["app/index.html"]);
+  expect(html).toMatch(/CREATE TABLE IF NOT EXISTS marks \(_dai_id INT NOT NULL ON CONFLICT REPLACE DEFAULT \(dai_id\('marks'\)\) PRIMARY KEY, body TEXT/);
+  expect(html, "a table with a key of its own is left alone").toContain("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT);");
+  expect(new TextDecoder().decode(built.archive["app/schema.sql"])).toBe(schema);
+});
+
 test("the chess fixture builds through the policy layer unchanged: its own replicated tables, its session, no log", async () => {
   const dir = join(repo, "tests", "fixture", "chess");
   const declared = rewriteReplicated(readFileSync(join(dir, "schema.sql"), "utf8"));

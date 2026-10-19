@@ -15,7 +15,7 @@ import { encode as cborEncode, type CborValue } from "./cbor.js";
 import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { rewriteReplicated } from "./replicated.js";
-import { CHANGES_DECLARATION } from "./changes-log.js";
+import { CHANGES_DECLARATION, withHiddenKeys } from "./changes-log.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
@@ -550,7 +550,8 @@ export async function buildContainer(
      * replicated tables keeps the policy layer exactly as it was.
      */
     const declared = rewriteReplicated(schemaSql);
-    if (declared.tables.length === 0 && !declared.session && input.changesetLog !== false) schemaSql = schemaSql + CHANGES_DECLARATION;
+    // A table with no primary key is given one (X1), so each of its rows is keyed from the moment it is inserted.
+    if (declared.tables.length === 0 && !declared.session && input.changesetLog !== false) schemaSql = withHiddenKeys(schemaSql) + CHANGES_DECLARATION;
     const rewritten = rewriteReplicated(schemaSql);
     if (rewritten.tables.length > 0) {
       schemaSql = rewritten.sql;

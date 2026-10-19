@@ -156,7 +156,7 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     await sql(app, "INSERT INTO tags (label) VALUES ('red')");
     expect(String(await value(app, "SELECT code FROM tags WHERE label = 'red'"))).toMatch(/^[0-9a-f-]{36}$/);
     await sql(app, "INSERT INTO events (what) VALUES ('opened')");
-    expect(Number(await value(app, "SELECT rowid FROM events WHERE what = 'opened'"))).toBeGreaterThanOrEqual(2 ** 32);
+    expect(Number(await value(app, "SELECT _dai_id FROM events WHERE what = 'opened'"))).toBeGreaterThanOrEqual(2 ** 32);
   });
 
   test("3. seed blocks run once, at document creation: a deleted seed row stays deleted after a reopen", async ({ page }) => {

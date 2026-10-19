@@ -144,7 +144,6 @@ def apply_log(db: sqlite3.Connection) -> None:
         ("dai_id", lambda t: None, 1),
         ("dai_uuid", lambda: str(uuid.uuid4()), 0),
         ("dai_inserted", lambda a, b: None, 2),
-        ("dai_last_id", lambda: None, 0),
     ):
         db.create_function(name, n, fn)
     db.execute("PRAGMA foreign_keys = OFF")

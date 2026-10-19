@@ -8,7 +8,8 @@
  *
  *   1. Each application table is adopted once. An INTEGER PRIMARY KEY becomes
  *      an author-ranged integer, a text key takes a uuid by default, and a
- *      table with no primary key is keyed by an author-ranged rowid.
+ *      table with no primary key is given an explicit author-ranged key
+ *      column, `_dai_id` (by the compiler, or here for a table made later).
  *   2. What each save changed is captured with SQLite's session extension:
  *      row-level old and new values, keyed by primary key.
  *   3. Each save's changeset is one row of `_cs_log`, an ordinary replicated
@@ -53,7 +54,7 @@ import { createEntity, type Rows } from "./replicated-rows.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
 
-import { CHANGES_DECLARATION, CHANGES_LOG } from "./changes-log.js";
+import { CHANGES_DECLARATION, CHANGES_LOG, HIDDEN_KEY, withHiddenKeys } from "./changes-log.js";
 export { CHANGES_DECLARATION, CHANGES_LOG };
 
 /** Author-ranged integer keys: the author index in bits 32..52, a counter in bits 0..31. 2^53-1 is the largest id, exact in JavaScript. */
@@ -102,8 +103,8 @@ export function declaredIn(createSql: string): Declared {
 /** The flags a row can carry, as `_cs_flag.kind` holds them. */
 export type FlagKind = "pending" | "delete-conflict" | "kept-referenced" | "held" | "orphan";
 
-/** A key kind: ranged integer, uuid text, the app's own (natural), or a hidden ranged rowid. */
-type KeyKind = "ranged" | "uuid" | "natural" | "rowid";
+/** A key kind: ranged integer, uuid text, the app's own (natural), or the hidden ranged key of a table that declared none. */
+type KeyKind = "ranged" | "uuid" | "natural" | "hidden";
 interface Keys {
   kind: KeyKind;
   pk: string[];
@@ -187,7 +188,6 @@ class SessionCapture {
   private session = 0;
   private filter = 0;
   private readonly columns = new Map<string, string[]>();
-  private readonly rowidTables = new Set<string>();
 
   constructor(
     private readonly sqlite3: Any,
@@ -204,14 +204,17 @@ class SessionCapture {
       const rc = capi.sqlite3session_create(this.db.pointer, "main", out);
       if (rc) throw new Error(`CHANGES_CAPTURE (sqlite3session_create rc=${rc})`);
       this.session = wasm.peekPtr(out);
-      // Tables with no primary key, keyed by their (ranged) rowid.
-      const flag = wasm.pstack.alloc(4);
-      wasm.poke32(flag, 1);
-      capi.sqlite3session_object_config(this.session, capi.SQLITE_SESSION_OBJCONFIG_ROWID, flag);
     } finally {
       wasm.pstack.restore(stack);
     }
-    this.filter ||= wasm.installFunction("ipp", (_ctx: number, zTab: number) => (INTERNAL.test(wasm.cstrToJs(zTab)) ? 0 : 1));
+    // A table with no primary key yet (made by the application, not yet given its hidden key) is not
+    // attached: the session would remember it as keyless and ignore it once it has its key. Asked again
+    // on each change until it is attached.
+    this.filter ||= wasm.installFunction("ipp", (_ctx: number, zTab: number) => {
+      const name = wasm.cstrToJs(zTab) as string;
+      if (INTERNAL.test(name)) return 0;
+      return this.db.selectValue("SELECT 1 FROM pragma_table_info(?) WHERE pk > 0", [name]) == null ? 0 : 1;
+    });
     capi.sqlite3session_table_filter(this.session, this.filter, 0);
     const rc = capi.sqlite3session_attach(this.session, null);
     if (rc) throw new Error(`CHANGES_CAPTURE (sqlite3session_attach rc=${rc})`);
@@ -222,6 +225,18 @@ class SessionCapture {
     const capi = this.sqlite3.capi;
     const was = capi.sqlite3session_enable(this.session, -1);
     capi.sqlite3session_enable(this.session, 0);
+    try {
+      return f();
+    } finally {
+      capi.sqlite3session_enable(this.session, was);
+    }
+  }
+
+  /** Captures what `f` writes, even inside `paused`. */
+  captured<T>(f: () => T): T {
+    const capi = this.sqlite3.capi;
+    const was = capi.sqlite3session_enable(this.session, -1);
+    capi.sqlite3session_enable(this.session, 1);
     try {
       return f();
     } finally {
@@ -299,19 +314,17 @@ class SessionCapture {
     return ops;
   }
 
-  /** The changeset's column names: a table keyed by rowid carries it first. */
+  /** The changeset's column names. */
   private namesOf(table: string, n: number): string[] {
     if (!this.columns.has(table)) {
       const cols = (this.db.selectObjects(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, [table]) as Any[]).map((c) => String(c.name));
       this.columns.set(table, cols);
     }
-    const cols = this.columns.get(table)!;
-    return n === cols.length + 1 ? ["rowid", ...cols] : cols;
+    return this.columns.get(table)!.slice(0, n);
   }
 
   schemaChanged(): void {
     this.columns.clear();
-    this.rowidTables.clear();
   }
 
   close(): void {
@@ -337,7 +350,6 @@ export function stageChangeFunctions(db: Any): void {
     { arity: 1, deterministic: false },
   );
   db.createFunction("dai_uuid", () => crypto.randomUUID(), { arity: 0, deterministic: false });
-  db.createFunction("dai_last_id", () => null, { arity: 0, deterministic: false });
   db.createFunction("dai_projecting", () => 0, { arity: 0, deterministic: false });
   db.createFunction("dai_inserted", () => null, { arity: 2, deterministic: false });
 }
@@ -365,7 +377,6 @@ export class Changes {
   private counter = 0;
   private projecting = false;
   private lastInsert: { rowid: number | null; id: unknown } = { rowid: null, id: null };
-  private lastId: number | null = null;
   private readonly keysCache = new Map<string, Keys | null>();
   private readonly declaredCache = new Map<string, Declared>();
   private readonly stmts = new Map<string, Any>();
@@ -393,7 +404,6 @@ export class Changes {
     const capi = sqlite3.capi;
     db.createFunction("dai_id", () => this.nextId(), { arity: 1, deterministic: false });
     db.createFunction("dai_uuid", () => crypto.randomUUID(), { arity: 0, deterministic: false });
-    db.createFunction("dai_last_id", () => this.lastId, { arity: 0, deterministic: false });
     // 1 while the runtime applies merged rows: the application's own triggers stand down.
     db.createFunction("dai_projecting", () => (this.projecting ? 1 : 0), { arity: 0, deterministic: false });
     db.createFunction(
@@ -437,14 +447,14 @@ export class Changes {
   private highestOwnCounter(): number {
     const base = this.index * SPAN;
     let high = 0;
-    for (const { tbl, kind, pk } of this.db.selectObjects("SELECT tbl, kind, pk FROM _cs_keys WHERE kind IN ('ranged', 'rowid')") as Any[]) {
-      const col = kind === "rowid" ? "rowid" : q(pk);
+    for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys WHERE kind IN ('ranged', 'hidden')") as Any[]) {
+      const col = q(pk);
       const m = this.db.selectValue(`SELECT max(${col}) FROM ${q(tbl)} WHERE ${col} >= ? AND ${col} < ?`, [base, base + SPAN]);
       if (m != null) high = Math.max(high, Number(m) - base);
     }
     // Rows this author wrote and then deleted still hold their ids in the cells.
     const cells = this.db.selectValues(
-      "SELECT DISTINCT c.pk FROM _cs_cell c JOIN _cs_keys k ON k.tbl = c.tbl AND k.kind IN ('ranged', 'rowid') WHERE c.author = ?",
+      "SELECT DISTINCT c.pk FROM _cs_cell c JOIN _cs_keys k ON k.tbl = c.tbl AND k.kind IN ('ranged', 'hidden') WHERE c.author = ?",
       [this.authorHex],
     ) as string[];
     for (const text of cells) {
@@ -464,7 +474,7 @@ export class Changes {
    */
   private counterAbove(table: string, k: unknown[]): void {
     const kind = this.keysOf(table)?.kind;
-    if (kind !== "ranged" && kind !== "rowid") return;
+    if (kind !== "ranged" && kind !== "hidden") return;
     const id = k[0];
     const base = this.index * SPAN;
     if (typeof id === "number" && id >= base && id < base + SPAN) this.counter = Math.max(this.counter, id - base);
@@ -473,8 +483,7 @@ export class Changes {
   private nextId(): number {
     this.counter += 1;
     if (this.counter >= SPAN) throw new Error("ID_RANGE_EXHAUSTED");
-    this.lastId = this.index * SPAN + this.counter;
-    return this.lastId;
+    return this.index * SPAN + this.counter;
   }
 
   /** Each application table, once: its key kind recorded and, for an integer, text or absent key, rewritten. */
@@ -491,7 +500,12 @@ export class Changes {
       if (virtual) continue;
       let kind: KeyKind = "natural";
       const dflt = String(pks[0]?.dflt_value ?? "");
-      if (pks.length === 0) kind = "rowid";
+      if (pks.length === 0) {
+        // A table the compiler did not see (made later by the application): given its hidden key now.
+        if (!this.rebuild(table, HIDDEN_KEY, "hidden")) continue;
+        kind = "hidden";
+        pks.push({ name: HIDDEN_KEY });
+      } else if (pks.length === 1 && pks[0].name === HIDDEN_KEY && /dai_id\(/.test(dflt)) kind = "hidden";
       else if (pks.length === 1 && /dai_id\(/.test(dflt)) kind = "ranged";
       else if (pks.length === 1 && /dai_uuid\(/.test(dflt)) kind = "uuid";
       else if (pks.length === 1 && String(pks[0].type).toUpperCase() === "INTEGER" && !withoutRowid) kind = "ranged";
@@ -504,16 +518,9 @@ export class Changes {
           `CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${table}`)} AFTER INSERT ON ${q(table)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.${q(pks[0].name)}); END`,
         );
       }
-      if (kind === "rowid") {
-        // No key of its own: its rowid is the key, drawn from this author's range on every local insert.
-        this.exec(
-          `CREATE TRIGGER IF NOT EXISTS ${q(`_cs_rowid_${table}`)} AFTER INSERT ON ${q(table)} WHEN dai_projecting() = 0 BEGIN ` +
-            `UPDATE ${q(table)} SET rowid = dai_id(${sqlText(table)}) WHERE rowid = NEW.rowid; SELECT dai_inserted(NEW.rowid, dai_last_id()); END`,
-        );
-      }
       this.exec({
         sql: "INSERT OR REPLACE INTO _cs_keys (tbl, kind, pk) VALUES (?, ?, ?)",
-        bind: [table, kind, kind === "rowid" ? "rowid" : pks.map((c) => c.name).join(",")],
+        bind: [table, kind, pks.map((c) => c.name).join(",")],
       });
     }
     this.slotEveryInsert();
@@ -537,7 +544,7 @@ export class Changes {
    * the statement itself inserted.
    */
   private slotEveryInsert(): void {
-    for (const { tbl } of this.db.selectObjects("SELECT tbl FROM _cs_keys WHERE kind IN ('uuid', 'natural')") as Any[]) {
+    for (const { tbl } of this.db.selectObjects("SELECT tbl FROM _cs_keys WHERE kind IN ('uuid', 'natural', 'hidden')") as Any[]) {
       const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
       if (!sql || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
       this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${tbl}`)} AFTER INSERT ON ${q(tbl)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.rowid); END`);
@@ -570,17 +577,23 @@ export class Changes {
     }
   }
 
-  /** The table rebuilt with its key's DDL rewritten; indexes and triggers come back as they were. False when it cannot be. */
-  private rebuild(table: string, column: string, kind: "ranged" | "uuid"): boolean {
+  /**
+   * The table rebuilt with its key's DDL rewritten; indexes and triggers come
+   * back as they were. False when it cannot be. A table given its hidden key
+   * gets one for each row it already holds, and those rows are captured as
+   * inserts: the application wrote them, under no key the log could carry.
+   */
+  private rebuild(table: string, column: string, kind: "ranged" | "uuid" | "hidden"): boolean {
     const exec = this.exec;
     const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]));
     let rewritten: string;
     try {
-      rewritten = rewriteKeySql(sql, table, column, kind);
+      rewritten = kind === "hidden" ? withHiddenKeys(sql) : rewriteKeySql(sql, table, column, kind);
     } catch {
       return false;
     }
     if (rewritten === sql) return false;
+    const cols = kind === "hidden" ? (this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [table]) as string[]).map(q).join(", ") : "";
     const others = this.db.selectValues(
       "SELECT sql FROM sqlite_schema WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL",
       [table],
@@ -595,7 +608,8 @@ export class Changes {
         exec("SAVEPOINT cs_rebuild");
         exec(`ALTER TABLE ${q(table)} RENAME TO ${q(old)}`);
         exec(rewritten);
-        exec(`INSERT INTO ${q(table)} SELECT * FROM ${q(old)}`);
+        if (kind === "hidden") this.capture.captured(() => exec(`INSERT INTO ${q(table)} (${cols}) SELECT ${cols} FROM ${q(old)}`));
+        else exec(`INSERT INTO ${q(table)} SELECT * FROM ${q(old)}`);
         exec(`DROP TABLE ${q(old)}`);
         for (const s of others) exec(s);
         exec("RELEASE cs_rebuild");
@@ -634,7 +648,7 @@ export class Changes {
       const cols = this.declaredOf(table).consequential;
       const keys = this.keysOf(table);
       if (!cols.length || !keys) continue;
-      const key = keys.kind === "rowid" ? "rowid" : keys.pk.map(q).join(", ");
+      const key = keys.pk.map(q).join(", ");
       want.set(
         table,
         `SELECT * FROM main.${q(table)} WHERE json_array(${key}) NOT IN (SELECT f.pk FROM main._cs_flag f, json_each(f.detail) j ` +
@@ -747,7 +761,7 @@ export class Changes {
       const groups = this.declaredOf(op.table).coupled.filter((g) => g.some((c) => n.has(c)));
       const missing = [...new Set(groups.flat())].filter((c) => !n.has(c));
       if (missing.length) {
-        const where = keys.kind === "rowid" ? "rowid IS ?" : this.whereKey(op.table);
+        const where = this.whereKey(op.table);
         const now = this.db.selectObject(`SELECT ${missing.map(q).join(", ")} FROM ${q(op.table)} WHERE ${where}`, k) as Any;
         if (now) for (const c of missing) n.set(c, plain(now[c]));
       }
@@ -926,15 +940,6 @@ export class Changes {
     const data = Object.keys(values).filter((c) => !keys.pk.includes(c));
     const cols = [...keys.pk, ...data];
     const vals = [...k, ...data.map((c) => values[c] ?? null)];
-    if (keys.kind === "rowid") {
-      // No declared key to upsert on: update the row by its rowid, or insert it.
-      if (this.db.selectValue(`SELECT 1 FROM ${q(table)} WHERE rowid IS ?`, k) != null) {
-        if (data.length) this.rows.run(`UPDATE ${q(table)} SET ${data.map((c) => `${q(c)} = ?`).join(", ")} WHERE rowid IS ?`, [...data.map((c) => values[c] ?? null), ...k]);
-        return;
-      }
-      this.rows.run(`INSERT INTO ${q(table)} (rowid${data.length ? ", " + data.map(q).join(", ") : ""}) VALUES (${vals.map(() => "?").join(", ")})`, vals);
-      return;
-    }
     const update = data.map((c) => `${q(c)} = excluded.${q(c)}`).join(", ");
     this.rows.run(
       `INSERT INTO ${q(table)} (${cols.map(q).join(", ")}) VALUES (${cols.map(() => "?").join(", ")}) ON CONFLICT (${keys.pk.map(q).join(", ")}) DO ${update ? `UPDATE SET ${update}` : "NOTHING"}`,
@@ -1073,10 +1078,9 @@ export function changesDump(rows: Rows): Record<string, Record<string, unknown>[
   const keys = new Map(rows.all("SELECT tbl, kind, pk FROM _cs_keys").map((r) => [String(r["tbl"]), r]));
   for (const table of appTablesOf(rows)) {
     const k = keys.get(table);
-    const order = k && k["kind"] !== "rowid" && k["pk"] ? String(k["pk"]).split(",").map(q).join(", ") : "rowid";
-    const select = k?.["kind"] === "rowid" ? `SELECT rowid AS rowid, * FROM ${q(table)}` : `SELECT * FROM ${q(table)}`;
+    const order = k?.["pk"] ? String(k["pk"]).split(",").map(q).join(", ") : "rowid";
     out[table] = rows
-      .all(`${select} ORDER BY ${order}`)
+      .all(`SELECT * FROM ${q(table)} ORDER BY ${order}`)
       .map((r) => Object.fromEntries(Object.entries(r).map(([c, v]) => [c, v instanceof Uint8Array ? `<${hex(v)}>` : typeof v === "bigint" ? v.toString() : v])));
   }
   return out;

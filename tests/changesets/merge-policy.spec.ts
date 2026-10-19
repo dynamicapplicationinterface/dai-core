@@ -421,6 +421,41 @@ test("PR9-H4: after a rebuild from an arrival, the author's counter starts above
   again.close();
 });
 
+/**
+ * X1, the review's own run: a table with no primary key was keyed by its
+ * rowid, which a trigger moved into the author's range after the insert. The
+ * session had recorded the insert under the first rowid, found no row there
+ * when the changeset was made, and logged nothing, so the row reached no
+ * other copy and no rebuild. Such a table now carries an explicit ranged key.
+ */
+test("X1: an insert into a table with no primary key reaches the log, the other copy by merge, a rebuild from the log, and the author's counter", async () => {
+  const a = await Copy.open(await person());
+  a.db.exec("CREATE TABLE marks (body TEXT)");
+  const b = await Copy.open(await person(), await a.bytes());
+  a.db.exec("INSERT INTO marks (body) VALUES ('m1'); INSERT INTO marks (body) VALUES ('m2');");
+  expect(a.save()?.ops, "both inserts are in the log").toBe(2);
+  const [m1, m2] = a.db.selectValues("SELECT _dai_id FROM marks ORDER BY body").map(Number);
+  expect(Math.floor(m1! / 2 ** 32), "the key is drawn from the author's range").toBe(a.changes.index);
+
+  await b.mergeFrom(await a.bytes());
+  expect(b.db.selectValues("SELECT body FROM marks ORDER BY body"), "the copy that existed before the inserts has them").toEqual(["m1", "m2"]);
+
+  a.db.exec({ sql: "DELETE FROM marks WHERE _dai_id = ?", bind: [m2] });
+  const again = await Copy.open(a.author, await rebuilt(await a.bytes()));
+  expect(again.db.selectValues("SELECT body FROM marks ORDER BY body"), "a rebuild from the log has the row").toEqual(["m1"]);
+  again.db.exec("INSERT INTO marks (body) VALUES ('m3')");
+  const m3 = Number(again.db.selectValue("SELECT _dai_id FROM marks WHERE body = 'm3'"));
+  expect(m3, "the counter counts the keyless table's ids, the deleted one included").toBeGreaterThan(m2!);
+
+  // A table made and written in one exec has its row before the runtime gives it a key: it is logged too.
+  again.db.exec("CREATE TABLE pins (at TEXT); INSERT INTO pins (at) VALUES ('first');");
+  expect(again.save()?.ops, "the m3 insert and the pin").toBe(2);
+  const later = await Copy.open(again.author, await rebuilt(await again.bytes()));
+  expect(later.db.selectValues("SELECT at FROM pins"), "a rebuild from the log has the pin").toEqual(["first"]);
+  later.close();
+  for (const c of [a, b, again]) c.close();
+});
+
 test("an id the application omits comes from this author's range, and last_insert_rowid() answers it", async () => {
   const o = await exchange((a) => {
     a.db.exec("INSERT INTO categories (name) VALUES ('Bath')");
