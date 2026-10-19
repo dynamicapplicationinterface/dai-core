@@ -323,6 +323,38 @@
       "tests/signed-people.ts",
       "tsup.config.ts"
     ],
+    "tests/changesets/catalog.spec.ts": [
+      "src/cbor.ts",
+      "src/changes-log.ts",
+      "src/changesets.ts",
+      "src/declarations.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/session-id.ts",
+      "tests/changesets/catalog.spec.ts",
+      "tests/changesets/copy.ts",
+      "tests/changesets/scenarios.ts",
+      "tests/signed-people.ts"
+    ],
+    "tests/changesets/engine-pin.spec.ts": [
+      "conformance/changesets/engine.json",
+      "src/cbor.ts",
+      "src/changes-log.ts",
+      "src/changesets.ts",
+      "src/declarations.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/session-id.ts",
+      "tests/changesets/copy.ts",
+      "tests/changesets/engine-pin.spec.ts",
+      "tests/signed-people.ts"
+    ],
     "tests/changesets/merge-policy.spec.ts": [
       "src/cbor.ts",
       "src/changes-log.ts",
@@ -835,7 +867,6 @@
     ],
     "tests/evaluation.spec.ts": [
       "eval/candidates/reference/",
-      "examples/tic-tac-toe/",
       "scripts/evaluate.mjs",
       "tests/evaluation.spec.ts"
     ],
