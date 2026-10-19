@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { base, item } from "./scenarios.js";
+import { base, exchange, item, SCENARIOS } from "./scenarios.js";
 import { Copy, DOC, openBytes } from "./copy.js";
 import * as merge from "../../src/replicated-frame.js";
 
@@ -184,4 +184,40 @@ test("Q01/Q02: a save inside an open transaction or savepoint publishes nothing;
   expect(shown, "the other copy holds what committed, and nothing else").toEqual([...committed].sort());
   a.close();
   b.close();
+});
+
+/**
+ * T08 (the catalog's "particularly important" vector). summary.count = 0; A
+ * inserts a workout and its trigger writes count = 1; B inserts another and
+ * its trigger writes count = 1. Both workouts merge, both captured totals
+ * agree on 1, and the true count is 2. Agreement of captured values does not
+ * establish an invariant (R-T): the total may be recomputed, or left pending,
+ * but never settled at 1.
+ *
+ * The mechanism is the smallest R-T allows, and the policy already has it:
+ * pending on the aggregate row. Two concurrent versions of one column are a
+ * conflict even when their values are equal (the spike's S5b), so the summary
+ * row is flagged pending, with both versions named; the person, or the
+ * application, resolves it by writing the total again. No recompute is
+ * declared: the model file teaches totals in queries, not triggers (R-T).
+ */
+test("T08: a trigger-maintained total two inserts both capture as 1 is pending after the merge, never settled at 1", async () => {
+  const s = SCENARIOS["T08 derived total"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  const captured = (c: Copy): unknown[] => wroteFor(c, "summary", 1).filter(([col]) => col === "count").map(([, v]) => v);
+  expect(captured(o.a), "A captured the total as 1").toContain(1);
+  expect(captured(o.b), "B captured the total as 1").toEqual([1]);
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectValue("SELECT count(*) FROM workouts"), "both workouts are there").toBe(2);
+    const count = c.db.selectValue("SELECT count FROM summary WHERE id = 1");
+    const pending = c.flags().find((f: Any) => f.tbl === "summary" && f.kind === "pending");
+    expect(count === 2 || pending !== undefined, `the total is ${count}, recomputed or pending, never settled at 1`).toBe(true);
+    expect(pending, "the mechanism: the aggregate row is pending").toBeDefined();
+    const values = JSON.parse(pending!.detail).find((p: Any) => p.col === "count").values;
+    expect(values.map((v: Any) => v.val), "both captured versions are named").toEqual([1, 1]);
+  }
+  expect(o.converged).toBe(true);
+  expect(o.missing).toEqual([]);
+  o.a.close();
+  o.b.close();
 });

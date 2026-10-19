@@ -68,7 +68,7 @@ test("write the changeset vectors (only when asked)", async () => {
   test.setTimeout(180_000);
   for (const [name, scenario] of Object.entries(VECTORS)) {
     const s = SCENARIOS[scenario]!;
-    const { a, b } = await base({ trigger: s.trigger });
+    const { a, b } = await base({ trigger: s.trigger, extra: s.extra });
     await s.write(a, b);
     const aBytes = await a.bytes();
     const bBytes = await b.bytes();

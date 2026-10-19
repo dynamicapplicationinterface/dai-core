@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS audit (
 
 const TRIGGER = "CREATE TRIGGER IF NOT EXISTS items_audit AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'created'); END;";
 
-export async function base(opts: { trigger?: boolean } = {}): Promise<{ a: Copy; b: Copy }> {
+export async function base(opts: { trigger?: boolean; extra?: string[] } = {}): Promise<{ a: Copy; b: Copy }> {
   const a = await Copy.open(await person());
   a.db.exec(SCHEMA);
   if (opts.trigger) a.db.exec(TRIGGER);
@@ -51,6 +51,9 @@ export async function base(opts: { trigger?: boolean } = {}): Promise<{ a: Copy;
     INSERT INTO items (category_id, title) SELECT id, 'Tent' FROM categories WHERE name = 'Gear';
     INSERT INTO items (title) VALUES ('Map'), ('Rope'), ('Stove');
     INSERT INTO audit (item_id, what) SELECT id, 'packed' FROM items WHERE title = 'Rope';`);
+  // A scenario's own tables and rows, each statement group in its own exec: a table is adopted (its key
+  // rewritten) when the exec that made it returns.
+  for (const sql of opts.extra ?? []) a.db.exec(sql);
   const b = await Copy.open(await person(), await a.bytes());
   return { a, b };
 }
@@ -74,7 +77,7 @@ export interface Outcome {
 /** Writes on both sides, exchanges both ways from snapshots, and judges. */
 export async function exchange(
   write: (a: Copy, b: Copy) => Promise<unknown> | unknown,
-  opts: { trigger?: boolean; tamper?: (bytes: Uint8Array) => Promise<Uint8Array> } = {},
+  opts: { trigger?: boolean; extra?: string[]; tamper?: (bytes: Uint8Array) => Promise<Uint8Array> } = {},
 ): Promise<Outcome> {
   const { a, b } = await base(opts);
   const local = await write(a, b);
@@ -118,7 +121,7 @@ export async function verdictsOf(bytes: Uint8Array): Promise<Record<string, stri
 }
 
 /** Each scenario's two writes, by name, for the merge spec and the Python reader's. */
-export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; trigger?: boolean }> = {
+export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; trigger?: boolean; extra?: string[] }> = {
   "S1 inserts": {
     write: (a, b) => {
       a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
@@ -191,6 +194,19 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
     write: (a, b) => {
       a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
       b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
+    },
+  },
+  // The catalog's T08: a total a trigger keeps, and two independent inserts that each capture it as 1.
+  "T08 derived total": {
+    extra: [
+      `CREATE TABLE workouts (id INTEGER PRIMARY KEY, what TEXT NOT NULL);
+       CREATE TABLE summary (id INTEGER PRIMARY KEY, count INTEGER NOT NULL);
+       CREATE TRIGGER workouts_count AFTER INSERT ON workouts BEGIN UPDATE summary SET count = count + 1 WHERE id = 1; END;`,
+      "INSERT INTO summary (id, count) VALUES (1, 0)",
+    ],
+    write: (a, b) => {
+      a.db.exec("INSERT INTO workouts (what) VALUES ('workout A')");
+      b.db.exec("INSERT INTO workouts (what) VALUES ('workout B')");
     },
   },
 };

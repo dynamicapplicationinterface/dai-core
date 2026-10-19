@@ -32,7 +32,7 @@ test("the Python reader agrees with the runtime in every scenario, both directio
   const runtime = new Map<string, unknown>();
   for (const [name, scenario] of Object.entries(SCENARIOS)) {
     const file = name.replace(/\W+/g, "-");
-    const { a, b } = await base({ trigger: scenario.trigger });
+    const { a, b } = await base({ trigger: scenario.trigger, extra: scenario.extra });
     await scenario.write(a, b);
     const aBytes = await a.bytes();
     const bBytes = await b.bytes();
