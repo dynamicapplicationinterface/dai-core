@@ -1057,7 +1057,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // written while the signature was out (D178): the seal did not take
         // it, these bytes hold it pending, and its queued save is the same
         // database. That save still runs, and seals it.
-        if (autosaveDb === db && !hasPendingOwn()) {
+        // Nor when the application wrote while the signature was out under the
+        // ordinary data interface (Q07): its edit is in the next capture epoch,
+        // not yet in any log row, so no row is pending, and only its queued
+        // save will log it (R-S).
+        if (autosaveDb === db && !hasPendingOwn() && !(changes && db === liveDb && changes.dirty)) {
           autosaveDb = null;
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
           autosaveTimer = undefined;

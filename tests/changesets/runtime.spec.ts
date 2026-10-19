@@ -7,6 +7,8 @@ import { expect, type Browser, type FrameLocator, type Page } from "@playwright/
 import { test } from "../fixtures.js";
 import { compileDirectory } from "../../src/compile.js";
 import { decode as cborDecode } from "../../src/cbor.js";
+import { TO_DOCUMENT } from "../../src/bridge.js";
+import { FRAME_INTERNAL } from "../../src/frame.js";
 
 /**
  * The ordinary data interface through the real runtime: a document with no
@@ -270,6 +272,80 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     await expect(a.locator("#total"), "the kit's view leaves the pending row out of the sum").toHaveText("100", { timeout: 60_000 });
     await expect(a.locator("#rows li"), "and out of a list of it").toHaveText(["rent"]);
     await expect(a.locator("#labels li"), "a view that names another table is unchanged").toHaveText(["bills"]);
+  });
+
+  /*
+   * Q07, the catalog's fourth priority vector. A save extracts its changeset
+   * and logs it, then waits for the host to sign it. An edit landing while the
+   * signature is out joins the next capture epoch (R-S), never the batch in
+   * flight, and is never dropped: a later save logs and seals it.
+   *
+   * The order that loses it is forced, as the D178 test forces its own
+   * (tests/sealed-leave.spec.ts): in the shell, the host's signature is held
+   * until the edit is written, and given back at once, inside the edit's own
+   * debounce. From the arming on, the host is not told the frame wrote: its
+   * answer would be a publish, which captures and seals whatever is there, and
+   * what is checked is the save.
+   */
+  test("7. Q07: an edit landing while the previous batch is signed belongs to the next save, and is never dropped", async ({ page }) => {
+    await page.context().addInitScript(
+      ({ signed, authored }) => {
+        if (window === window.top || window.parent !== window.top) return;
+        const w = window as any;
+        w.__giveBack = (): void => {
+          const held = w.__heldSigned;
+          w.__heldSigned = null;
+          w.__holdSign = false;
+          window.dispatchEvent(new MessageEvent("message", { data: held, source: window.parent }));
+        };
+        window.addEventListener("message", (event) => {
+          const data = event.data as any;
+          const fromHost = event.source === window.parent;
+          if (w.__holdSign && fromHost && data?.type === signed && !w.__heldSigned && event.isTrusted) {
+            w.__heldSigned = data;
+            event.stopImmediatePropagation();
+          } else if (w.__holdSign !== undefined && !fromHost && data?.type === authored) {
+            event.stopImmediatePropagation();
+          }
+        });
+      },
+      { signed: TO_DOCUMENT.SIGNED, authored: FRAME_INTERNAL.AUTHORED },
+    );
+    const shell = () => page.mainFrame().childFrames()[0]!;
+    const file = await build(mkdtempSync(join(tmpdir(), "dai-cs-inflight-")));
+    const app = await firstOpen(page, file);
+    const uuid = await uuidOf(page);
+    const settled = async (): Promise<boolean> => {
+      const saves = await page.evaluate(() => {
+        const runner = (window as any).__runner;
+        return { asked: Number(runner.saves ?? 0), written: Number(runner.savesWritten ?? 0) };
+      });
+      const open = query(await stored(page, uuid), "SELECT count(*) AS n FROM _cs_log WHERE _r_batch IS NULL")[0]?.["n"];
+      return saves.asked === saves.written && open === 0;
+    };
+    await expect.poll(settled, { timeout: 60_000, message: "the first open's saves have landed, sealed" }).toBe(true);
+
+    await shell().evaluate(() => {
+      (window as any).__holdSign = true;
+    });
+    await sql(app, "INSERT INTO notes (body) VALUES ('in flight')");
+    await expect
+      .poll(() => shell().evaluate(() => Boolean((window as any).__heldSigned)), { timeout: 30_000, message: "the save of 'in flight' asks for its signature" })
+      .toBe(true);
+    await sql(app, "INSERT INTO notes (body) VALUES ('during the signature')");
+    await shell().evaluate(() => (window as any).__giveBack());
+
+    const sealedWith = async (body: string): Promise<Record<string, unknown>[]> =>
+      query(await stored(page, uuid), `SELECT payload FROM _cs_log WHERE instr(payload, CAST('${body}' AS BLOB)) > 0 AND _r_batch IS NOT NULL`);
+    await expect.poll(async () => (await sealedWith("in flight")).length, { timeout: 60_000, message: "the batch in flight is sealed" }).toBe(1);
+    await expect
+      .poll(async () => (await sealedWith("during the signature")).length, { timeout: 60_000, message: "the edit made during the signature is logged and sealed by a later save" })
+      .toBe(1);
+    const [inFlight] = await sealedWith("in flight");
+    const bodies = (cborDecode(inFlight!["payload"] as Uint8Array) as [number, [string, unknown[], string, Map<string, unknown>][]])[1]
+      .filter((op) => op[0] === "notes")
+      .map((op) => op[3].get("body"));
+    expect(bodies, "the batch in flight holds only what was captured before it").toEqual(["in flight"]);
   });
 });
 

@@ -242,6 +242,11 @@ class SessionCapture {
     return bytes.length ? this.decode(bytes) : [];
   }
 
+  /** Whether anything has been captured since the last `clear`. */
+  isEmpty(): boolean {
+    return Boolean(this.sqlite3.capi.sqlite3session_isempty(this.session));
+  }
+
   /** Starts over: what was captured is logged. */
   clear(): void {
     this.sqlite3.capi.sqlite3session_delete(this.session);
@@ -718,6 +723,15 @@ export class Changes {
   }
 
   /**
+   * Whether the application changed anything the next save would log: the
+   * current capture epoch (R-S). An edit made while a save's batch is being
+   * signed is here, not in the log, until the next save (Q07).
+   */
+  get dirty(): boolean {
+    return !this.capture.isEmpty();
+  }
+
+  /**
    * One save: what changed since the last one, as a changeset, appended to the
    * log as one row under this author. Null when nothing changed, or when the
    * application holds a transaction open (its changes go with the next save).
@@ -731,7 +745,12 @@ export class Changes {
   save(): SavedChanges | null {
     if (this.inTransaction) return null;
     const ops = this.capture.changes();
-    if (ops.length === 0) return null;
+    if (ops.length === 0) {
+      // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
+      // over, so `dirty` says exactly whether a save has something to log.
+      if (!this.capture.isEmpty()) this.capture.clear();
+      return null;
+    }
     let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string; touched: [string, string][] };
     this.exec("SAVEPOINT cs_save");
     try {
