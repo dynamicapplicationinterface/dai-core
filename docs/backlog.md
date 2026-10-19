@@ -584,6 +584,59 @@ it the documents R-O makes cannot be read; and a payload that only the
 runtime reads, with no vectors (PR9-M4). *Evidence:* the review of PR #9,
 M4 and question 8.
 
+**R-R. Entry-point parity (§4.9).** Ruled 19 October. Every entry point
+refuses what `dai check` refuses. A schema rule the lint holds (`one-shape`,
+`declaration`) is held by the compiler too, with the lint's message, so the
+command line's build, `create_dai_app`, the paste box and the desktop app
+refuse it whichever door the files came through, and no door builds a
+document the checker would refuse. The documents built through the policy
+layer before R-O (R-P) build through their own path: the compiler's
+`policyLayer` option, `dai build --policy-layer` on the command line, which
+no authoring door sets. The marker scan reads a schema as the policy layer
+does: a byte-order mark is dropped, and a no-break space or a form feed is
+a space.
+*Rejected:* refusing at the checker only, which left the model's own path
+building a marked schema into the policy layer (1b-M1); a scan that
+allowed only spaces and tabs, which missed markers the policy layer's
+rewrite still read (1b-L5). *Evidence:* the review of Build 1b, 1b-M1 and
+1b-L5; `tests/changesets/authoring.spec.ts`, "one shape at every entry
+point".
+
+### The data interface's runtime rules
+
+What the runtime holds for every document under the ordinary data
+interface (R-O; `src/changesets.ts`). The first three came with Build 1,
+and are set, not held (D259); the last two with Build 1c.
+
+1. **Foreign keys are on from open.**
+2. **A table with no primary key has a ranged key.** The compiler gives it
+   an explicit `_dai_id` column, drawn from the author's range, as its
+   first column, and a table the application makes later is given one when
+   it is adopted. A rowid moved into the range after the insert, as Build 1
+   had it, was recorded by the session under the rowid it had first, and
+   the row never reached the log (X1).
+3. **Seeds run once**, when the document is created.
+4. **The capture is cleared only after the batch is logged.** A save builds
+   its changeset and writes it to the log inside a savepoint, and the
+   session is cleared only once the batch is in the log. A save that fails
+   at any step leaves nothing of itself in the log and every change it held
+   for the next save, which logs everything since the last save that
+   succeeded. *Rejected:* clearing first, which lost every change since the
+   last save, in every table, when one row's bases could not be built
+   (1b-H2).
+5. **Declarations are read strictly** (`src/declarations.ts`).
+   `-- dai:coupled` names two or more of the table's own columns,
+   `-- dai:consequential` one or more, each spelled exactly as declared,
+   separated by spaces, with nothing else on the line, no runtime column
+   (`rowid`, `oid`, `_rowid_`, `_dai_id`), and no column in two coupled
+   groups. The lint and the compiler refuse a `-- dai:` line that does not
+   read exactly, with one message (`declaration`); the runtime ignores one
+   rather than guessing what it meant. *Rejected:* a loose reading, under
+   which a trailing explanation named a column that does not exist,
+   `LAT LNG` coupled nothing on lowercase columns, `rowid` logged a copy's
+   hidden rowid as a cell, and overlapping groups mixed values (1b-H2,
+   1b-M2, 1b-M3, 1b-L3).
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.
@@ -9924,8 +9977,10 @@ witness (R-G).
 The three runtime rules are set, not held:
 - **Foreign keys.** `PRAGMA foreign_keys = OFF` from the application takes
   effect until the next projection.
-- **The keyless table's ranged rowid.** `DROP TRIGGER "_cs_rowid_<t>"` takes
-  effect, and the next row of the table gets rowid 1 on every copy.
+- **The keyless table's ranged key.** As filed, `DROP TRIGGER
+  "_cs_rowid_<t>"` took effect, and the table's next row got rowid 1 on
+  every copy. Since Build 1c the key is a column default (`_dai_id`), not a
+  trigger; recreating the table without the column would undo it.
 - **Seeds run once.** This rests on a `_dai_meta` row the application can
   delete.
 
@@ -9965,6 +10020,41 @@ succession, rebuild-refused and the reference-link card.
 
 **Change:** successor authority (R-I) and the app/document split (R-K), in
 Build 2. **Acceptance:** the walk passes and `test.fail` comes off.
+
+#### D261 — `projectAdmitted` inside an application transaction loses the write
+
+*Status: open, held. Filed 19 October, from the review of Build 1b (1b-L1).
+Not reachable from the frame today.*
+
+With an application transaction open across admission and projection,
+`inTransaction` skips the save, projection writes over the row the
+application changed, and the save at its commit signs the projected value
+as the author's own: the person's write is lost and nothing is flagged.
+
+The frame cannot reach this: the merge's `BEGIN` throws while the
+application holds a transaction, and `startChanges` runs before application
+code. But `withoutCapture` is written to run inside a transaction, so a
+later caller would reopen PR9-H1.
+
+**Change:** `projectAdmitted` refuses inside a transaction instead of
+skipping the save. **Acceptance:** the review's harness run is refused, and
+the person's write survives.
+
+#### D262 — `settled()` lets some spellings of a query through unsettled
+
+*Status: open, held. Filed 19 October, from the review of Build 1b
+(1b-L2).*
+
+The kit's `settled()` puts the settle expression in front of a view's
+query only when the query starts with `SELECT` or `WITH` and names the
+table unqualified. A leading `--` comment or a parenthesized select is
+returned unchanged, and a `main.`-qualified table name gets the expression
+without reading it. In each case a row whose consequential column is
+pending feeds the view, which R-F amended says it must not.
+
+**Change:** settle what the query reads, not how it is spelled.
+**Acceptance:** each of the three spellings leaves a pending consequential
+row out of a `<dai-rows>` and a `<dai-value>` view.
 
 ### Branch review residue (filed 8 October)
 
