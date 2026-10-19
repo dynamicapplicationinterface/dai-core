@@ -64,8 +64,8 @@ test("a sibling built from another signed manifest is refused at the host and in
   test.slow();
   const scratch = mkdtempSync(join(tmpdir(), "dai-signed-view-"));
   const signing = { signingKey: resolve(repo, "conformance", "signing-key.pem"), allowTestKey: true };
-  const first = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess", ...signing });
-  const second = await compileDirectory({
+  const first = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess", ...signing });
+  const second = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Velvet Chess",

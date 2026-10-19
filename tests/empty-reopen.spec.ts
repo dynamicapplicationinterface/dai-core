@@ -28,7 +28,7 @@ test.describe("a reopen with the database gone", () => {
   let container: string;
 
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

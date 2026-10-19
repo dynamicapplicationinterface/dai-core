@@ -164,8 +164,8 @@ function score(prompt, directory) {
   }
   result.reached = "checked";
 
-  // 2. Does it compile?
-  const built = run(process.execPath, [cli, "build", directory, "--quiet"]);
+  // 2. Does it compile? A shared prompt's candidate builds through the policy layer's own path, as above.
+  const built = run(process.execPath, [cli, "build", directory, "--quiet", ...(isShared(prompt) ? ["--policy-layer"] : [])]);
   if (!built.ok) {
     result.failedAt = "built";
     result.why = (built.stderr || "").trim().split("\n").slice(-1)[0];

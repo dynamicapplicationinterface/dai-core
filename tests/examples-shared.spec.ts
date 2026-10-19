@@ -25,7 +25,7 @@ function appIn(page: Page): FrameLocator {
 }
 
 async function build(dir: string, name: string, scratch: string): Promise<string> {
-  const built = await compileDirectory({ sourceDir: join(repo, dir), root: repo, appName: name });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, dir), root: repo, appName: name });
   const file = join(scratch, `${name.replace(/\W+/g, "-").toLowerCase()}.dai.html`);
   writeFileSync(file, built.html, "utf8");
   return file;
@@ -224,7 +224,7 @@ test.describe("nothing a person does while the app is opening is lost", () => {
     const copy = mkdtempSync(join(tmpdir(), "dai-variant-"));
     cpSync(join(repo, dir), copy, { recursive: true });
     change(copy);
-    const built = await compileDirectory({ sourceDir: copy, root: repo, appName: name });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: copy, root: repo, appName: name });
     const out = join(mkdtempSync(join(tmpdir(), "dai-variant-out-")), "variant.dai.html");
     writeFileSync(out, built.html, "utf8");
     return out;
@@ -290,7 +290,7 @@ test.describe("nothing a person does while the app is opening is lost", () => {
     const after = before.replace('<main id="app" hidden inert>', '<main id="app">');
     expect(after, "the gate was removed").not.toBe(before);
     writeFileSync(index, after);
-    const built = await compileDirectory({ sourceDir: ungated, root: repo, appName: "Receipts" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: ungated, root: repo, appName: "Receipts" });
     const container = join(mkdtempSync(join(tmpdir(), "dai-ungated-out-")), "receipts.dai.html");
     writeFileSync(container, built.html, "utf8");
 

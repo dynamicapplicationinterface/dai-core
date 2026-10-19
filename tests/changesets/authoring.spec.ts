@@ -144,7 +144,7 @@ test("X1: a table with no primary key is given an explicit ranged key column at 
 test("the chess fixture builds through the policy layer unchanged: its own replicated tables, its session, no log", async () => {
   const dir = join(repo, "tests", "fixture", "chess");
   const declared = rewriteReplicated(readFileSync(join(dir, "schema.sql"), "utf8"));
-  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Chess" });
+  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Chess", policyLayer: true });
   expect(built.manifest.replication?.tables).toEqual([...declared.tables].sort());
   expect(built.manifest.replication?.tables).not.toContain("_cs_log");
   expect(built.manifest.session).toBeDefined();
@@ -189,6 +189,47 @@ test("a -- dai:replicated table or a session marker in an authored document is r
     "-- notes about dai:replicated tables, in prose\nCREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);\n",
   ]) {
     expect(lintFiles({ ...app, "schema.sql": schema }).map((f) => f.id), schema).not.toContain("one-shape");
+  }
+});
+
+/**
+ * 1b-M1 and 1b-L5, the review's own reading: one-shape was refused by dai
+ * check and check_dai_app only. create_dai_app refused three findings and
+ * compiled, the desktop app and the paste box never linted schema.sql, and the
+ * compiler never linted, so a marked schema built into the policy layer on
+ * the model's own path. And the scan allowed only spaces and tabs, while the
+ * policy layer's rewrite trims each line: a BOM, a no-break space or a form
+ * feed hid the marker from the lint and not from the rewrite.
+ */
+test("one shape at every entry point: each door refuses the markers, in every spelling the policy layer reads, with the lint's message", async () => {
+  const notes = "CREATE TABLE notes (body TEXT);\n";
+  for (const schema of [
+    `-- dai:replicated\n${notes}`,
+    `-- dai:profile session max_parties=2\n-- dai:replicated\n${notes}`,
+    `﻿-- dai:replicated\n${notes}`,
+    ` -- dai:replicated\n${notes}`,
+    `-- dai:replicated\n${notes}`,
+    `\f-- dai:replicated\n${notes}`,
+  ]) {
+    expect(rewriteReplicated(schema).tables, `the policy layer reads ${JSON.stringify(schema.slice(0, 24))}`).toEqual(["notes"]);
+    const seen = await doors(schema);
+    const named = JSON.stringify(schema.slice(0, 24));
+    expect(seen.check, named).toContain("one-shape");
+    expect(seen.mcpCheck, named).toContain("Its schema marks a table as shared");
+    for (const door of [seen.build, seen.mcpCreate, seen.pasteBox]) {
+      expect(door, named).toContain("Its schema marks a table as shared");
+      expect(door, named).toContain("Remove every -- dai:replicated");
+    }
+  }
+});
+
+test("one shape: the documents built through the policy layer still build, through their own path and no other", async () => {
+  for (const dir of ["examples/receipts", "examples/tic-tac-toe", "examples/request", "tests/fixture/chess"]) {
+    const sourceDir = join(repo, dir);
+    await expect(compileDirectory({ sourceDir, root: repo, appName: "Old" }), dir).rejects.toThrow(/marks a table as shared/);
+    const built = await compileDirectory({ sourceDir, root: repo, appName: "Old", policyLayer: true });
+    expect(built.manifest.replication?.tables.length, dir).toBeGreaterThan(0);
+    expect(built.manifest.replication?.tables, dir).not.toContain("_cs_log");
   }
 });
 

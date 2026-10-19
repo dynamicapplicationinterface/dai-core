@@ -120,7 +120,7 @@ test.describe("the host works out for itself what is replicated", () => {
      * real build proves the reader and the writer agree, which is the pair
      * that was wrong while the rewrite had no caller.
      */
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: resolve(repoRoot, "tests/fixture/chess"),
       root: repoRoot,
       appName: "Velvet Chess",

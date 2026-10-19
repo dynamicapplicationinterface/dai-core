@@ -32,7 +32,7 @@ test.skip(({ browserName }) => browserName !== "webkit", "the iOS merge reload i
 const appIn = (page: Page): FrameLocator => page.frameLocator("#cartridge").frameLocator("#dai-app");
 
 async function built(): Promise<{ file: string; uuid: string }> {
-  const out = await compileDirectory({
+  const out = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "examples", "tic-tac-toe"),
     root: repo,
     appName: "Tic-tac-toe",

@@ -35,7 +35,7 @@ async function failKeyReads(context: BrowserContext): Promise<void> {
 
 test("a document that can be read here but not changed says so over the document, where a person sees it", async ({ browser }, info) => {
   test.slow();
-  const built = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const file = join(mkdtempSync(join(tmpdir(), "dai-doc-sentences-")), "velvet-chess.dai.html");
   writeFileSync(file, built.html, "utf8");
 

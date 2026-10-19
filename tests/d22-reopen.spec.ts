@@ -76,7 +76,7 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
     await new Promise<void>((r) => server.listen(0, r));
     relayBase = `http://localhost:${(server.address() as { port: number }).port}/m`;
 
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

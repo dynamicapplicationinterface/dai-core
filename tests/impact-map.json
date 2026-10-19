@@ -311,6 +311,9 @@
       "tests/cbor.spec.ts"
     ],
     "tests/changesets/authoring.spec.ts": [
+      "examples/receipts/",
+      "examples/request/",
+      "examples/tic-tac-toe/",
       "scripts/generate-key.mjs",
       "scripts/retain-host.mjs",
       "src/",

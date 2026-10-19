@@ -31,6 +31,7 @@ import {
   type BuildContainerResult,
 } from "./core.js";
 import { looksSectioned, parseContainer } from "./container.js";
+import { schemaRefusal } from "./declarations.js";
 import { checkTriggerCoverage, rewriteReplicated, triggerColumns } from "./replicated.js";
 import { SchemaError, type SchemaDeclaration, declareSchema } from "./schema.js";
 
@@ -96,6 +97,8 @@ export interface CompileOptions {
   manifestVersion?: 2 | 3;
   /** false: a document as compilers built it before R-O, with no changeset log. For tests of existing documents. */
   changesetLog?: boolean;
+  /** true: a schema marked for the policy layer, as the documents built before R-O are (core.ts). */
+  policyLayer?: boolean;
   validUntil?: number;
   verifyIntegrity?: boolean;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -335,6 +338,9 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
   const previous = readPrevious(options.upgradeOf);
   const declared = await declareSchema(files, previous?.schema);
 
+  // Before the schema is test-loaded: what the compiler refuses, it refuses with the lint's message (§4.9).
+  const refused = files["schema.sql"] ? schemaRefusal(new TextDecoder().decode(files["schema.sql"]), { policyLayer: options.policyLayer }) : null;
+  if (refused) throw new CompileError(refused);
   await loadRewrittenSchema(files, warnings);
 
   const sqlite = readOptional(root, options.sqlitePath);
@@ -382,6 +388,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     generator: options.generator,
     manifestVersion: options.manifestVersion,
     changesetLog: options.changesetLog,
+    policyLayer: options.policyLayer,
     validUntil: options.validUntil,
     verifyIntegrity: options.verifyIntegrity,
     thin: options.thin,

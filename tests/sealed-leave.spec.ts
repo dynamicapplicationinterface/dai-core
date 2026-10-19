@@ -65,7 +65,7 @@ const ownRows = (ui: FrameLocator): Promise<{ me: string; top: number; pending: 
  */
 test("a saved document's rows are sealed, and every batch verifies under this device's key", async ({ page }) => {
   test.slow();
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Velvet Chess",
@@ -242,7 +242,7 @@ test("a row written while a seal waits for its signature is sealed by a later sa
     { sign: FRAME_INTERNAL.SIGN, signed: TO_DOCUMENT.SIGNED, authored: FRAME_INTERNAL.AUTHORED },
   );
   const shell = () => page.mainFrame().childFrames()[0]!;
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Velvet Chess",

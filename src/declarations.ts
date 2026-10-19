@@ -81,7 +81,8 @@ function columnsOfBody(body: string): string[] {
  * gives a table's columns when the caller knows them better than the text
  * does (the runtime, from SQLite).
  */
-export function declarationLines(sql: string, columnsOf?: (table: string) => string[] | undefined): DeclarationLine[] {
+export function declarationLines(source: string, columnsOf?: (table: string) => string[] | undefined): DeclarationLine[] {
+  const sql = normalizedSchema(source);
   const all = masked(sql, true);
   const tables: { name: string; from: number; to: number; columns: string[] }[] = [];
   for (const m of all.matchAll(CREATE)) {
@@ -130,6 +131,57 @@ export function declaredIn(createSql: string, columns: string[]): Declared {
     else out.consequential.push(...line.columns);
   }
   return out;
+}
+
+/**
+ * A schema as it reads (1b-L5): a byte-order mark is dropped, and a no-break
+ * space or a form feed is a space. The policy layer's rewrite trims each line
+ * and so read all three as a marker, while a scan that allowed only spaces and
+ * tabs did not, and a schema saved with a BOM was built through the policy
+ * layer with nothing refusing it.
+ */
+export function normalizedSchema(sql: string): string {
+  return sql.replace(/﻿/g, "").replace(/[ \f]/g, " ");
+}
+
+/*
+ * One shape (R-O). An application is written over ordinary tables; whether
+ * its copies merge, and with whom, is the host's policy and not the schema's.
+ * A table marked -- dai:replicated, or a -- dai:profile session line, asks for
+ * the policy layer that documents built before R-O use. Those documents keep
+ * building and stay in CI (R-P), through their own path (the compiler's
+ * `policyLayer`); a document being authored is refused, by the lint and by the
+ * compiler, whichever door it came through (§4.9: every entry point refuses
+ * what dai check refuses). The declarations an ordinary table may carry
+ * (-- dai:coupled, -- dai:consequential) are not markers.
+ */
+export const ONE_SHAPE = {
+  id: "one-shape",
+  what: "Its schema marks a table as shared (-- dai:replicated) or declares a session (-- dai:profile session).",
+  why:
+    "Every application is written over ordinary tables. Whether its copies merge, and with whom, is decided by the " +
+    "host, not the schema: the runtime records what each save changed as a signed change, and merges copies row by " +
+    "row and column by column, keeping both values when two copies changed one at once. A marked table asks for an " +
+    "older layer that new documents do not use.",
+  fix:
+    "Remove every -- dai:replicated and -- dai:profile line from schema.sql, keep the tables as ordinary tables with an " +
+    "INTEGER PRIMARY KEY each, and read and write them with plain SQL.",
+};
+
+/** Whether a schema asks for the policy layer: a -- dai:replicated or -- dai:profile session line. */
+export function marksPolicyLayer(sql: string): boolean {
+  return /^[ \t]*--[ \t]*dai:(?:replicated\b|profile[ \t]+session\b)/im.test(normalizedSchema(sql));
+}
+
+/**
+ * What the compiler refuses in a schema, as the lint words it, or null: a
+ * declaration that does not read exactly, and, unless the build is one of the
+ * documents that already use it, the policy layer's markers (§4.9).
+ */
+export function schemaRefusal(sql: string, options: { policyLayer?: boolean } = {}): string | null {
+  if (declarationLines(sql).some((line) => !line.ok)) return `DAI: ${DECLARATION.what} ${DECLARATION.fix}`;
+  if (marksPolicyLayer(sql) && options.policyLayer !== true) return `DAI: ${ONE_SHAPE.what} ${ONE_SHAPE.fix}`;
+  return null;
 }
 
 /** The one message for a declaration that does not read exactly: the lint's finding and the compiler's refusal. */

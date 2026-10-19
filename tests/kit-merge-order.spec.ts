@@ -44,7 +44,7 @@ async function listenerFirst(scratch: string): Promise<string> {
   const changed = without.replace(kitImport, `  window.addEventListener("${registration![1]}", onMerged);\n${kitImport}`);
   expect(changed.indexOf("onMerged);\n" + kitImport)).toBeGreaterThan(0);
   writeFileSync(path, changed);
-  const built = await compileDirectory({ sourceDir: copy, root: repo, appName: "Tic-tac-toe" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: copy, root: repo, appName: "Tic-tac-toe" });
   const file = join(scratch, "listener-first.dai.html");
   writeFileSync(file, built.html, "utf8");
   return file;
@@ -109,7 +109,7 @@ test.describe("the kit's merge work runs before the application's (D177)", () =>
 
   test("chess: the creator's board draws the joiner seated when the joiner's file arrives, with the joiner's move on it", async ({ browser }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-d177-chess-"));
-    const built = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
     const container = join(scratch, "chess.dai.html");
     writeFileSync(container, built.html, "utf8");
     const contexts = [await browser.newContext({ acceptDownloads: true }), await browser.newContext({ acceptDownloads: true })];

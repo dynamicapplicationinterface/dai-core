@@ -16,7 +16,7 @@ import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { rewriteReplicated } from "./replicated.js";
 import { CHANGES_DECLARATION, withHiddenKeys } from "./changes-log.js";
-import { DECLARATION, declarationLines } from "./declarations.js";
+import { schemaRefusal } from "./declarations.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
@@ -304,6 +304,14 @@ export interface BuildContainerInput {
    */
   changesetLog?: boolean;
   /**
+   * true builds a schema marked for the policy layer (-- dai:replicated,
+   * -- dai:profile session): the documents built before R-O, which keep
+   * building and stay in CI (R-P). Every other build refuses the markers with
+   * the lint's one-shape message, so no door builds what dai check refuses
+   * (§4.9). No authoring door sets it.
+   */
+  policyLayer?: boolean;
+  /**
    * Leave the engine out, for a host that already has it (§6.2).
    *
    * The manifest still covers it: every digest is there and the signature is
@@ -543,9 +551,11 @@ export async function buildContainer(
   let session: { max_parties: number; close?: "any" | "creator" } | undefined;
   let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
   if (schemaSql !== undefined) {
-    // A -- dai: declaration that does not read exactly is refused here, whichever door built it, with the
-    // lint's message: the runtime would ignore it, and what it meant would silently not happen (1b-H2).
-    if (declarationLines(schemaSql).some((line) => !line.ok)) throw new Error(`DAI: ${DECLARATION.what} ${DECLARATION.fix}`);
+    // Refused here, whichever door built it, with the lint's message (§4.9): a -- dai: declaration that does
+    // not read exactly, which the runtime would ignore (1b-H2), and the policy layer's markers, unless the
+    // build is one of the documents that already use it (one shape).
+    const refused = schemaRefusal(schemaSql, { policyLayer: input.policyLayer });
+    if (refused) throw new Error(refused);
     /*
      * A document with no session policy declares no replicated table of its
      * own: the author writes ordinary tables (R-O). It gets the changeset log

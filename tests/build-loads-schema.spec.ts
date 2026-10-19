@@ -28,7 +28,7 @@ test.describe("the build loads the schema it seals", () => {
     // The author's own column text is carried into the rewrite as written; an
     // incomplete clause survives the rewrite and fails only in SQLite.
     const dir = app("-- dai:replicated\nCREATE TABLE IF NOT EXISTS t (\n  a TEXT NOT NULL REFERENCES\n);\n");
-    const refused = await compileDirectory({ sourceDir: dir, root: repo, appName: "x" }).then(
+    const refused = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "x" }).then(
       () => null,
       (error: unknown) => error,
     );
@@ -40,7 +40,7 @@ test.describe("the build loads the schema it seals", () => {
     const dir = app(
       "-- dai:profile session max_parties=2\n-- dai:replicated\nCREATE TABLE IF NOT EXISTS t (\n  a TEXT NOT NULL -- a comment after the last column\n);\n",
     );
-    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "x" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "x" });
     expect(built.html.length).toBeGreaterThan(0);
   });
 
@@ -61,7 +61,7 @@ test.describe("the build loads the schema it seals", () => {
         "  note TEXT -- after the last column, as D5 allows\n" +
         ");\n",
     );
-    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "x" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "x" });
     expect(built.html.length).toBeGreaterThan(0);
   });
 
@@ -76,7 +76,7 @@ test.describe("the build loads the schema it seals", () => {
         "  cell    INTEGER NOT NULL   /* 0..8, left to right */\n" +
         ");\n",
     );
-    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "x" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "x" });
     expect(built.html.length).toBeGreaterThan(0);
   });
 
@@ -86,7 +86,7 @@ test.describe("the build loads the schema it seals", () => {
     // constraint, and the rewrite appends the replication columns after it,
     // which SQLite will not load (backlog D20) — so the build refuses it rather
     // than sealing a document that would fail on open.
-    const refused = await compileDirectory({ sourceDir: join(repo, "examples", "chess-foil"), root: repo, appName: "foil" }).then(
+    const refused = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "examples", "chess-foil"), root: repo, appName: "foil" }).then(
       () => null,
       (error: unknown) => error,
     );
@@ -102,7 +102,7 @@ test.describe("the build loads the schema it seals", () => {
     });
     expect(shared.length, "at least one example ships shared tables").toBeGreaterThan(0);
     for (const example of shared) {
-      const built = await compileDirectory({ sourceDir: join(repo, "examples", example), root: repo, appName: example }).catch(
+      const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "examples", example), root: repo, appName: example }).catch(
         (error: unknown) => {
           throw new Error(`examples/${example} is refused at build: ${(error as Error).message}`);
         },
@@ -115,7 +115,7 @@ test.describe("the build loads the schema it seals", () => {
     // Not executed: a plain schema is sealed exactly as written, and this change
     // is about what the compiler adds, not about the author's own SQL.
     const dir = app("CREATE TABLE IF NOT EXISTS notes (body TEXT);\n");
-    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "x" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "x" });
     expect(built.html.length).toBeGreaterThan(0);
   });
 });

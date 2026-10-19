@@ -30,7 +30,7 @@ const engine = await (async () => {
 })();
 
 async function example(name: string, signed = false) {
-  return compileDirectory({
+  return compileDirectory({ policyLayer: true,
     sourceDir: resolve(repo, "examples", name),
     root: repo,
     appName: name,
@@ -79,7 +79,7 @@ test.describe("the compact inline carrier", () => {
      * not reproduce it exactly, the byte-for-byte check fails and the
      * signature does not verify. This asserts all three.
      */
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: resolve(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",
@@ -112,7 +112,7 @@ test.describe("the compact inline carrier", () => {
     // A publisher who built with a different template: the sealed shell is not
     // one this host can reproduce, so the sender must not leave it out.
     const template = HOST.template.replace("<meta charset", "<!-- another compiler -->\n<meta charset");
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: resolve(repo, "examples/packing-list"),
       root: repo,
       appName: "Foreign",

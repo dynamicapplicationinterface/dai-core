@@ -55,7 +55,7 @@ test.describe("the games an application says are waiting", () => {
   }
 
   test("two games waiting are two; a move in one leaves one", async ({ browser }) => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

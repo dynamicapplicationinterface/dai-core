@@ -51,7 +51,7 @@ async function chessWith(
   fill: (db: Rows, document: string) => Promise<void>,
   options: { requires?: (declared: string[]) => string[] } = {},
 ): Promise<string> {
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Chess",

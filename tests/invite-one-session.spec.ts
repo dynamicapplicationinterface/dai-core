@@ -113,7 +113,7 @@ test.beforeAll(async () => {
   await new Promise<void>((r) => store.listen(0, r));
   storeBase = `http://localhost:${(store.address() as { port: number }).port}`;
 
-  const built = await compileDirectory({ sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
   container = join(mkdtempSync(join(tmpdir(), "dai-invite-")), "tic-tac-toe.dai.html");
   writeFileSync(container, built.html, "utf8");
 });

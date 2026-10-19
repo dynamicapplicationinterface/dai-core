@@ -152,7 +152,7 @@ test.beforeAll(async () => {
   await new Promise<void>((r) => store.listen(0, r));
   storeBase = `http://localhost:${(store.address() as { port: number }).port}`;
 
-  const built = await compileDirectory({ sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
   container = join(mkdtempSync(join(tmpdir(), "dai-push-")), "tic-tac-toe.dai.html");
   writeFileSync(container, built.html, "utf8");
 });
@@ -676,7 +676,7 @@ async function nonReportingTicTacToe(): Promise<string> {
   const stripped = source.replace("  drawPending = false;\n  reportWaiting();", "  drawPending = false;");
   if (stripped === source) throw new Error("the report call was not removed");
   writeFileSync(app, stripped);
-  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Tic-tac-toe" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "Tic-tac-toe" });
   const file = join(dir, "no-report.dai.html");
   writeFileSync(file, built.html, "utf8");
   return file;

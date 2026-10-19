@@ -33,7 +33,7 @@ async function serve(root: string): Promise<{ server: Server; origin: string }> 
 
 /** A replicated example, signed, written to a file a person could pick. */
 async function build(example: string, appName: string): Promise<{ html: string; uuid: string; file: string }> {
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "examples", example),
     root: repo,
     appName,

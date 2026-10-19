@@ -38,14 +38,14 @@ test.describe("what a share and a keep say", () => {
     // A document for one person (packing-list declares no replicated tables:
     // "one family's packing list, kept on one phone"), and one made to be
     // joined.
-    const one = await compileDirectory({
+    const one = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "examples", "packing-list"),
       root: repo,
       appName: "Beach trip",
       // Built as before R-O, with no changeset log: the plain document these sentences are about.
       changesetLog: false,
     });
-    const two = await compileDirectory({
+    const two = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

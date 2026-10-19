@@ -28,7 +28,7 @@ const appFrame = (page: Page): Frame => {
 
 test("a signed replicated file built at the default version opens from the picker (D166)", async ({ browser }) => {
   test.slow();
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Chess",

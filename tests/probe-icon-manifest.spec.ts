@@ -82,7 +82,7 @@ async function edge(oldWorker?: string): Promise<{ server: Server; origin: strin
 test("probe: the manifest live on an iPhone /d/ chess open", async ({ browser }) => {
   test.skip(!process.env.PROBE_ICON, "a probe: run with PROBE_ICON=1");
   test.setTimeout(180_000);
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Velvet Chess",

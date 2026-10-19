@@ -49,7 +49,7 @@ test.describe("the write rules are refused out loud", () => {
   let container: string;
 
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",
@@ -107,7 +107,7 @@ test.describe("the write rules are refused out loud", () => {
       '<!doctype html><meta charset="utf-8"><title>Notes</title><p id="app">here</p>',
       "utf8",
     );
-    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Notes" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: source, root: repo, appName: "Notes" });
     const plain = join(source, "notes.dai.html");
     writeFileSync(plain, built.html, "utf8");
 

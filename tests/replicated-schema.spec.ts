@@ -12,7 +12,7 @@ import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 async function versionOf(sourceDir: string, appName: string): Promise<ContainerManifest> {
-  const built = await compileDirectory({ sourceDir, root: repoRoot, appName });
+  const built = await compileDirectory({ policyLayer: true, sourceDir, root: repoRoot, appName });
   return JSON.parse(
     new TextDecoder().decode(parseContainer(built.html).archive[MANIFEST_ENTRY]!),
   ) as ContainerManifest;
@@ -309,7 +309,7 @@ test.describe("the default build path emits the version the spec says it emits",
       .prepare("INSERT INTO notes (body, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES ('hello', ?, 1, 1, ?, '[]', 0)")
       .run(new Uint8Array(16).fill(1), new Uint8Array(16).fill(2));
     seed.close();
-    await expect(compileDirectory({ sourceDir: dir, root: repoRoot, appName: "Seeded", sqlitePath: join(dir, "seed.sqlite") })).rejects.toThrow(
+    await expect(compileDirectory({ policyLayer: true, sourceDir: dir, root: repoRoot, appName: "Seeded", sqlitePath: join(dir, "seed.sqlite") })).rejects.toThrow(
       /seed.*notes/i,
     );
   });

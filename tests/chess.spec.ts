@@ -155,7 +155,7 @@ test.describe("a game of chess played by exchanging files", () => {
 
   test.beforeAll(async () => {
     scratch = mkdtempSync(join(tmpdir(), "dai-chess-"));
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

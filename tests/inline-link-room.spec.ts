@@ -19,7 +19,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * from the code rather than remembered.
  */
 test("the request example's inline link fits under the cap", async () => {
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "examples", "request"),
     root: repo,
     appName: "Shared request",

@@ -17,7 +17,7 @@
  * what the reader will actually do next.
  */
 
-import { DECLARATION, declarationLines } from "./declarations.js";
+import { DECLARATION, declarationLines, marksPolicyLayer, ONE_SHAPE } from "./declarations.js";
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
 import { seatWritesIn } from "./seat-check.js";
@@ -240,32 +240,11 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
   ];
 }
 
-/*
- * One shape (R-O). An application is written over ordinary tables; whether
- * its copies merge, and with whom, is the host's policy and not the schema's.
- * A table marked -- dai:replicated, or a -- dai:profile session line, asks for
- * the policy layer that documents built before R-O use. Those documents keep
- * building and stay in CI (R-P); a document being authored is refused. The
- * declarations an ordinary table may carry (-- dai:coupled,
- * -- dai:consequential) are not markers and pass.
- */
-const ONE_SHAPE = {
-  id: "one-shape",
-  what: "Its schema marks a table as shared (-- dai:replicated) or declares a session (-- dai:profile session).",
-  why:
-    "Every application is written over ordinary tables. Whether its copies merge, and with whom, is decided by the " +
-    "host, not the schema: the runtime records what each save changed as a signed change, and merges copies row by " +
-    "row and column by column, keeping both values when two copies changed one at once. A marked table asks for an " +
-    "older layer that new documents do not use.",
-  fix:
-    "Remove every -- dai:replicated and -- dai:profile line from schema.sql, keep the tables as ordinary tables with an " +
-    "INTEGER PRIMARY KEY each, and read and write them with plain SQL.",
-};
-
+/* One shape (R-O): the finding and the scan are src/declarations.ts's, shared with the compiler. */
 function lintOneShape(files: Record<string, string>): (Finding & { file: string })[] {
   return Object.entries(files)
     .filter(([name]) => /\.sql$/i.test(name))
-    .filter(([, source]) => /^[ \t]*--[ \t]*dai:(?:replicated\b|profile[ \t]+session\b)/im.test(source))
+    .filter(([, source]) => marksPolicyLayer(source))
     .map(([file]) => ({ ...ONE_SHAPE, file }));
 }
 

@@ -142,7 +142,7 @@ step("hosted request", async () => {
   const { compileDirectory, parseContainer } = await import(pathToFileURL(join(repo, "dist", "index.js")).href);
   const hosted = parseContainer(readFileSync(join(repo, "apps", "runner", "public", "request.dai.html"), "utf8"));
   const fresh = parseContainer(
-    (await compileDirectory({ sourceDir: join(repo, "examples", "request"), root: repo, appName: "Request" })).html,
+    (await compileDirectory({ sourceDir: join(repo, "examples", "request"), root: repo, appName: "Request", policyLayer: true })).html,
   );
   const app = (archive) => Object.keys(archive).filter((name) => name.startsWith("app/")).sort();
   const problems = [];
@@ -177,6 +177,7 @@ step("inline link cap", async () => {
     sourceDir: join(repo, "examples", "request"),
     root: repo,
     appName: "Shared request",
+    policyLayer: true,
     signingKey: resolve(repo, "conformance", "signing-key.pem"),
     allowTestKey: true,
   });

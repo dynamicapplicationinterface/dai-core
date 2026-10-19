@@ -108,7 +108,7 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
     const port = (server.address() as { port: number }).port;
     relayBase = `http://localhost:${port}/m`;
 
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",
@@ -213,7 +213,7 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
      * empty at the start: a mailbox holding an earlier test's moves would land
      * them whether or not the timer ran, and prove nothing about the timer.
      */
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",
@@ -266,7 +266,7 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
      * Its own freshly compiled document, so the shared relay's mailbox is empty
      * at the start (see the test above).
      */
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

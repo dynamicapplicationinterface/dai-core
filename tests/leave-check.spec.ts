@@ -25,7 +25,7 @@ const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocat
  */
 test("a download of bytes holding an unsealed row of this device's is refused, and nothing is written", async ({ page }) => {
   test.slow();
-  const built = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const file = join(mkdtempSync(join(tmpdir(), "dai-leave-check-")), "chess.dai.html");
   writeFileSync(file, built.html, "utf8");
   await page.goto(RUNNER_URL);
