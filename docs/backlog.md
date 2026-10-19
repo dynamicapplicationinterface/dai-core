@@ -602,6 +602,43 @@ rewrite still read (1b-L5). *Evidence:* the review of Build 1b, 1b-M1 and
 1b-L5; `tests/changesets/authoring.spec.ts`, "one shape at every entry
 point".
 
+**R-S. The capture-epoch boundary.** Ruled 19 October. A signed batch
+describes an immutable, committed set of local effects from a known schema
+and causal baseline.
+- A save is refused or deferred while the app holds a transaction, decided
+  by `sqlite3_get_autocommit`, never by our bookkeeping.
+- Extraction happens only at a committed boundary.
+- The local epoch is logged and the session rotated BEFORE any remote apply
+  or runtime bookkeeping touches the database.
+- Remote apply runs on a connection carrying no app TEMP triggers.
+
+Nothing arriving remotely, written by the runtime, or occurring after
+extraction can become part of the person's authorship.
+*Rejected:* disabling the session during apply as the isolation mechanism
+(C07, reproduced). *Evidence:* the data-interface catalog
+(`handoff-2026-10-19.md`), C07, Q01, Q02, Q07, Q08, T01, and section 10.
+
+**R-T. Valid materialization.** Ruled 19 October. Merged state is never
+presented as settled when a declared constraint fails.
+- The combined candidate is validated. A CHECK, UNIQUE or FK violation
+  across individually valid edits keeps both proposals as a constraint
+  conflict (pending), never a settled invalid row.
+- The data interface promises state convergence and no silent loss; it
+  does not promise serializability.
+- Intent (counters), read dependencies, and trigger-maintained derived
+  values are not inferred. The model file teaches totals in queries, not
+  triggers; counters are flagged unless declared.
+
+*Rejected:* inferring intent from before/after values. *Evidence:* the
+catalog, M02, M06, M07, M08, T08, and "Three things the changeset cannot
+tell you".
+
+**R-U. The engine pin.** Ruled 19 October. The shipped sqlite-wasm version
+and compile options are recorded in `docs/format.md` as the conformance
+baseline. Keyless capture is by the explicit `_dai_id` column, not the
+session's rowid mode: rowids do not survive VACUUM. *Evidence:* the
+catalog, C01, S10, P11, and its version corrections.
+
 ### The data interface's runtime rules
 
 What the runtime holds for every document under the ordinary data
