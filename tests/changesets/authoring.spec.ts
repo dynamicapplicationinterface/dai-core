@@ -169,6 +169,49 @@ test("an id the application chooses as a literal is a lint finding with a fix", 
   ).toBe(false);
 });
 
+/**
+ * A table with no primary key gains `_dai_id` as its first column (X1), so a
+ * positional INSERT into it (no column list) has one value too few: on the
+ * runtime it fails, so the lint refuses it, at every door that lints. A
+ * column list, DEFAULT VALUES, and a positional INSERT into a table with a key
+ * of its own all pass.
+ */
+test("positional-insert: an INSERT naming no columns into a table that gained _dai_id is refused", async () => {
+  const schema = "CREATE TABLE marks (body TEXT, at TEXT);\nCREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);\n";
+  const refused = (code: string): boolean =>
+    breaking(lintFiles({ "index.html": "<!doctype html><p>marks</p>", "app.js": code, "schema.sql": schema })).some((f) => f.id === "positional-insert");
+  for (const code of [
+    "db.exec(\"INSERT INTO marks VALUES ('a', 'b')\");",
+    "db.exec(`INSERT OR IGNORE INTO \"marks\" VALUES (?, ?)`, { bind: [1, 2] });",
+    "db.exec(\"INSERT INTO main.marks SELECT body, at FROM notes\");",
+    "db.exec(\"REPLACE INTO marks VALUES ('a', 'b')\");",
+  ]) {
+    expect(refused(code), code).toBe(true);
+  }
+  for (const code of [
+    "db.exec(\"INSERT INTO marks (body, at) VALUES ('a', 'b')\");",
+    "db.exec(\"INSERT INTO marks DEFAULT VALUES\");",
+    "db.exec(\"INSERT INTO notes VALUES (NULL, 'keyed')\");",
+    "// INSERT INTO marks VALUES ('in a comment')",
+  ]) {
+    expect(refused(code), code).toBe(false);
+  }
+  const seed = lintFiles({
+    "index.html": "<!doctype html><script type=\"application/sql\">INSERT INTO marks VALUES ('seed', 'now');</script>",
+    "schema.sql": schema,
+  }).find((f) => f.id === "positional-insert");
+  expect(seed?.file, "a seed block is held to it too").toBe("index.html");
+  expect(seed?.fix).toMatch(/Name the columns/);
+
+  // What it guards against, on the runtime: the positional INSERT fails, the column list does not.
+  const a = await Copy.open(await person());
+  a.db.exec("CREATE TABLE marks (_dai_id INT NOT NULL ON CONFLICT REPLACE DEFAULT (dai_id('marks')) PRIMARY KEY, body TEXT, at TEXT)");
+  expect(() => a.db.exec("INSERT INTO marks VALUES ('a', 'b')")).toThrow(/2 values|3 columns/);
+  a.db.exec("INSERT INTO marks (body, at) VALUES ('a', 'b')");
+  expect(a.db.selectValue("SELECT count(*) FROM marks")).toBe(1);
+  a.close();
+});
+
 test("a -- dai:replicated table or a session marker in an authored document is refused, with the one-shape message", () => {
   const app = { "index.html": '<!doctype html><script type="module" src="app.js"></script>', "app.js": "const db = await window.dai.openDatabase();\n" };
   for (const schema of [

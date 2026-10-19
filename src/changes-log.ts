@@ -37,14 +37,10 @@ const CREATE = new RegExp(String.raw`\bCREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?
 const unquoted = (name: string): string =>
   /^"/.test(name) ? name.slice(1, -1).split('""').join('"') : /^[\x60[]/.test(name) ? name.slice(1, -1) : name;
 
-/**
- * Every CREATE TABLE in `sql` that declares no primary key, given the hidden
- * key as its first column (first, because table constraints must follow every
- * column). Anything else comes back byte for byte.
- */
-export function withHiddenKeys(sql: string): string {
+/** Each CREATE TABLE in `sql` that declares no primary key: its name, and where its column list opens. */
+function keyless(sql: string): { name: string; open: number }[] {
   const mask = masked(sql);
-  const inserts: [number, string][] = [];
+  const found: { name: string; open: number }[] = [];
   for (const m of mask.matchAll(CREATE)) {
     const open = m.index! + m[0].length;
     let depth = 1;
@@ -56,9 +52,23 @@ export function withHiddenKeys(sql: string): string {
     }
     if (depth > 0) continue;
     if (/\bPRIMARY\s+KEY\b/i.test(mask.slice(open, at - 1))) continue;
-    inserts.push([open, `${hiddenKeyColumn(unquoted(m[1]!))}, `]);
+    found.push({ name: unquoted(m[1]!), open });
   }
+  return found;
+}
+
+/**
+ * Every CREATE TABLE in `sql` that declares no primary key, given the hidden
+ * key as its first column (first, because table constraints must follow every
+ * column). Anything else comes back byte for byte.
+ */
+export function withHiddenKeys(sql: string): string {
   let out = sql;
-  for (const [at, text] of inserts.reverse()) out = out.slice(0, at) + text + out.slice(at);
+  for (const { name, open } of keyless(sql).reverse()) out = out.slice(0, open) + `${hiddenKeyColumn(name)}, ` + out.slice(open);
   return out;
+}
+
+/** The tables `withHiddenKeys` gives the hidden key: the ones whose rows gain a column the application did not write. */
+export function hiddenKeyTables(sql: string): string[] {
+  return keyless(sql).map((t) => t.name);
 }

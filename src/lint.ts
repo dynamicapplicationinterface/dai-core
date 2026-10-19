@@ -17,6 +17,7 @@
  * what the reader will actually do next.
  */
 
+import { hiddenKeyTables } from "./changes-log.js";
 import { DECLARATION, declarationLines, marksPolicyLayer, ONE_SHAPE } from "./declarations.js";
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
@@ -237,6 +238,7 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
     ...lintDeclarations(files),
     ...lintShared(files),
     ...lintLiteralIds(files),
+    ...lintPositionalInserts(files),
   ];
 }
 
@@ -418,6 +420,40 @@ function lintLiteralIds(files: Record<string, string>): (Finding & { file: strin
     }
     insert.lastIndex = 0;
     if (found) findings.push({ ...LITERAL_ID, file });
+  }
+  return findings;
+}
+
+/*
+ * An INSERT that names no columns, into a table the compiler gives the hidden
+ * key (X1, `_dai_id`, src/changes-log.ts). The table has one column more than
+ * the application declared, first, so the values no longer line up: the
+ * INSERT fails, or, with a matching count, writes each value into the wrong
+ * column. Breaking, at every door that lints.
+ */
+const POSITIONAL_INSERT = {
+  id: "positional-insert",
+  what: "It inserts into a table with no primary key without naming the columns.",
+  why:
+    "A table that declares no primary key is given one, _dai_id, as its first column, so every copy of the " +
+    "document keys its rows the same way. An INSERT that lists its values without naming the columns now has " +
+    "one value fewer than the table has columns, and fails.",
+  fix:
+    "Name the columns in every INSERT, as INSERT INTO marks (body) VALUES (...), or give the table an INTEGER " +
+    "PRIMARY KEY of its own.",
+};
+
+function lintPositionalInserts(files: Record<string, string>): (Finding & { file: string })[] {
+  const schemaName = Object.keys(files).find((name) => name === "schema.sql" || name.endsWith("/schema.sql"));
+  if (!schemaName) return [];
+  const keyless = new Set(hiddenKeyTables(files[schemaName] ?? "").map((name) => name.toLowerCase()));
+  if (keyless.size === 0) return [];
+  const positional = /\b(?:INSERT(?:\s+OR\s+\w+)?|REPLACE)\s+INTO\s+(?:["`[]?main["`\]]?\s*\.\s*)?["`[]?(\w+)["`\]]?\s+(?:VALUES|SELECT|WITH)\b/gi;
+  const findings: (Finding & { file: string })[] = [];
+  for (const [file, source] of Object.entries(files)) {
+    if (!/\.(?:html?|m?js|ts|sql)$/i.test(file) || file === schemaName) continue;
+    const text = withoutComments(source);
+    if ([...text.matchAll(positional)].some((m) => keyless.has(m[1]!.toLowerCase()))) findings.push({ ...POSITIONAL_INSERT, file });
   }
   return findings;
 }
