@@ -607,6 +607,12 @@
       "scripts/count-floor.mjs",
       "tests/count-floor.spec.ts"
     ],
+    "tests/count-parts.spec.ts": [
+      "scripts/ci-verdict.mjs",
+      "scripts/count-parts.mjs",
+      "scripts/lib/count-check.mjs",
+      "tests/count-parts.spec.ts"
+    ],
     "tests/countersignature.spec.ts": [
       "conformance/signing-key.pem",
       "src/cbor.ts",
