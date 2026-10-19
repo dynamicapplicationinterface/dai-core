@@ -495,10 +495,10 @@ export class Changes {
       const m = this.db.selectValue(`SELECT max(${col}) FROM ${q(tbl)} WHERE ${col} >= ? AND ${col} < ?`, [base, base + SPAN]);
       if (m != null) high = Math.max(high, Number(m) - base);
     }
-    // Rows this author wrote and then deleted still hold their ids in the cells.
+    // Every id the range has held is in the cells, deleted rows included, whoever wrote it: a row another
+    // copy wrote into this range with an explicit id and then deleted is a high-water mark too (K06, K07).
     const cells = this.db.selectValues(
-      "SELECT DISTINCT c.pk FROM _cs_cell c JOIN _cs_keys k ON k.tbl = c.tbl AND k.kind IN ('ranged', 'hidden') WHERE c.author = ?",
-      [this.authorHex],
+      "SELECT DISTINCT c.pk FROM _cs_cell c JOIN _cs_keys k ON k.tbl = c.tbl AND k.kind IN ('ranged', 'hidden')",
     ) as string[];
     for (const text of cells) {
       const id = JSON.parse(text)[0];
@@ -508,12 +508,14 @@ export class Changes {
   }
 
   /**
-   * The counter, raised past an id this author logged (PR9-H4). The
-   * constructor reads the tables and cells as they are, and a copy rebuilt
-   * from an arrival has neither until its log is projected, so the counter
-   * started at 0 and the author's next inserts failed on their own earlier
-   * rows, or silently reused a deleted row's id. Every changeset this author
-   * wrote passes through `ingest`, its inserts of deleted rows included.
+   * The counter, raised past an id in this author's range that any changeset
+   * carries (PR9-H4; K06, K07). The constructor reads the tables and cells as
+   * they are, and a copy rebuilt from an arrival has neither until its log is
+   * projected, so the counter started at 0 and the author's next inserts
+   * failed on their own earlier rows, or silently reused a deleted row's id.
+   * Every changeset passes through `ingest`, its inserts of deleted rows
+   * included, and another author's explicit id in this range counts as this
+   * author's own would: the range's high-water mark is the log's.
    */
   private counterAbove(table: string, k: unknown[]): void {
     const kind = this.keysOf(table)?.kind;
@@ -867,7 +869,8 @@ export class Changes {
     const touched: [string, string][] = [];
     for (const [table, k, , n, , b, seen] of ops) {
       const pk = JSON.stringify(k);
-      if (author === this.authorHex) this.counterAbove(table, k);
+      // Any author's id in this author's range raises the counter, not only its own (K06, K07).
+      this.counterAbove(table, k);
       for (const [col, val] of n) {
         this.runCached("INSERT OR IGNORE INTO _cs_cell (tbl, pk, col, ver, val, lc, author) VALUES (?, ?, ?, ?, ?, ?, ?)", [
           table,

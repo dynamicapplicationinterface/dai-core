@@ -363,3 +363,53 @@ test("D02: INSERT OR REPLACE deleting a parent with a cascading child is capture
     b.close();
   }
 });
+
+/**
+ * K06 / K07. AUTOINCREMENT promises an id is never reused, and the rewrite
+ * drops the keyword: the author's range carries the promise instead. What
+ * the runtime guarantees (docs/format.md): an id is unique and never reused
+ * within the author's range, rising there; it is not table-wide AUTOINCREMENT,
+ * so another author's ids can sit above it.
+ *
+ * Here the high ids are remote: B writes a row with an explicit id in A's
+ * range, above A's counter, and its own rows above everything of A's; then B
+ * deletes the high row. A's next ids must be above every id its range has
+ * ever held, live and on a copy restored from A's stored bytes after the high
+ * row was deleted: the high-water mark is the log's, not the live rows'.
+ */
+test("K06/K07: after high remote ids and their deletion, a local id is never reused, live or after a restore", async () => {
+  const a = await Copy.open(await person());
+  a.db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL)");
+  a.db.exec("INSERT INTO notes (body) VALUES ('one'), ('two'), ('three')");
+  const range = a.changes.index * 2 ** 32;
+  const b = await Copy.open(await person(), await a.bytes());
+  const high = range + 5;
+  b.db.exec({ sql: "INSERT INTO notes (id, body) VALUES (?, 'high, from B')", bind: [high] });
+  b.db.exec("INSERT INTO notes (body) VALUES ('B, in its own range')");
+  await a.mergeFrom(await b.bytes());
+  expect(a.db.selectValue("SELECT body FROM notes WHERE id = ?", [high]), "the explicit id is kept").toBe("high, from B");
+  b.db.exec({ sql: "DELETE FROM notes WHERE id = ?", bind: [high] });
+  await a.mergeFrom(await b.bytes());
+  expect(a.db.selectValue("SELECT count(*) FROM notes WHERE id = ?", [high]), "the high row is gone").toBe(0);
+  const stored = await a.bytes();
+
+  const ever = (c: Copy): number[] =>
+    (c.rows.all("SELECT DISTINCT pk FROM _cs_cell WHERE tbl = 'notes'").map((r) => JSON.parse(String(r["pk"]))[0]) as number[]).filter(
+      (id) => id >= range && id < range + 2 ** 32,
+    );
+  const allocate = (c: Copy, label: string): void => {
+    const before = ever(c);
+    c.db.exec(`INSERT INTO notes (body) VALUES ('${label}')`);
+    const id = Number(c.db.selectValue("SELECT last_insert_rowid()"));
+    expect(id >= range && id < range + 2 ** 32, `${label}: from A's range`).toBe(true);
+    expect(before, `${label}: never an id the range has held`).not.toContain(id);
+    expect(id, `${label}: above the range's high-water mark`).toBeGreaterThan(Math.max(...before));
+  };
+  allocate(a, "live");
+  a.close();
+
+  const restored = await Copy.open(a.author, stored);
+  allocate(restored, "restored");
+  restored.close();
+  b.close();
+});

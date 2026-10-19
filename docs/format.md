@@ -931,3 +931,24 @@ otherwise; and the default as declared, verbatim, or nothing when the column
 declares none. A reader MAY check a copy against it; the comparison a merge
 makes is [SCHEMA_MISMATCH](#merge-whole-refusals)'s. The reference readers, `conformance/reference/dai_merge.py` and
 `conformance/readers/rust-merge`, are checked against this page.
+
+## The ordinary data interface
+
+A document with no session policy (R-O) keeps its data in ordinary SQLite
+tables, and each save's changes travel as one signed changeset, a row of
+`_cs_log` ([conformance/changesets](../conformance/changesets/README.md)).
+
+<a id="ranged-ids"></a>**Ranged ids.** An integer key the application leaves
+out, or gives as NULL, is drawn from the author's range: the author index in
+bits 32 to 52, a counter in bits 0 to 31. An explicit key is kept as given.
+The guarantee is:
+- an id is unique, and never reused within the author's range;
+- ids rise within one author's range;
+- the counter starts above every id the range has ever held, live or
+  deleted, written by this author or by another with an explicit key. So the
+  high-water mark is the log's, and it survives a restore from stored bytes
+  and a rebuild from the log (K06, K07).
+
+It is not SQLite's AUTOINCREMENT, which the rewrite drops. Another author's
+ids can sit above this author's next one, so ids do not give creation order
+across authors.
