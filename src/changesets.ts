@@ -182,7 +182,8 @@ export function rewriteKeySql(sql: string, table: string, column: string, kind: 
 
 /**
  * The session extension, attached to every table but the runtime's own.
- * `take` hands back the changes since the last take, decoded, and starts over.
+ * `changes` hands back what changed since the last `clear`, decoded, and
+ * keeps it: it is cleared only once a save has logged it (1b-H2).
  */
 class SessionCapture {
   private session = 0;
@@ -244,7 +245,7 @@ class SessionCapture {
     }
   }
 
-  take(): { table: string; op: "INSERT" | "UPDATE" | "DELETE"; pk: Record<string, unknown>; old: Record<string, unknown>; new: Record<string, unknown> }[] {
+  changes(): { table: string; op: "INSERT" | "UPDATE" | "DELETE"; pk: Record<string, unknown>; old: Record<string, unknown>; new: Record<string, unknown> }[] {
     const { capi, wasm } = this.sqlite3;
     const stack = wasm.pstack.pointer;
     let bytes: Uint8Array;
@@ -260,14 +261,18 @@ class SessionCapture {
     } finally {
       wasm.pstack.restore(stack);
     }
-    capi.sqlite3session_delete(this.session);
-    this.open();
     return bytes.length ? this.decode(bytes) : [];
   }
 
-  private decode(bytes: Uint8Array): ReturnType<SessionCapture["take"]> {
+  /** Starts over: what was captured is logged. */
+  clear(): void {
+    this.sqlite3.capi.sqlite3session_delete(this.session);
+    this.open();
+  }
+
+  private decode(bytes: Uint8Array): ReturnType<SessionCapture["changes"]> {
     const { capi, wasm } = this.sqlite3;
-    const ops: ReturnType<SessionCapture["take"]> = [];
+    const ops: ReturnType<SessionCapture["changes"]> = [];
     const buf = wasm.allocFromTypedArray(bytes);
     const stack = wasm.pstack.pointer;
     try {
@@ -681,17 +686,34 @@ export class Changes {
    * log as one row under this author. Null when nothing changed, or when the
    * application holds a transaction open (its changes go with the next save).
    * The authorship layer's replica and seq are the caller's to settle first.
+   *
+   * The capture is cleared only once the batch is logged (1b-H2). The payload
+   * is built and logged inside a savepoint, so a save that throws anywhere,
+   * from building one row's bases to the log write itself, leaves nothing of
+   * itself in the log and every change it held for the next save.
    */
   save(): SavedChanges | null {
     if (this.inTransaction) return null;
-    const ops = this.capture.take();
+    const ops = this.capture.changes();
     if (ops.length === 0) return null;
-    const payloadOps = ops.map((op) => this.withBases(op));
-    const payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
-    const entity = crypto.getRandomValues(new Uint8Array(16));
-    const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
-    const ver = `${this.authorHex}:${row._r_seq}`;
-    const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
+    let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string; touched: [string, string][] };
+    this.exec("SAVEPOINT cs_save");
+    try {
+      const payloadOps = ops.map((op) => this.withBases(op));
+      const payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
+      const entity = crypto.getRandomValues(new Uint8Array(16));
+      const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
+      const ver = `${this.authorHex}:${row._r_seq}`;
+      const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
+      this.exec("RELEASE cs_save");
+      logged = { payloadOps, payload, ver, touched };
+    } catch (e) {
+      this.exec("ROLLBACK TO cs_save");
+      this.exec("RELEASE cs_save");
+      throw e;
+    }
+    this.capture.clear();
+    const { payloadOps, payload, ver, touched } = logged;
     // A save over a flagged or held row may have resolved it: decide it again.
     const marked = touched.filter(
       ([t, pk]) =>
@@ -740,7 +762,7 @@ export class Changes {
     return heads;
   }
 
-  private withBases(op: ReturnType<SessionCapture["take"]>[number]): Op {
+  private withBases(op: ReturnType<SessionCapture["changes"]>[number]): Op {
     const keys = this.keysOf(op.table);
     const keyCols = keys?.pk?.length ? keys.pk : Object.keys(op.pk);
     const k = keyCols.map((c) => op.pk[c]);

@@ -456,6 +456,43 @@ test("X1: an insert into a table with no primary key reaches the log, the other 
   for (const c of [a, b, again]) c.close();
 });
 
+/**
+ * 1b-H2(a), the review's own run: save() deleted the session before it built
+ * the payload, so a save that threw lost everything captured since the last
+ * one, in every table. Forced twice: by a coupled group naming something that
+ * is not a column (the review's `lat lng: the position`, set past the parser),
+ * then by an error in the log write itself.
+ */
+test("1b-H2(a): a save that fails leaves the capture intact, and the next save logs everything since the last one that succeeded", async () => {
+  const a = await Copy.open(await person());
+  a.db.exec("CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);");
+  a.db.exec("INSERT INTO places (lat, lng) VALUES (0, 0)");
+  a.save();
+  const b = await Copy.open(await person(), await a.bytes());
+  const logged = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_log WHERE _r_replica = ?", [a.author.author]));
+  const before = logged();
+
+  const declaredOf = a.changes.declaredOf.bind(a.changes);
+  a.changes.declaredOf = (t: string) => (t === "places" ? { coupled: [["lat", "lng:"]], consequential: [] } : declaredOf(t));
+  a.db.exec("UPDATE places SET lat = 1; INSERT INTO notes (body) VALUES ('same save')");
+  expect(() => a.save()).toThrow(/no such column/);
+  a.changes.declaredOf = declaredOf;
+  expect(logged(), "nothing of a failed save is in the log").toBe(before);
+
+  a.db.exec("CREATE TRIGGER refuse_log BEFORE INSERT ON _cs_log BEGIN SELECT RAISE(ABORT, 'forced'); END");
+  a.db.exec("INSERT INTO notes (body) VALUES ('second try')");
+  expect(() => a.save()).toThrow(/forced/);
+  expect(logged(), "nothing of a failed save is in the log").toBe(before);
+  a.db.exec("DROP TRIGGER refuse_log");
+
+  expect(a.save()?.ops, "the update and both notes, in one changeset").toBe(3);
+  await b.mergeFrom(await a.bytes());
+  expect(b.db.selectValue("SELECT lat FROM places"), "the change the failed saves held").toBe(1);
+  expect(b.db.selectValues("SELECT body FROM notes ORDER BY body"), "the unrelated writes in the failed saves").toEqual(["same save", "second try"]);
+  a.close();
+  b.close();
+});
+
 test("an id the application omits comes from this author's range, and last_insert_rowid() answers it", async () => {
   const o = await exchange((a) => {
     a.db.exec("INSERT INTO categories (name) VALUES ('Bath')");
