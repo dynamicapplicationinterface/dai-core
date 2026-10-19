@@ -119,6 +119,19 @@ export const REFUSALS = {
       "SQLite's session extension could not record or read back what a save changed (src/changesets.ts). " +
       "The save fails, is kept and is retried; nothing is written to the log half-captured.",
   },
+  APP_TRANSACTION_OPEN: {
+    recoverable: true,
+    means:
+      "A merge arrived while the application held a transaction open (R-S, src/runtime/bootloader.ts). Nothing " +
+      "was written and the application's transaction is untouched; the merge can be asked again once it ends.",
+  },
+  CHANGES_APPLY: {
+    recoverable: true,
+    means:
+      "A TEMP trigger the runtime lifted off while merged rows were applied could not be put back (R-S, " +
+      "src/changesets.ts). The merged rows stand; the error names the trigger, which is missing until the " +
+      "application creates it again.",
+  },
   CHANGES_KEY_UNREWRITABLE: {
     recoverable: false,
     means:
