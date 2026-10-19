@@ -78,7 +78,7 @@ const readable = computed<Record<string, string>>(() => {
   const decoder = new TextDecoder();
   const out: Record<string, string> = {};
   for (const file of files.value) {
-    if (/\.(?:html?|m?js|ts|css)$/i.test(file.name)) out[file.name] = decoder.decode(file.bytes);
+    if (/\.(?:html?|m?js|ts|css|sql)$/i.test(file.name)) out[file.name] = decoder.decode(file.bytes);
   }
   if (files.value.length === 0 && source.value.trim()) out['index.html'] = source.value;
   return out;

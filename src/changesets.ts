@@ -55,6 +55,7 @@ import { createEntity, type Rows } from "./replicated-rows.js";
 type Any = any;
 
 import { CHANGES_DECLARATION, CHANGES_LOG, HIDDEN_KEY, withHiddenKeys } from "./changes-log.js";
+import { declaredIn, type Declared } from "./declarations.js";
 export { CHANGES_DECLARATION, CHANGES_LOG };
 
 /** Author-ranged integer keys: the author index in bits 32..52, a counter in bits 0..31. 2^53-1 is the largest id, exact in JavaScript. */
@@ -76,29 +77,6 @@ CREATE TABLE IF NOT EXISTS _cs_held (tbl TEXT NOT NULL, pk TEXT NOT NULL, reason
 CREATE TABLE IF NOT EXISTS _cs_keys (tbl TEXT PRIMARY KEY, kind TEXT NOT NULL, pk TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_settle (tbl TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
 `;
-
-/**
- * What an application declares about a table's columns (R-F amended), as line
- * comments inside its CREATE TABLE, where SQLite keeps them in the stored
- * schema, so every copy reads the same declaration:
- *   -- dai:coupled lat lng        changed together: one conflict, shown together
- *   -- dai:consequential amount   a pending value is left out of the kit's views
- */
-export interface Declared {
-  coupled: string[][];
-  consequential: string[];
-}
-
-export function declaredIn(createSql: string): Declared {
-  const out: Declared = { coupled: [], consequential: [] };
-  for (const m of createSql.matchAll(/--[ \t]*dai:(coupled|consequential)\b([^\r\n]*)/gi)) {
-    const cols = m[2]!.split(/[\s,]+/).map((c) => c.replace(/^["`[]|["`\]]$/g, "")).filter(Boolean);
-    if (m[1]!.toLowerCase() === "coupled") {
-      if (cols.length > 1) out.coupled.push(cols);
-    } else out.consequential.push(...cols);
-  }
-  return out;
-}
 
 /** The flags a row can carry, as `_cs_flag.kind` holds them. */
 export type FlagKind = "pending" | "delete-conflict" | "kept-referenced" | "held" | "orphan";
@@ -633,7 +611,9 @@ export class Changes {
   declaredOf(table: string): Declared {
     let d = this.declaredCache.get(table);
     if (!d) {
-      d = declaredIn(String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]) ?? ""));
+      // Read strictly, against the columns SQLite reports: a line that does not read exactly is ignored (1b-H2).
+      const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]) ?? "");
+      d = declaredIn(sql, this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [table]) as string[]);
       this.declaredCache.set(table, d);
     }
     return d;

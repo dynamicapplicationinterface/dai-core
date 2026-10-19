@@ -17,6 +17,7 @@
  * what the reader will actually do next.
  */
 
+import { DECLARATION, declarationLines } from "./declarations.js";
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
 import { seatWritesIn } from "./seat-check.js";
@@ -233,6 +234,7 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
       lintSource(source).map((finding) => ({ ...finding, file: name })),
     ),
     ...lintOneShape(files),
+    ...lintDeclarations(files),
     ...lintShared(files),
     ...lintLiteralIds(files),
   ];
@@ -265,6 +267,18 @@ function lintOneShape(files: Record<string, string>): (Finding & { file: string 
     .filter(([name]) => /\.sql$/i.test(name))
     .filter(([, source]) => /^[ \t]*--[ \t]*dai:(?:replicated\b|profile[ \t]+session\b)/im.test(source))
     .map(([file]) => ({ ...ONE_SHAPE, file }));
+}
+
+/*
+ * A -- dai: declaration that does not read exactly (1b-H2; src/declarations.ts).
+ * The runtime ignores such a line, so what it meant to declare never happens;
+ * refused here, at every door that lints, and by the compiler, with one message.
+ */
+function lintDeclarations(files: Record<string, string>): (Finding & { file: string })[] {
+  return Object.entries(files)
+    .filter(([name]) => /\.sql$/i.test(name))
+    .filter(([, source]) => declarationLines(source).some((line) => !line.ok))
+    .map(([file]) => ({ ...DECLARATION, file }));
 }
 
 /*

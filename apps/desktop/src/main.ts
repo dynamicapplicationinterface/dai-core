@@ -1096,7 +1096,7 @@ mintBtn.addEventListener("click", async () => {
     const readable: Record<string, string> = usingFiles
       ? Object.fromEntries(
           Object.entries(sourceTree)
-            .filter(([name]) => /\.(?:html?|m?js|ts|css)$/i.test(name))
+            .filter(([name]) => /\.(?:html?|m?js|ts|css|sql)$/i.test(name))
             .map(([name, bytes]) => [name, decoder.decode(bytes)]),
         )
       : { "index.html": pasted };

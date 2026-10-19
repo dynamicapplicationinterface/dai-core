@@ -4,9 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../../src/compile.js";
+import { buildContainer } from "../../src/core.js";
+import { DECLARATION } from "../../src/declarations.js";
 import { breaking, lintFiles } from "../../src/lint.js";
+import { handleMessage } from "../../src/mcp.js";
 import { RECIPE } from "../../src/recipe.js";
 import { rewriteReplicated } from "../../src/replicated.js";
+import { Copy, person } from "./copy.js";
 
 /**
  * Authoring under R-O: one shape. A document with no session policy is built
@@ -23,6 +27,98 @@ async function buildFrom(files: Record<string, string>): Promise<Awaited<ReturnT
   for (const [name, text] of Object.entries(files)) writeFileSync(join(src, name), text);
   return compileDirectory({ sourceDir: src, root: repo, appName: "Plain" });
 }
+
+const APP = { "index.html": '<!doctype html><title>Plain</title><script type="module" src="app.js"></script>', "app.js": "const db = await window.dai.openDatabase();\n" };
+
+/**
+ * What each door that builds or checks a document says of a schema: the
+ * finding ids `dai check` and check_dai_app report, and what the compiler,
+ * create_dai_app and the paste box's build throw (buildContainer, which the
+ * paste box's compiler and the desktop app's wrap unchanged).
+ */
+async function doors(schema: string): Promise<{ check: string[]; mcpCheck: string; build: string; mcpCreate: string; pasteBox: string }> {
+  const files = { ...APP, "schema.sql": schema };
+  const thrown = (p: Promise<unknown>): Promise<string> => p.then(() => "built", (e: Error) => String(e?.message ?? e));
+  const mcp = async (name: string): Promise<string> => {
+    const response = await handleMessage(
+      { root: mkdtempSync(join(tmpdir(), "dai-cs-mcp-")) },
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { files, appName: "Plain" } } },
+    );
+    const result = response?.result as { content: { text: string }[]; isError?: boolean } | undefined;
+    return `${result?.isError ? "refused" : "ok"}: ${result?.content[0]?.text ?? JSON.stringify(response?.error)}`;
+  };
+  return {
+    check: breaking(lintFiles(files)).map((f) => f.id),
+    mcpCheck: await mcp("check_dai_app"),
+    build: await thrown(buildFrom(files)),
+    mcpCreate: await mcp("create_dai_app"),
+    pasteBox: await thrown(
+      buildContainer({
+        files: Object.fromEntries(Object.entries(files).map(([n, t]) => [n, new TextEncoder().encode(t)])),
+        appName: "Plain",
+        template: readFileSync(join(repo, "dist/template.html"), "utf8"),
+        runtime: readFileSync(join(repo, "dist/dai-runtime.js"), "utf8"),
+      }),
+    ),
+  };
+}
+
+/**
+ * 1b-H2(b), the review's own probes: a declaration was read loosely, so a
+ * line naming something that is not a column made every save of the group
+ * throw, `LAT LNG` coupled nothing on lowercase columns, and `rowid` logged
+ * this copy's hidden rowid as a cell. Every door now refuses a -- dai: line it
+ * cannot read exactly, with one message, and the runtime ignores one.
+ */
+test("1b-H2(b): every door refuses a -- dai: line it cannot read exactly, with one message; exact declarations pass", async () => {
+  const table = (decl: string, extra = ""): string =>
+    `CREATE TABLE IF NOT EXISTS places (\n  id INTEGER PRIMARY KEY,\n  lat REAL, lng REAL, "the spot" TEXT, amount INTEGER ${decl}\n${extra});\n`;
+  const refused = [
+    table("-- dai:coupled lat lng: the position"),
+    table("-- dai:coupled LAT LNG"),
+    table("-- dai:coupled rowid lat lng"),
+    table("-- dai:coupled lat lng (the position)"),
+    table("-- dai:coupled lat"),
+    table("-- dai:couple lat lng"),
+    table("-- DAI:coupled lat lng"),
+    table("-- dai:consequential amount, lat"),
+    table("-- dai:coupled lat lng", "  -- dai:coupled lng amount\n"),
+    `${table("")}-- dai:coupled lat lng\n`,
+  ];
+  for (const schema of refused) {
+    const seen = await doors(schema);
+    expect(seen.check, schema).toEqual([DECLARATION.id]);
+    expect(seen.mcpCheck, schema).toContain(DECLARATION.what);
+    for (const door of [seen.build, seen.mcpCreate, seen.pasteBox]) {
+      expect(door, schema).toContain(DECLARATION.what);
+      expect(door, schema).toContain(DECLARATION.fix);
+    }
+  }
+  for (const schema of [table("-- dai:coupled lat lng"), table('-- dai:coupled lng "the spot"', "  -- dai:consequential amount\n"), table("-- just a note: dai:coupled lat")]) {
+    const seen = await doors(schema);
+    expect(seen.check, schema).toEqual([]);
+    for (const door of [seen.build, seen.pasteBox]) expect(door, schema).toBe("built");
+    expect(seen.mcpCreate, schema).toMatch(/^ok/);
+  }
+});
+
+test("1b-H2(b): the runtime ignores a declaration it cannot read exactly, and a save over its columns succeeds", async () => {
+  for (const [decl, update] of [
+    ["-- dai:coupled lat lng: the position", "UPDATE places SET lat = 1"],
+    ["-- dai:coupled LAT LNG", "UPDATE places SET lat = 1"],
+    ["-- dai:coupled rowid lat lng", "UPDATE places SET lat = 1"],
+  ] as const) {
+    const c = await Copy.open(await person());
+    c.db.exec(`CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL ${decl}\n); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);`);
+    c.db.exec("INSERT INTO places (lat, lng) VALUES (0, 0)");
+    c.save();
+    expect(c.changes.declaredOf("places"), decl).toEqual({ coupled: [], consequential: [] });
+    c.db.exec(`${update}; INSERT INTO notes (body) VALUES ('same save')`);
+    expect(c.save()?.ops, decl).toBe(2);
+    expect(c.written().map((w) => JSON.parse(w)[2]), "no runtime column is logged as a cell").not.toContain("rowid");
+    c.close();
+  }
+});
 
 test("a document with no session policy is built with the changeset log declared, under the authorship layer", async () => {
   const built = await buildFrom({

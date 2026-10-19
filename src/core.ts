@@ -16,6 +16,7 @@ import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { rewriteReplicated } from "./replicated.js";
 import { CHANGES_DECLARATION, withHiddenKeys } from "./changes-log.js";
+import { DECLARATION, declarationLines } from "./declarations.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
@@ -542,6 +543,9 @@ export async function buildContainer(
   let session: { max_parties: number; close?: "any" | "creator" } | undefined;
   let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
   if (schemaSql !== undefined) {
+    // A -- dai: declaration that does not read exactly is refused here, whichever door built it, with the
+    // lint's message: the runtime would ignore it, and what it meant would silently not happen (1b-H2).
+    if (declarationLines(schemaSql).some((line) => !line.ok)) throw new Error(`DAI: ${DECLARATION.what} ${DECLARATION.fix}`);
     /*
      * A document with no session policy declares no replicated table of its
      * own: the author writes ordinary tables (R-O). It gets the changeset log
