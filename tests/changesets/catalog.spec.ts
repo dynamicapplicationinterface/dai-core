@@ -119,3 +119,69 @@ test("T01: neither a TEMP trigger nor an attached schema's trigger fires while m
   a.close();
   b.close();
 });
+
+/**
+ * Q01 / Q02. A changeset can be extracted from an open transaction and hold
+ * changes a ROLLBACK then takes away (the catalog's probe). A save asked while
+ * the application holds a transaction or a savepoint publishes nothing; only a
+ * committed outer boundary is eligible (R-S, decided by sqlite3_get_autocommit).
+ * Run through every shape the catalog names: BEGIN then ROLLBACK, BEGIN then
+ * COMMIT, an outer savepoint rolled back, an inner RELEASE under an open outer,
+ * ROLLBACK TO a nested savepoint, and a repeated savepoint name.
+ */
+test("Q01/Q02: a save inside an open transaction or savepoint publishes nothing; only the committed outer boundary is logged", async () => {
+  const { a, b } = await base();
+  const logged = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_log WHERE _r_replica = ?", [a.author.author]));
+  const titles = (): string[] => a.written().filter((w) => JSON.parse(w)[2] === "title").map((w) => JSON.parse(w)[4] as string);
+  const before = logged();
+  let done = 0;
+  const nothing = (label: string): void => {
+    expect(a.save(), `${label}: the save publishes nothing`).toBeNull();
+    expect(logged(), `${label}: the log is unchanged`).toBe(before + done);
+  };
+
+  // BEGIN, save, ROLLBACK: nothing, then and after.
+  a.db.exec("BEGIN; INSERT INTO items (title) VALUES ('rolled-back');");
+  nothing("inside BEGIN");
+  a.db.exec("ROLLBACK");
+  nothing("after ROLLBACK");
+
+  // BEGIN, save, COMMIT: nothing inside; the save after it proceeds.
+  a.db.exec("BEGIN; INSERT INTO items (title) VALUES ('committed');");
+  nothing("inside BEGIN before COMMIT");
+  a.db.exec("COMMIT");
+  expect(a.save(), "after COMMIT the save proceeds").not.toBeNull();
+  done += 1;
+
+  // An outer savepoint is a transaction: rolled back to and released, nothing.
+  a.db.exec("SAVEPOINT outer_sp; INSERT INTO items (title) VALUES ('savepoint-rolled-back');");
+  nothing("inside a savepoint");
+  a.db.exec("ROLLBACK TO outer_sp; RELEASE outer_sp;");
+  nothing("after ROLLBACK TO and RELEASE of the outer savepoint");
+
+  // An inner RELEASE under an open outer is not a committed boundary; ROLLBACK TO a nested savepoint
+  // takes only its own work away.
+  a.db.exec("SAVEPOINT outer_sp; INSERT INTO items (title) VALUES ('outer-kept'); SAVEPOINT inner_sp; INSERT INTO items (title) VALUES ('inner-released'); RELEASE inner_sp;");
+  nothing("after an inner RELEASE, the outer still open");
+  a.db.exec("SAVEPOINT inner_sp; INSERT INTO items (title) VALUES ('inner-rolled-back'); ROLLBACK TO inner_sp; RELEASE inner_sp;");
+  nothing("after ROLLBACK TO a nested savepoint");
+  a.db.exec("RELEASE outer_sp");
+  expect(a.save(), "after the outer RELEASE the save proceeds").not.toBeNull();
+  done += 1;
+
+  // A repeated name: ROLLBACK TO and RELEASE name the innermost.
+  a.db.exec("SAVEPOINT sp; INSERT INTO items (title) VALUES ('repeated-outer'); SAVEPOINT sp; INSERT INTO items (title) VALUES ('repeated-inner'); ROLLBACK TO sp; RELEASE sp;");
+  nothing("after the inner of two savepoints of one name");
+  a.db.exec("RELEASE sp");
+  expect(a.save(), "after the outer of the two").not.toBeNull();
+  done += 1;
+
+  const committed = ["committed", "outer-kept", "inner-released", "repeated-outer"];
+  const never = ["rolled-back", "savepoint-rolled-back", "inner-rolled-back", "repeated-inner"];
+  expect(titles().filter((t) => [...committed, ...never].includes(t)).sort(), "A's log holds what committed, and nothing else").toEqual([...committed].sort());
+  await b.mergeFrom(await a.bytes());
+  const shown = b.db.selectValues(`SELECT title FROM items WHERE title IN (${[...committed, ...never].map(() => "?").join(", ")}) ORDER BY title`, [...committed, ...never]);
+  expect(shown, "the other copy holds what committed, and nothing else").toEqual([...committed].sort());
+  a.close();
+  b.close();
+});
