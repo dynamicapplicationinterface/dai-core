@@ -73,6 +73,10 @@ admitted log to emptied tables from the log alone:
 - A row a constraint will not admit otherwise is held (`held`). For UNIQUE,
   the earlier-born row keeps the slot.
 - A deleted row a live row still references is kept, `kept-referenced`.
+- A save is one effect group (R-T): where a row a save wrote is `pending`
+  (every version a same-column conflict names, the proposals a constraint
+  conflict set aside) or held, every other row where that save's change is
+  still current is `pending` too.
 
 ## Running
 

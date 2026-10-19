@@ -177,6 +177,8 @@ def apply_log(db: sqlite3.Connection) -> None:
 
     flags: dict[tuple[str, str, str], object] = {}
     held: dict[tuple[str, str], tuple[str, dict]] = {}
+    # The versions a constraint conflict set aside, by row: the proposals that contend there (M06).
+    set_aside: dict[tuple[str, str], set[str]] = {}
 
     def state(table: str, pk: str):
         row = cells.get((table, pk))
@@ -216,6 +218,7 @@ def apply_log(db: sqlite3.Connection) -> None:
             aside = {v for v, _ in versions[:n]}
             values = dict(s["values"])
             changed = False
+            proposals = set()
             for col, (ver, _x) in s["shown_by"].items():
                 if ver not in aside:
                     continue
@@ -224,6 +227,7 @@ def apply_log(db: sqlite3.Connection) -> None:
                     continue
                 values[col] = before[0][1][0]
                 changed = True
+                proposals.add(ver)
             if not changed:
                 continue
             try:
@@ -231,6 +235,7 @@ def apply_log(db: sqlite3.Connection) -> None:
             except sqlite3.IntegrityError:
                 continue
             flags[(table, pk, "pending")] = s["pending"]
+            set_aside[(table, pk)] = proposals
             return True
         return False
 
@@ -341,6 +346,39 @@ def apply_log(db: sqlite3.Connection) -> None:
             revived += 1
         if not revived:
             break
+
+    # The effect group stays together (R-T, M06): a save is one group. A save
+    # contends where a row it wrote is pending (every version a same-column
+    # conflict names, the proposals a constraint conflict set aside) or held;
+    # every other row where its change is still current is pending too.
+    def data_heads(table: str, pk: str) -> dict:
+        return {
+            col: {v for v in vers if (table, pk, col, v) not in sup}
+            for col, vers in cells.get((table, pk), {}).items()
+            if col != ""
+        }
+
+    sources: dict[str, set[tuple[str, str]]] = {}
+    for (t, pk, kind) in list(flags):
+        if kind != "pending":
+            continue
+        s = state(t, pk) or {"pending": []}
+        heads = data_heads(t, pk)
+        for col in s["pending"]:
+            for v in heads.get(col, set()):
+                sources.setdefault(v, set()).add((t, pk))
+        for v in set_aside.get((t, pk), set()):
+            sources.setdefault(v, set()).add((t, pk))
+    for (t, pk) in held:
+        for vers in data_heads(t, pk).values():
+            for v in vers:
+                sources.setdefault(v, set()).add((t, pk))
+    for ver, origin in sources.items():
+        for (t, pk) in cells:
+            if (t, pk) in origin or (t, pk) in held:
+                continue
+            if any(ver in vers for vers in data_heads(t, pk).values()):
+                flags[(t, pk, "pending")] = None
 
     db.execute("DELETE FROM _cs_flag")
     db.execute("DELETE FROM _cs_held")

@@ -270,3 +270,44 @@ test("M02: two valid edits whose combination fails a CHECK are a pending constra
   o.a.close();
   o.b.close();
 });
+
+/**
+ * M06. A moves 10 from account 1 to account 2 in one transaction; B sets
+ * account 1's balance concurrently, so account 1 is pending. Account 2's +10
+ * is half of A's transfer, and must not be materialized as settled alone.
+ *
+ * The policy: the effect group stays together. The group is a save (one
+ * capture epoch): the changeset does not record the transactions inside it,
+ * so the whole save is the conservative group, as the catalog allows. When a
+ * row a save wrote is pending or held, every other row where that save's
+ * change is still current is flagged pending too, naming the save and the row
+ * it waits on. Resolving the conflict clears the group.
+ */
+test("M06: a transaction one of whose rows becomes pending leaves no other row of it settled alone", async () => {
+  const s = SCENARIOS["M06 effect group"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  expect(o.converged).toBe(true);
+  expect(o.missing).toEqual([]);
+  for (const c of [o.a, o.b]) {
+    const flagged = c.flags().filter((f: Any) => f.tbl === "accounts").map((f: Any) => [f.pk, f.kind]);
+    expect(flagged, "account 1 is pending, and account 2 with it").toEqual([
+      ["[1]", "pending"],
+      ["[2]", "pending"],
+    ]);
+    const group = JSON.parse(c.flags().find((f: Any) => f.tbl === "accounts" && f.pk === "[2]")!.detail);
+    expect(group, "account 2's flag names A's save and the row it waits on").toEqual([
+      expect.objectContaining({ col: "balance", group: expect.stringMatching(new RegExp(`^${o.a.changes.authorHex}:`)), with: [["accounts", "[1]"]] }),
+    ]);
+  }
+
+  // Resolving account 1 settles the transfer on both copies.
+  o.a.db.exec("UPDATE accounts SET balance = 40 WHERE id = 1");
+  await o.b.mergeFrom(await o.a.bytes());
+  await o.a.mergeFrom(await o.b.bytes());
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectValues("SELECT balance FROM accounts ORDER BY id")).toEqual([40, 10]);
+    expect(c.flags().filter((f: Any) => f.tbl === "accounts")).toEqual([]);
+  }
+  o.a.close();
+  o.b.close();
+});

@@ -220,4 +220,15 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("UPDATE spans SET finish = 5 WHERE id = 1");
     },
   },
+  // The catalog's M06: one transaction over two rows, one of which becomes pending.
+  "M06 effect group": {
+    extra: [
+      "CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, balance INTEGER NOT NULL)",
+      "INSERT INTO accounts (id, owner, balance) VALUES (1, 'one', 100), (2, 'two', 0)",
+    ],
+    write: (a, b) => {
+      a.db.exec("BEGIN; UPDATE accounts SET balance = balance - 10 WHERE id = 1; UPDATE accounts SET balance = balance + 10 WHERE id = 2; COMMIT;");
+      b.db.exec("UPDATE accounts SET balance = 50 WHERE id = 1");
+    },
+  },
 };

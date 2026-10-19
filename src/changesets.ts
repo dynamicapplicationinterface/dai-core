@@ -43,6 +43,8 @@
  *     table admits, the newest versions set aside first, and is `pending`;
  *   - a row a constraint will not admit otherwise is held, flagged `held`;
  *     for UNIQUE the earlier-born row keeps the slot.
+ *   - a save is one effect group: where a row it wrote is pending or held,
+ *     every other row where its change is still current is pending too.
  * A save over a flagged row supersedes every version it saw, so editing is
  * resolving: a new signed change that acknowledges both parents (R-F). The
  * flags are rows of `_cs_flag`, which the host reads from the stored document.
@@ -72,6 +74,7 @@ const INTERNAL = /^(_dai|_cs_|sqlite_)/;
 
 const META = `
 CREATE TABLE IF NOT EXISTS _cs_cell (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, ver TEXT NOT NULL, val, lc INTEGER NOT NULL, author TEXT NOT NULL, PRIMARY KEY (tbl, pk, col, ver)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS _cs_cell_by_ver ON _cs_cell (ver);
 CREATE TABLE IF NOT EXISTS _cs_sup (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, ver TEXT NOT NULL, PRIMARY KEY (tbl, pk, col, ver)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_seen (tbl TEXT NOT NULL, pk TEXT NOT NULL, del TEXT NOT NULL, ver TEXT NOT NULL, PRIMARY KEY (tbl, pk, del, ver)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_ingested (ver TEXT PRIMARY KEY) WITHOUT ROWID;
@@ -1096,6 +1099,57 @@ export class Changes {
     }
     for (const [table, pk] of items) this.place(table, pk);
     this.keepReferenced();
+    this.keepGroups();
+  }
+
+  /**
+   * The effect group stays together (R-T, M06). A save is one group: the
+   * changeset does not record the transactions inside a capture epoch, so the
+   * whole save is the conservative one. A save contends where a row it wrote
+   * is pending (every version a same-column conflict names; the proposal set
+   * aside in a constraint conflict) or held. Every other row where such a
+   * save's change is still current is flagged pending too, each column it
+   * wrote there named with the save (`group`) and the rows it waits on
+   * (`with`), so no half of a transaction is materialized as settled alone.
+   * Recomputed whole after every projection: a resolution clears its group.
+   */
+  private keepGroups(): void {
+    const own = new Map<string, Any[]>();
+    const sources = new Map<string, Set<string>>();
+    const contends = (ver: string, at: string): void => {
+      sources.set(ver, (sources.get(ver) ?? new Set()).add(at));
+    };
+    for (const f of this.db.selectObjects("SELECT tbl, pk, detail FROM _cs_flag WHERE kind = 'pending'") as Any[]) {
+      const entries = (f.detail ? JSON.parse(f.detail) : []) as Any[];
+      const mine = entries.filter((e) => e.group === undefined);
+      const at = JSON.stringify([f.tbl, f.pk]);
+      own.set(at, mine);
+      for (const e of mine) for (const v of e.constraint ? e.values.slice(0, 1) : e.values) contends(v.ver, at);
+    }
+    for (const h of this.db.selectObjects("SELECT tbl, pk FROM _cs_held") as Any[]) {
+      const at = JSON.stringify([h.tbl, h.pk]);
+      for (const [col, hs] of this.rowHeads(h.tbl, h.pk)) if (col !== "") for (const v of hs) contends(v.ver, at);
+    }
+    const grouped = new Map<string, Any[]>();
+    for (const [ver, from] of sources) {
+      const wrote = this.db.selectObjects(
+        `SELECT tbl, pk, col, val FROM _cs_cell c WHERE ver = ? AND col <> ''
+          AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY tbl, pk, col`,
+        [ver],
+      ) as Any[];
+      const waits = [...from].sort().map((at) => JSON.parse(at));
+      for (const w of wrote) {
+        const at = JSON.stringify([w.tbl, w.pk]);
+        if (from.has(at) || this.db.selectValue("SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [w.tbl, w.pk]) != null) continue;
+        grouped.set(at, [...(grouped.get(at) ?? []), { col: w.col, group: ver, with: waits, values: [{ ver, val: shown(w.val) }] }]);
+      }
+    }
+    for (const at of new Set([...own.keys(), ...grouped.keys()])) {
+      const [tbl, pk] = JSON.parse(at) as [string, string];
+      const entries = [...(own.get(at) ?? []), ...(grouped.get(at) ?? [])];
+      if (entries.length) this.flag(tbl, pk, "pending", entries);
+      else this.rows.run("DELETE FROM _cs_flag WHERE tbl = ? AND pk = ? AND kind = 'pending'", [tbl, pk]);
+    }
   }
 
   private write(table: string, keys: Keys, k: unknown[], values: Record<string, unknown>): void {

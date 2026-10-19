@@ -148,9 +148,12 @@ test("coupled: concurrent changes to different columns of a coupled group are on
      CREATE TABLE spots (id INTEGER PRIMARY KEY, name TEXT, lat REAL NOT NULL, lng REAL NOT NULL);`,
     "INSERT INTO places (name, lat, lng) VALUES ('camp', 0, 0); INSERT INTO spots (name, lat, lng) VALUES ('camp', 0, 0);",
   );
+  // Each table in saves of its own: a save is one effect group (M06), and this is about coupling alone.
   for (const t of ["places", "spots"]) {
     a.db.exec(`UPDATE ${t} SET lat = 1 WHERE name = 'camp'`);
     b.db.exec(`UPDATE ${t} SET lng = 2 WHERE name = 'camp'`);
+    a.save();
+    b.save();
   }
   await swap(a, b);
   expect(a.state()).toBe(b.state());
