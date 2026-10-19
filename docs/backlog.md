@@ -10093,6 +10093,79 @@ pending feeds the view, which R-F amended says it must not.
 **Acceptance:** each of the three spellings leaves a pending consequential
 row out of a `<dai-rows>` and a `<dai-value>` view.
 
+### Data-interface catalog residue (filed 19 October)
+
+The catalog rows Build 1d left open (handoff 19 October, "Residue, not
+closed here"), the next to take red-first. The row ids are the catalog's.
+
+#### D263 — A crash between the export and the log stores an unlogged row (Q09)
+
+*Status: open, held not fixed. Filed 19 October, from the catalog (Q09) and
+Build 1d's residue.*
+
+Build 1d narrowed Q07's window and did not close it. The save in flight
+exports bytes that already hold an edit made during the signature, before
+the next save logs that edit. A crash in that window stores a row no log row
+carries, and recovery reads it as settled.
+
+**Change:** the saved bytes and their log commit together, or recovery
+finds the unlogged effect and logs or refuses it. **Acceptance:** a vector
+that crashes inside the window, then reopens with no row outside the log.
+
+#### D264 — Imported views over runtime tables are not compared (T11-views)
+
+*Status: open, held not fixed. Filed 19 October, from the catalog (T11) and
+Build 1d's residue.*
+
+`refuseForeignTriggers` compares an imported schema's triggers with the
+runtime's. It does not compare views. An imported document's own text for a
+runtime view (`_cs_log_current`, which the apply reads) is taken as it
+stands. An application trigger that writes a runtime table is refused when
+it runs, so an imported document with one fails the apply or the adoption
+closed, rather than dropping the trigger.
+
+**Change:** compare every runtime view's text at open, as triggers are.
+**Acceptance:** a document whose `_cs_log_current` reads differently is
+refused at open, by name.
+
+#### D265 — Dangerous pragmas are not refused (P03)
+
+*Status: open, held not fixed. Filed 19 October, from the catalog (P03).*
+
+`PRAGMA writable_schema`, `foreign_keys = OFF`, `ignore_check_constraints`,
+`recursive_triggers` and the like reach the engine from application code.
+The authorizer (Build 1d) denies writes to runtime tables only. D259 states
+that an application undoes these on its own copy; the catalog asks that
+the settings be host-owned and refused at execution.
+
+**Change:** the authorizer refuses the pragmas that weaken an assumption,
+and lets the documented harmless ones through. **Acceptance:** a vector per
+refused pragma, and one harmless pragma that still runs.
+
+#### D266 — A TEMP table can shadow an application table (S07)
+
+*Status: open, held not tested. Filed 19 October, from the catalog (S07).*
+
+A TEMP table named like an application table takes the apply's unqualified
+writes, so a remote change lands in ephemeral state and is lost at close,
+while the persistent table keeps the old row.
+
+**Change:** the runtime's SQL names `main.` throughout. **Acceptance:** a
+vector with the same name in `main` and `temp`, the apply writing `main`.
+
+#### D267 — A routine write over a pending aggregate settles it (M10)
+
+*Status: open, held not tested. Filed 19 October, from the catalog (M10).*
+
+R-F says editing is resolving. So a routine `UPDATE x = x + 1`, or a
+trigger-kept increment, over a pending value resolves it from whichever
+value was shown, and the alternatives it never read are gone.
+
+**Change:** a ruling on how an application reads a pending cell, and on
+which writes acknowledge the alternatives they saw. **Acceptance:** a vector
+where a trigger-kept counter over a pending aggregate stays pending, or is
+refused, per the ruling.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
