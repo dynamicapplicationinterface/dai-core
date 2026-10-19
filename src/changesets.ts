@@ -745,7 +745,8 @@ export class Changes {
       return false;
     }
     if (rewritten === sql) return false;
-    const cols = kind === "hidden" ? (this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [table]) as string[]).map(q).join(", ") : "";
+    // The ordinary columns, by name: a generated column takes no value (C05), and SELECT * would hand it one.
+    const cols = (this.db.selectValues("SELECT name FROM pragma_table_xinfo(?) WHERE hidden = 0 ORDER BY cid", [table]) as string[]).map(q).join(", ");
     const others = this.db.selectValues(
       "SELECT sql FROM sqlite_schema WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL",
       [table],
@@ -761,7 +762,7 @@ export class Changes {
         exec(`ALTER TABLE ${q(table)} RENAME TO ${q(old)}`);
         exec(rewritten);
         if (kind === "hidden") this.capture.captured(() => exec(`INSERT INTO ${q(table)} (${cols}) SELECT ${cols} FROM ${q(old)}`));
-        else exec(`INSERT INTO ${q(table)} SELECT * FROM ${q(old)}`);
+        else exec(`INSERT INTO ${q(table)} (${cols}) SELECT ${cols} FROM ${q(old)}`);
         exec(`DROP TABLE ${q(old)}`);
         for (const s of others) exec(s);
         exec("RELEASE cs_rebuild");

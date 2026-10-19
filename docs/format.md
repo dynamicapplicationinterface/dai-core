@@ -952,3 +952,24 @@ The guarantee is:
 It is not SQLite's AUTOINCREMENT, which the rewrite drops. Another author's
 ids can sit above this author's next one, so ids do not give creation order
 across authors.
+
+<a id="engine"></a>**The engine (R-U).** The conformance baseline of the ordinary data
+interface is one SQLite build, the one the container packages:
+- `@sqlite.org/sqlite-wasm` 3.53.0-build1, an exact dependency;
+- SQLite 3.53.0, source id `2026-04-09 11:41:38 4525003a…f20b`;
+- `sqlite3.wasm` SHA-256 `02d7e481…d312`.
+
+Its compile options include `ENABLE_SESSION`, `ENABLE_PREUPDATE_HOOK`,
+`DEFAULT_RECURSIVE_TRIGGERS`, `ENABLE_FTS5`, `ENABLE_RTREE`, `DQS=0`,
+`MAX_TRIGGER_DEPTH=1000` and `TEMP_STORE=2`. This build's session extension
+captures generated columns (3.49.0 and later) and WITHOUT ROWID tables.
+`conformance/changesets/engine.json` holds the full source id, the hash and
+every option, and `tests/changesets/engine-pin.spec.ts` holds the running
+engine to it. What a capture holds, and what a trigger, a conflict algorithm
+or a generated column does, is this build's; a change of engine is a change
+to that record.
+
+Keyless capture is by the explicit `_dai_id` column, never the session
+extension's rowid mode (`SQLITE_SESSION_OBJCONFIG_ROWID`): a rowid does not
+survive VACUUM, and a key that moves is not an identity a changeset can
+carry.
