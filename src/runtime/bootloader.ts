@@ -1512,6 +1512,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // Verified first, and outside the transaction: the checks are async, and
       // nothing may await while the live database holds one open (ruling #3).
       const verdicts = await merge.verifyBatches(rows(sibling), merge.mergeTablesOf(rows(sibling)), mountDocument);
+      // The application holds a transaction (it may, across an await): the
+      // merge is refused before it writes, never folded into the application's
+      // transaction or rolled back with it (R-S). Asked of SQLite, not of our
+      // own bookkeeping.
+      if (sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       liveDb.exec("BEGIN");
       try {
         // The two signed-view digests when the shell relayed them: this

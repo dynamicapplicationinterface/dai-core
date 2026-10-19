@@ -361,6 +361,8 @@ export class Changes {
   readonly index: number;
   private counter = 0;
   private projecting = false;
+  /** An apply asked for while the application held a transaction: run when it ends (R-S). */
+  private deferred = false;
   private lastInsert: { rowid: number | null; id: unknown } = { rowid: null, id: null };
   /** The slot as each running application trigger found it (dai_enter), restored when it ends (dai_leave). */
   private frames: { rowid: number | null; id: unknown }[] = [];
@@ -445,6 +447,8 @@ export class Changes {
         this.settleFrames();
       }
       if (handle.selectValue("PRAGMA schema_version") !== before) this.adoptTables();
+      // An apply that waited for the application's transaction runs once it ends (R-S).
+      if (this.deferred && !this.inTransaction) this.projectAdmitted();
       return result;
     };
   }
@@ -873,8 +877,23 @@ export class Changes {
    * what this copy had seen, so it stands as the person's change or as one
    * side of a pending conflict.
    */
-  projectAdmitted(): { changesets: number; rows: number } {
-    if (!this.inTransaction) this.save();
+  projectAdmitted(): { changesets: number; rows: number; deferred?: boolean } {
+    /*
+     * The capture-epoch boundary (R-S, C07/Q08). The session records a row's
+     * values as they are when it is extracted, so a merged value written into
+     * a row it has already touched joins the local changeset, paused or not,
+     * and would be signed as the person's. So the local epoch is logged and
+     * the session rotated before anything is applied, and that can only happen
+     * at a committed boundary: while the application holds a transaction
+     * (sqlite3_get_autocommit), the apply waits, and runs when it ends
+     * (`watch`).
+     */
+    if (this.inTransaction) {
+      this.deferred = true;
+      return { changesets: 0, rows: 0, deferred: true };
+    }
+    this.deferred = false;
+    this.save();
     const fresh = this.rows.all(
       `SELECT lower(hex(_r_replica)) AS author, _r_seq AS seq, _r_lc AS lc, payload FROM ${q(`${CHANGES_LOG}_current`)} c
         WHERE NOT EXISTS (SELECT 1 FROM _cs_ingested i WHERE i.ver = lower(hex(c._r_replica)) || ':' || c._r_seq)
