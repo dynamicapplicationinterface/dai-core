@@ -915,8 +915,30 @@ export class Changes {
     return this.capture ? this.capture.paused(f) : f();
   }
 
-  /** Runtime writes to the application's tables: not captured, foreign keys checked after rather than during, all or nothing. */
+  /**
+   * Runtime writes to the application's tables: not captured, foreign keys
+   * checked after rather than during, all or nothing, and on a connection
+   * carrying no application TEMP trigger (R-S, T01). The application's main
+   * triggers stand down by `dai_projecting()`, written into each; a TEMP
+   * trigger is not the document's, is not rewritten, and is not turned off by
+   * SQLITE_DBCONFIG_ENABLE_TRIGGER, so each is lifted off for the apply and put
+   * back as it was written. A trigger that cannot be put back fails the call.
+   */
   withoutCapture(f: () => void): void {
+    const temps = this.db.selectObjects("SELECT name, sql FROM temp.sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL") as { name: string; sql: string }[];
+    for (const t of temps) this.exec(`DROP TRIGGER temp.${q(t.name)}`);
+    try {
+      this.applying(f);
+    } finally {
+      // SQLite keeps a TEMP trigger's text without its TEMP: run as stored, it would make a main trigger.
+      for (const t of temps) this.exec(t.sql.replace(/^\s*CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\s+/i, "CREATE TEMP TRIGGER "));
+      const back = this.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE type = 'trigger'") as string[];
+      const lost = temps.filter((t) => !back.includes(t.name));
+      if (lost.length) throw new Error(`CHANGES_APPLY (TEMP triggers not put back: ${lost.map((t) => t.name).join(", ")})`);
+    }
+  }
+
+  private applying(f: () => void): void {
     const exec = this.exec;
     // PRAGMA foreign_keys is a no-op inside a transaction, so it is set before the savepoint opens.
     const inTxn = this.inTransaction;
