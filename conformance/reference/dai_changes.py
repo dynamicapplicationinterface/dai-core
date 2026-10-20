@@ -350,8 +350,13 @@ def apply_log(db: sqlite3.Connection) -> None:
         born = sorted((x[1], x[2], v) for v, x in exists.items() if x[0] == 1)
         return born[0] if born else None
 
-    def spelling(table: str, pk: str) -> list:
-        """The key a row was born with: its earliest-born version's spelling, else its identity's own."""
+    def spelling(table: str, pk: str, values: dict) -> list:
+        """The key a row is written with: its key columns' shown values, the last writer's by (lc, author),
+        where its log carries them (1e-H3); else, for a log from before, its earliest-born version's
+        spelling, else its identity's own."""
+        pk_cols = keys[table][1]
+        if pk_cols and all(c in values for c in pk_cols):
+            return [values[c] for c in pk_cols]
         born = birth(table, pk)
         return key_values(spell.get((table, pk, born[2]), pk) if born else pk)
 
@@ -485,7 +490,7 @@ def apply_log(db: sqlite3.Connection) -> None:
         s = state(table, pk)
         if s is None or table not in keys:
             return
-        k = spelling(table, pk)
+        k = spelling(table, pk, s["values"])
         at = key_values(pk)
         if s["deleted"] and not force:
             db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", at)

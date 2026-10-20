@@ -388,7 +388,7 @@ class SessionCapture {
     }
   }
 
-  changes(): { table: string; op: "INSERT" | "UPDATE" | "DELETE"; pk: Record<string, unknown>; old: Record<string, unknown>; new: Record<string, unknown> }[] {
+  changes(): { table: string; op: "INSERT" | "UPDATE" | "DELETE"; pk: Record<string, unknown>; oldPk?: Record<string, unknown>; old: Record<string, unknown>; new: Record<string, unknown> }[] {
     const { capi, wasm } = this.sqlite3;
     if (!this.session) throw new Error("CHANGES_CAPTURE (sqlite3changeset_ has no session to read)");
     const stack = wasm.pstack.pointer;
@@ -471,13 +471,22 @@ class SessionCapture {
         const pkFlags = wasm.peekPtr(pPk);
         const names = this.namesOf(table, n);
         const op = code === capi.SQLITE_INSERT ? "INSERT" : code === capi.SQLITE_UPDATE ? "UPDATE" : "DELETE";
-        const entry = { table, op, pk: {} as Record<string, unknown>, old: {} as Record<string, unknown>, new: {} as Record<string, unknown> } as const;
+        const entry = {
+          table,
+          op,
+          pk: {} as Record<string, unknown>,
+          // The key as it was before the change: an UPDATE that respells it carries both (1e-H3).
+          oldPk: {} as Record<string, unknown>,
+          old: {} as Record<string, unknown>,
+          new: {} as Record<string, unknown>,
+        } as const;
         for (let i = 0; i < n; i++) {
           const isPk = wasm.peek8(Number(pkFlags) + i) !== 0;
           const name = names[i]!;
           if (op !== "INSERT") {
             const v = exact(capi.sqlite3changeset_old, i, capi.sqlite3changeset_old_js(it, i));
             if (v !== undefined) (isPk ? entry.pk : entry.old)[name] = plain(v);
+            if (v !== undefined && isPk) entry.oldPk[name] = plain(v);
           }
           if (op !== "DELETE") {
             const v = exact(capi.sqlite3changeset_new, i, capi.sqlite3changeset_new_js(it, i));
@@ -1484,7 +1493,7 @@ export class Changes {
     let ops: ReturnType<SessionCapture["changes"]>;
     let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string } | null = null;
     try {
-      ops = this.withTouches(this.capture.changes());
+      ops = this.withTouches(this.respelled(this.capture.changes()));
     } catch (e) {
       throw this.refusedBy(e);
     }
@@ -1554,6 +1563,60 @@ export class Changes {
     }
     if (!logged) return null;
     return { ver: logged.ver, ops: logged.payloadOps.length, bytes: logged.payload.length };
+  }
+
+  /**
+   * A key respelled in place (1e-H3): under its collation or storage class
+   * the new spelling is the same row to SQLite, and the session records the
+   * UPDATE as an insert of the new spelling beside the row it finds under the
+   * old: a delete of the old spelling, or (where its lookup folds the key as
+   * the table does) an UPDATE of the row with what else changed. The pair is
+   * taken back to one UPDATE that writes the key's columns whose spelling
+   * changed and whatever else did, so the spelling travels as a value
+   * change. A pair that changed nothing is nothing.
+   */
+  private respelled(ops: ReturnType<SessionCapture["changes"]>): ReturnType<SessionCapture["changes"]> {
+    const at = new Map<string, { before?: number; ins?: number }>();
+    ops.forEach((op, i) => {
+      if (!this.respells(op.table)) return;
+      const keys = this.keysOf(op.table);
+      if (!keys?.pk.length) return;
+      const id = JSON.stringify([op.table, this.identity(op.table, keys.pk.map((c) => op.pk[c]))]);
+      const pair = at.get(id) ?? {};
+      if (op.op === "INSERT") pair.ins = i;
+      else pair.before = i;
+      at.set(id, pair);
+    });
+    const drop = new Set<number>();
+    const out = ops.slice();
+    for (const { before, ins } of at.values()) {
+      if (before === undefined || ins === undefined) continue;
+      const b = ops[before]!;
+      const n = ops[ins]!;
+      const keys = this.keysOf(n.table)!;
+      const now: Record<string, unknown> = {};
+      const was: Record<string, unknown> = {};
+      if (b.op === "DELETE") {
+        for (const [c, v] of Object.entries(n.new)) {
+          if (c in b.old && sameValue(b.old[c], v)) continue;
+          now[c] = v;
+          was[c] = b.old[c] ?? null;
+        }
+      } else {
+        Object.assign(now, b.new);
+        Object.assign(was, b.old);
+      }
+      const prior = b.oldPk ?? b.pk;
+      for (const c of keys.pk) {
+        if (keySpelling([prior[c]]) === keySpelling([n.pk[c]])) continue;
+        now[c] = n.pk[c];
+        was[c] = prior[c];
+      }
+      drop.add(before);
+      if (Object.keys(now).length === 0) drop.add(ins);
+      else out[ins] = { table: n.table, op: "UPDATE", pk: n.pk, old: was, new: now };
+    }
+    return out.filter((_, i) => !drop.has(i));
   }
 
   /** How many column writes to flagged rows wait for the next save (`dai_touched`). */
@@ -1667,6 +1730,9 @@ export class Changes {
     const code = op.op === "INSERT" ? "I" : op.op === "UPDATE" ? "U" : "D";
     if (code === "I") n.set("", 1);
     if (code === "D") n.set("", 0);
+    // Where a key can be spelled more than one way, its spelling is a value (1e-H3): a birth writes the
+    // key's columns, as a respelling does (`respelled`), and an edit of any other column does not.
+    if (code === "I" && keys?.pk.length && this.respells(op.table)) for (const c of keys.pk) n.set(c, op.pk[c]);
     for (const [c, v] of Object.entries(op.new)) n.set(c, v);
     for (const [c, v] of Object.entries(op.old)) p.set(c, v);
     // A change to any column of a coupled group writes the whole group as it stands, so the group's
@@ -1705,7 +1771,7 @@ export class Changes {
       // Any author's id in this author's range raises the counter, not only its own (K06, K07).
       this.counterAbove(table, k);
       // The key as this version wrote it, where its identity reads otherwise: a REAL key, a key in a collation
-      // that folds (1d-H4, 1d-H5). A row is written back with the spelling it was born with.
+      // that folds (1d-H4, 1d-H5): what a log from before 1e-H3 is read back with (`spellingOf`).
       const spelled = keySpelling(k);
       if (n.get("") === 1 && spelled !== pk) {
         this.runCached("INSERT OR IGNORE INTO _cs_spell (tbl, pk, ver, k) VALUES (?, ?, ?, ?)", [table, pk, ver, spelled]);
@@ -1923,8 +1989,8 @@ export class Changes {
    * Whether one key of this table can be held under two spellings: a key
    * column whose collation folds text (NOCASE, RTRIM), or one with no type,
    * where a REAL 1.0 and an INTEGER 1 are one key (every other affinity
-   * converts one to the other as it stores). A row written there takes the
-   * spelling it was born with, key and all.
+   * converts one to the other as it stores). There the key's spelling is a
+   * value (1e-H3): a row is written with its key columns' shown values.
    */
   private respells(table: string): boolean {
     const keys = this.keysOf(table)?.pk ?? [];
@@ -2060,8 +2126,15 @@ export class Changes {
     );
   }
 
-  /** The key a row was born with: the spelling its earliest-born version wrote, else its identity's own. */
-  private spellingOf(table: string, pk: string): unknown[] {
+  /**
+   * The key a row is written with: its key columns' shown values, the last
+   * writer's by (lc, author), where its log carries them (1e-H3); else, for a
+   * log from before, the spelling its earliest-born version wrote, else its
+   * identity's own.
+   */
+  private spellingOf(table: string, pk: string, values: Record<string, unknown> = {}): unknown[] {
+    const keys = this.keysOf(table)?.pk ?? [];
+    if (keys.length && keys.every((c) => c in values)) return keys.map((c) => values[c]);
     const born = this.birthOf(table, pk);
     const spelled = born ? this.db.selectValue("SELECT k FROM main._cs_spell WHERE tbl = ? AND pk = ? AND ver = ?", [table, pk, born.ver]) : null;
     return keyValues(typeof spelled === "string" ? spelled : pk);
@@ -2078,7 +2151,7 @@ export class Changes {
     }
     const keys = this.keysOf(table);
     if (!keys) return;
-    const k = this.spellingOf(table, pk);
+    const k = this.spellingOf(table, pk, state.values);
     const at = keyValues(pk).map(compared);
     if (state.deleted && !force) {
       this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, at);

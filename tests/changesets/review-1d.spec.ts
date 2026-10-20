@@ -170,8 +170,8 @@ test("1d-H4: NULL, INTEGER, REAL, TEXT and BLOB travel exactly, as values and as
  * every copy: under the key column's collation (NOCASE, RTRIM), and across
  * storage classes (a REAL 1.0 is the INTEGER 1). Each copy wrote its own
  * spelling concurrently; after the exchange both show one row, under the
- * spelling the earlier-born version wrote, with the two values of the other
- * column a pending conflict, never each copy showing the other's.
+ * last writer's spelling by (lc, author) (1e-H3), with the two values of the
+ * other column a pending conflict, never each copy showing the other's.
  */
 test("1d-H5: keys equal under the key's collation are one row, under one spelling, on every copy", async () => {
   const { a, b } = await base({
@@ -200,8 +200,8 @@ test("1d-H5: keys equal under the key's collation are one row, under one spellin
   a.close();
   b.close();
 
-  // Which spelling is born first follows the authors' order, which is random. Each case is run until it
-  // has been seen: the INTEGER born first, a copy holding the REAL, and the other way round.
+  // The spelling shown is the last writer's by (lc, author) (1e-H3), which follows the authors' order, which is
+  // random. Each case is run until it has been seen: the INTEGER written last, and the REAL.
   const seen = new Set<string>();
   for (let run = 0; run < 24 && seen.size < 2; run++) {
     const { a, b } = await base({ extra: ["CREATE TABLE nums (k PRIMARY KEY, v TEXT)"] });
@@ -210,10 +210,10 @@ test("1d-H5: keys equal under the key's collation are one row, under one spellin
     const [ab, bb] = [await a.bytes(), await b.bytes()];
     await a.mergeFrom(bb);
     await b.mergeFrom(ab);
-    const born = a.db.selectValue("SELECT author FROM _cs_cell WHERE tbl = 'nums' AND col = '' AND val = 1 ORDER BY lc, author, ver LIMIT 1");
-    const want = born === a.changes.authorHex ? "integer" : "real";
+    const last = a.db.selectValue("SELECT author FROM _cs_cell WHERE tbl = 'nums' AND col = '' AND val = 1 ORDER BY lc DESC, author DESC, ver DESC LIMIT 1");
+    const want = last === a.changes.authorHex ? "integer" : "real";
     seen.add(want);
-    expect([a.db.selectValue("SELECT typeof(k) FROM nums"), b.db.selectValue("SELECT typeof(k) FROM nums")], `born ${want}: both copies`).toEqual([want, want]);
+    expect([a.db.selectValue("SELECT typeof(k) FROM nums"), b.db.selectValue("SELECT typeof(k) FROM nums")], `written last as ${want}: both copies`).toEqual([want, want]);
     a.close();
     b.close();
   }
