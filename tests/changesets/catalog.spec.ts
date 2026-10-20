@@ -109,7 +109,7 @@ test("T01: neither a TEMP trigger nor an attached schema's trigger fires while m
   expect(a.db.selectValue("SELECT title FROM main.items WHERE title = 'Soap'"), "the merged row is applied").toBe("Soap");
   // The main schema's trigger ran once, on B, and its row came in B's changeset.
   expect(a.db.selectValue("SELECT count(*) FROM audit x JOIN items i ON i.id = x.item_id WHERE i.title = 'Soap' AND x.what = 'created'")).toBe(1);
-  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema"), "nothing in temp").toEqual([]);
+  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE name NOT LIKE '\\_cs\\_%' ESCAPE '\\'"), "nothing in temp but the runtime's").toEqual([]);
   a.close();
   b.close();
 });

@@ -365,7 +365,7 @@ test("S07 (D266, R-W): a TEMP table named like an application table is refused a
   b.db.exec("INSERT INTO items (title) VALUES ('from B'); UPDATE items SET qty = 3 WHERE title = 'Map';");
   const bBytes = await b.bytes();
   refusedWith(a, "CREATE TEMP TABLE items (id INTEGER PRIMARY KEY, title TEXT, qty INTEGER, note TEXT, category_id INTEGER, done INTEGER)", /^CHANGES_REFUSED: /);
-  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema")).toEqual([]);
+  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE name NOT LIKE '\\_cs\\_%' ESCAPE '\\'"), "nothing in temp but the runtime's").toEqual([]);
   await a.mergeFrom(bBytes);
   expect(a.db.selectValue("SELECT count(*) FROM main.items WHERE title = 'from B'")).toBe(1);
   expect(a.db.selectValue("SELECT qty FROM main.items WHERE title = 'Map'")).toBe(3);

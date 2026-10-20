@@ -672,6 +672,26 @@ export class Changes {
      */
     db.createFunction("last_insert_rowid", () => this.lastInsert.id ?? 0, { arity: 0, deterministic: false });
     /*
+     * A column of a flagged row the application wrote (RW-12, R-S). Writing
+     * the value a pending row shows changes no byte, so the session records
+     * nothing, and the resolution was lost. Each column's runtime trigger
+     * (`touchTriggers`) names the write here, and the next save logs the shown
+     * value as that column's: a new version superseding what this copy saw.
+     * Kept in TEMP, in the application's transaction, so a write that rolls
+     * back takes its note with it; written as the runtime, so the
+     * application's counts are its own (D08).
+     */
+    db.createFunction(
+      "dai_touched",
+      (_c: unknown, t: unknown, col: unknown, ...k: unknown[]) => {
+        this.trusted(() =>
+          this.exec({ sql: "INSERT OR IGNORE INTO temp._cs_touch (tbl, pk, col) VALUES (?, ?, ?)", bind: [String(t), this.identity(String(t), k), String(col)] }),
+        );
+        return null;
+      },
+      { arity: -1, deterministic: false },
+    );
+    /*
      * changes() and total_changes() answer for the application's statements
      * only (D08). The runtime writes on the same connection (a save's log row,
      * a seal, a merged row), and native SQLite would count those: changes()
@@ -681,6 +701,7 @@ export class Changes {
     db.createFunction("changes", () => (this.runtimeWrote ? this.appChanges : Number(capi0.sqlite3_changes(db.pointer))), { arity: 0, deterministic: false });
     db.createFunction("total_changes", () => Number(capi0.sqlite3_total_changes(db.pointer)) - this.runtimeChanges, { arity: 0, deterministic: false });
     this.exec(META);
+    this.exec("CREATE TEMP TABLE IF NOT EXISTS _cs_touch (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, PRIMARY KEY (tbl, pk, col)) WITHOUT ROWID");
     // Before any write the runtime trusts: a trigger an imported schema hung on a runtime table is gone (T11).
     this.refuseForeignTriggers();
     this.authorize();
@@ -1141,6 +1162,7 @@ export class Changes {
       });
     }
     this.slotEveryInsert();
+    this.touchTriggers();
     this.refuseNullKeys();
     this.guardTriggers();
     this.keysCache.clear();
@@ -1213,6 +1235,35 @@ export class Changes {
       if (!sql || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
       this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${tbl}`)} AFTER INSERT ON ${q(tbl)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.rowid); END`);
     }
+  }
+
+  /**
+   * One runtime trigger per column of each table, naming a write the
+   * application makes to a row flagged pending or delete-conflict
+   * (`dai_touched`, RW-12). `UPDATE OF` fires only for the columns the
+   * statement sets, so a write to one column names that column alone (RW-09).
+   * Standing down while merged rows are applied. TEMP, so they are this
+   * connection's and never the document's: a reader applying the log fires
+   * none of them. The application makes no TEMP trigger (R-W), so every TEMP
+   * trigger is one of these.
+   */
+  private touchTriggers(): void {
+    const want = new Map<string, string>();
+    for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys") as Any[]) {
+      const keys = String(pk).split(",").filter(Boolean);
+      if (!keys.length) continue;
+      const at = keys.map((c) => `NEW.${q(c)}`).join(", ");
+      const cols = this.db.selectValues("SELECT name FROM pragma_table_xinfo(?, 'main') WHERE hidden = 0 ORDER BY cid", [tbl]) as string[];
+      for (const col of cols.filter((c) => !keys.includes(c))) {
+        want.set(
+          `_cs_touch_${tbl}_${col}`,
+          `AFTER UPDATE OF ${q(col)} ON main.${q(tbl)} WHEN dai_projecting() = 0 AND (EXISTS (SELECT 1 FROM main._cs_flag ` +
+            `WHERE tbl = ${sqlText(tbl)} AND kind IN ('pending', 'delete-conflict') AND pk = dai_key(${sqlText(tbl)}, ${at}))) ` +
+            `BEGIN SELECT dai_touched(${sqlText(tbl)}, ${sqlText(col)}, ${at}); END`,
+        );
+      }
+    }
+    for (const [name, body] of want) this.exec(`CREATE TEMP TRIGGER IF NOT EXISTS ${q(name)} ${body}`);
   }
 
   /**
@@ -1387,7 +1438,7 @@ export class Changes {
    * signed is here, not in the log, until the next save (Q07).
    */
   get dirty(): boolean {
-    return !this.capture.isEmpty();
+    return !this.capture.isEmpty() || this.touchCount() > 0;
   }
 
   /**
@@ -1431,35 +1482,60 @@ export class Changes {
     if (this.refusal) return null;
     if (this.inTransaction) return null;
     let ops: ReturnType<SessionCapture["changes"]>;
-    let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string; touched: [string, string][] } | null = null;
+    let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string } | null = null;
     try {
-      ops = this.capture.changes();
+      ops = this.withTouches(this.capture.changes());
     } catch (e) {
       throw this.refusedBy(e);
     }
-    const all = ops;
-    if (all.length > 0) {
-      this.exec("SAVEPOINT cs_save");
+    if (ops.length > 0) {
+      /*
+       * The batch, its versions, and the decisions it makes over the flagged
+       * or held rows it wrote commit together, and the capture starts over
+       * only after (R-S, RW-11): a failure anywhere leaves nothing of the save
+       * in the log or the tables, and every change it held for the next.
+       * Those decisions check foreign keys after rather than during, as an
+       * apply does; PRAGMA foreign_keys is a no-op inside a transaction, so it
+       * is set before the savepoint opens.
+       */
+      const fk = Number(this.db.selectValue("PRAGMA foreign_keys")) === 1;
+      if (fk) this.exec("PRAGMA foreign_keys = OFF");
       try {
-        let payloadOps: Op[];
-        let payload: Uint8Array;
+        this.exec("SAVEPOINT cs_save");
         try {
-          payloadOps = all.map((op) => this.withBases(op));
-          payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
+          let payloadOps: Op[];
+          let payload: Uint8Array;
+          try {
+            payloadOps = ops.map((op) => this.withBases(op));
+            payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
+          } catch (e) {
+            throw this.refusedBy(e);
+          }
+          const entity = crypto.getRandomValues(new Uint8Array(16));
+          const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
+          const ver = `${this.authorHex}:${row._r_seq}`;
+          const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
+          this.exec("DELETE FROM temp._cs_touch");
+          // A save over a flagged or held row may have resolved it: decide it again.
+          const marked = touched.filter(
+            ([t, pk]) =>
+              this.db.selectValue("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? UNION SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [t, pk, t, pk]) !=
+              null,
+          );
+          if (marked.length) this.withoutCapture(() => this.project(marked));
+          this.exec("RELEASE cs_save");
+          logged = { payloadOps, payload, ver };
         } catch (e) {
-          throw this.refusedBy(e);
+          this.exec("ROLLBACK TO cs_save");
+          this.exec("RELEASE cs_save");
+          throw e;
         }
-        const entity = crypto.getRandomValues(new Uint8Array(16));
-        const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
-        const ver = `${this.authorHex}:${row._r_seq}`;
-        const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
-        this.exec("RELEASE cs_save");
-        logged = { payloadOps, payload, ver, touched };
-      } catch (e) {
-        this.exec("ROLLBACK TO cs_save");
-        this.exec("RELEASE cs_save");
-        throw e;
+      } finally {
+        if (fk) this.exec("PRAGMA foreign_keys = ON");
       }
+    } else if (this.touchCount() > 0) {
+      // Notes of writes to rows since gone: nothing of them to log.
+      this.exec("DELETE FROM temp._cs_touch");
     }
     // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
     // over too, so `dirty` says exactly whether a save has something to log.
@@ -1477,17 +1553,51 @@ export class Changes {
       }
     }
     if (!logged) return null;
-    const { payloadOps, payload, ver, touched } = logged;
-    // A save over a flagged or held row may have resolved it: decide it again.
-    const marked = touched.filter(
-      ([t, pk]) =>
-        this.db.selectValue(
-          "SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? UNION SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?",
-          [t, pk, t, pk],
-        ) != null,
-    );
-    if (marked.length) this.withoutCapture(() => this.project(marked));
-    return { ver, ops: payloadOps.length, bytes: payload.length };
+    return { ver: logged.ver, ops: logged.payloadOps.length, bytes: logged.payload.length };
+  }
+
+  /** How many column writes to flagged rows wait for the next save (`dai_touched`). */
+  private touchCount(): number {
+    return Number(this.trusted(() => this.db.selectValue("SELECT count(*) FROM temp._cs_touch")));
+  }
+
+  /**
+   * The captured changes, with each column write to a flagged row the
+   * session did not record (RW-12): the value the row shows, written as that
+   * column's new version. Merged into the row's UPDATE where there is one; a
+   * row since inserted or deleted, or gone, has nothing to add.
+   */
+  private withTouches(ops: ReturnType<SessionCapture["changes"]>): ReturnType<SessionCapture["changes"]> {
+    const touches = this.db.selectObjects("SELECT tbl, pk, col FROM temp._cs_touch ORDER BY tbl, pk, col") as Any[];
+    if (touches.length === 0) return ops;
+    const out = ops.slice();
+    const byRow = new Map<string, (typeof out)[number]>();
+    for (const op of out) {
+      const keys = this.keysOf(op.table);
+      const cols = keys?.pk.length ? keys.pk : Object.keys(op.pk);
+      byRow.set(`${op.table}\u0000${this.identity(op.table, cols.map((c) => op.pk[c]))}`, op);
+    }
+    for (const t of touches) {
+      const table = String(t.tbl);
+      const col = String(t.col);
+      const keys = this.keysOf(table);
+      if (!keys?.pk.length) continue;
+      const at = `${table}\u0000${t.pk}`;
+      let op = byRow.get(at);
+      if (op && (op.op !== "UPDATE" || col in op.new)) continue;
+      const read = [...keys.pk, col].map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ");
+      const now = this.db.selectObject(`SELECT ${read} FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(String(t.pk)).map(compared)) as Any;
+      if (!now) continue;
+      if (!op) {
+        op = { table, op: "UPDATE", pk: Object.fromEntries(keys.pk.map((c) => [c, typed(now[`_cs_t_${c}`], now[c])])), old: {}, new: {} };
+        out.push(op);
+        byRow.set(at, op);
+      }
+      const v = typed(now[`_cs_t_${col}`], now[col]);
+      op.old[col] = v;
+      op.new[col] = v;
+    }
+    return out;
   }
 
   /**
@@ -1681,29 +1791,14 @@ export class Changes {
 
   /**
    * Runtime writes to the application's tables: not captured, foreign keys
-   * checked after rather than during, all or nothing, and on a connection
-   * carrying no application TEMP trigger (R-S, T01). The application's main
-   * triggers stand down by `dai_projecting()`, written into each; a TEMP
-   * trigger is not the document's, is not rewritten, and is not turned off by
-   * SQLITE_DBCONFIG_ENABLE_TRIGGER, so each is lifted off for the apply and put
-   * back as it was written. A trigger that cannot be put back fails the call.
+   * checked after rather than during, and all or nothing. The application's
+   * triggers stand down by `dai_projecting()`, written into each; the
+   * application makes no TEMP trigger (R-W), so the connection the apply runs
+   * on carries none of its own (R-S, T01), and the runtime's TEMP triggers
+   * stand down the same way.
    */
   withoutCapture(f: () => void): void {
-    this.trusted(() => this.withoutTemps(f));
-  }
-
-  private withoutTemps(f: () => void): void {
-    const temps = this.db.selectObjects("SELECT name, sql FROM temp.sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL") as { name: string; sql: string }[];
-    for (const t of temps) this.exec(`DROP TRIGGER temp.${q(t.name)}`);
-    try {
-      this.applying(f);
-    } finally {
-      // SQLite keeps a TEMP trigger's text without its TEMP: run as stored, it would make a main trigger.
-      for (const t of temps) this.exec(t.sql.replace(/^\s*CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\s+/i, "CREATE TEMP TRIGGER "));
-      const back = this.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE type = 'trigger'") as string[];
-      const lost = temps.filter((t) => !back.includes(t.name));
-      if (lost.length) throw new Error(`CHANGES_APPLY (TEMP triggers not put back: ${lost.map((t) => t.name).join(", ")})`);
-    }
+    this.trusted(() => this.applying(f));
   }
 
   private applying(f: () => void): void {
