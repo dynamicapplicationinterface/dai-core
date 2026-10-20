@@ -163,6 +163,9 @@ export const SCHEMA_REFUSED = {
   renamedOnto: "A table can take the name of a table dropped since the last save only if it was made since then too.",
 } as const;
 
+/** What a key with a NULL in it is refused with, as it executes (1d-H3, R-V). */
+export const KEY_REFUSED = "A row's key cannot be NULL: give every primary-key column a value, or leave out an integer key to have one given.";
+
 /** The SQLite result codes of a capture failure a retry can cure: busy, locked, out of memory, interrupted, I/O, full. */
 const RETRYABLE_RC = new Set([5, 6, 7, 9, 10, 13]);
 
@@ -202,17 +205,22 @@ export function appTablesOf(rows: Rows): string[] {
  * take a DEFAULT (SQLite ignores it), so the key becomes a non-alias INT key
  * whose NOT NULL ... ON CONFLICT REPLACE takes the default for an omitted id
  * and an explicit NULL alike. AUTOINCREMENT goes: it is legal only on an
- * alias, and a per-author counter never reuses an id anyway.
+ * alias, and a per-author counter never reuses an id anyway. `type` is the
+ * key's declared type as SQLite reports it (any of integer affinity: INT,
+ * BIGINT, INT8, UNSIGNED BIG INT; 1d-H3); a NOT NULL beside it goes, since
+ * the rewritten key carries its own.
  */
-export function rewriteKeySql(sql: string, table: string, column: string, kind: "ranged" | "uuid"): string {
-  const name = column.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function rewriteKeySql(sql: string, table: string, column: string, kind: "ranged" | "uuid", type = "INTEGER"): string {
+  const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const name = escape(column);
   const col = `(?:"${name}"|\`${name}\`|\\[${name}\\]|${name})`;
   if (kind === "ranged") {
     const fn = `DEFAULT (dai_id(${sqlText(table)}))`;
-    const inline = new RegExp(`(${col}\\s+)INTEGER(\\s+PRIMARY\\s+KEY(?:\\s+(?:ASC|DESC))?)(\\s+AUTOINCREMENT)?`, "i");
+    const declared = `${type.trim().split(/\s+/).map(escape).join("\\s+")}(?=[\\s,)]|$)(?:\\s+NOT\\s+NULL)?`;
+    const inline = new RegExp(`(${col}\\s+)${declared}(\\s+PRIMARY\\s+KEY(?:\\s+(?:ASC|DESC))?)(\\s+AUTOINCREMENT)?`, "i");
     if (inline.test(sql)) return sql.replace(inline, `$1INT NOT NULL ON CONFLICT REPLACE ${fn}$2`);
     // A table-level PRIMARY KEY (id) over `id INTEGER`.
-    const typed = new RegExp(`([(,]\\s*${col}\\s+)INTEGER\\b`, "i");
+    const typed = new RegExp(`([(,]\\s*${col}\\s+)${declared}`, "i");
     if (typed.test(sql)) return sql.replace(typed, `$1INT NOT NULL ON CONFLICT REPLACE ${fn}`);
     throw new Error(`CHANGES_KEY_UNREWRITABLE (${table})`);
   }
@@ -991,10 +999,11 @@ export class Changes {
       } else if (pks.length === 1 && pks[0].name === HIDDEN_KEY && /dai_id\(/.test(dflt)) kind = "hidden";
       else if (pks.length === 1 && /dai_id\(/.test(dflt)) kind = "ranged";
       else if (pks.length === 1 && /dai_uuid\(/.test(dflt)) kind = "uuid";
-      else if (pks.length === 1 && String(pks[0].type).toUpperCase() === "INTEGER" && !withoutRowid) kind = "ranged";
+      // Integer affinity, by SQLite's own rule over the type it reports (a type naming INT): INTEGER, INT, BIGINT, INT8 (1d-H3).
+      else if (pks.length === 1 && /INT/i.test(String(pks[0].type)) && !withoutRowid) kind = "ranged";
       else if (pks.length === 1 && /TEXT|CHAR|CLOB/i.test(String(pks[0].type)) && !pks[0].dflt_value) kind = "uuid";
       if ((kind === "ranged" || kind === "uuid") && !/dai_(id|uuid)\(/.test(dflt)) {
-        if (!this.rebuild(table, pks[0].name, kind)) kind = "natural";
+        if (!this.rebuild(table, pks[0].name, kind, String(pks[0].type))) kind = "natural";
       }
       if (kind === "ranged") {
         this.exec(
@@ -1007,6 +1016,7 @@ export class Changes {
       });
     }
     this.slotEveryInsert();
+    this.refuseNullKeys();
     this.guardTriggers();
     this.keysCache.clear();
     this.declaredCache.clear();
@@ -1026,6 +1036,29 @@ export class Changes {
       const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
       if (!sql || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
       this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${tbl}`)} AFTER INSERT ON ${q(tbl)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.rowid); END`);
+    }
+  }
+
+  /**
+   * A NULL in a key, refused as it executes (1d-H3, C02; R-V). The session
+   * does not capture a row with a NULL in its primary key, and SQLite allows
+   * one in a rowid table's key that is not the rowid alias, so such a row was
+   * kept here, logged nowhere, and reported as nothing to save. A ranged,
+   * uuid or hidden key is never NULL (NOT NULL ... ON CONFLICT REPLACE takes
+   * its default), and a WITHOUT ROWID table's never is; every other key gets
+   * a runtime trigger, before insert and before an update of its columns.
+   */
+  private refuseNullKeys(): void {
+    for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys WHERE kind = 'natural'") as Any[]) {
+      const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
+      const cols = String(pk).split(",").filter(Boolean);
+      if (!sql || !cols.length || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
+      const when = cols.map((c) => `NEW.${q(c)} IS NULL`).join(" OR ");
+      const raise = `SELECT RAISE(ABORT, ${sqlText(`CHANGES_REFUSED: ${KEY_REFUSED}`)})`;
+      this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_key_${tbl}`)} BEFORE INSERT ON ${q(tbl)} WHEN ${when} BEGIN ${raise}; END`);
+      this.exec(
+        `CREATE TRIGGER IF NOT EXISTS ${q(`_cs_rekey_${tbl}`)} BEFORE UPDATE OF ${cols.map(q).join(", ")} ON ${q(tbl)} WHEN ${when} BEGIN ${raise}; END`,
+      );
     }
   }
 
@@ -1073,12 +1106,12 @@ export class Changes {
    * gets one for each row it already holds, and those rows are captured as
    * inserts: the application wrote them, under no key the log could carry.
    */
-  private rebuild(table: string, column: string, kind: "ranged" | "uuid" | "hidden"): boolean {
+  private rebuild(table: string, column: string, kind: "ranged" | "uuid" | "hidden", type?: string): boolean {
     const exec = this.exec;
     const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]));
     let rewritten: string;
     try {
-      rewritten = kind === "hidden" ? withHiddenKeys(sql) : rewriteKeySql(sql, table, column, kind);
+      rewritten = kind === "hidden" ? withHiddenKeys(sql) : rewriteKeySql(sql, table, column, kind, type);
     } catch {
       return false;
     }

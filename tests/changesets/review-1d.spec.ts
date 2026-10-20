@@ -173,6 +173,51 @@ test("1d-H2: DROP TABLE, a table rebuild, DROP COLUMN and RENAME TABLE close the
   }
 });
 
+/**
+ * 1d-H3 (catalog C02, K01). The session skips a row with a NULL in its
+ * primary key, and SQLite allows one in any rowid table's key that is not
+ * the rowid alias. So a key of integer affinity in any spelling (INT, BIGINT,
+ * INT8, a table-level key, with NOT NULL beside it) takes an author-ranged id
+ * when the application leaves it out, decided from the type SQLite reports;
+ * and a NULL key in any other captured table is refused as it executes, with
+ * one sentence, before a save could report nothing to log.
+ */
+test("1d-H3: integer-affinity keys take ranged ids; a NULL key is refused as it executes", async () => {
+  const { a, b } = await base({
+    extra: [
+      `CREATE TABLE k_int (id INT PRIMARY KEY, v TEXT);
+       CREATE TABLE k_big (id BIGINT PRIMARY KEY, v TEXT);
+       CREATE TABLE k_int8 ("Id" int8 NOT NULL PRIMARY KEY, v TEXT);
+       CREATE TABLE k_level (id UNSIGNED BIG INT, v TEXT, PRIMARY KEY (id));
+       CREATE TABLE k_text (code TEXT DEFAULT 'none' PRIMARY KEY, v TEXT);
+       CREATE TABLE k_pair (x TEXT, y TEXT, v TEXT, PRIMARY KEY (x, y));`,
+    ],
+  });
+  const range = (id: unknown): boolean => Number(id) >= 2 ** 32 && Number(id) <= Number.MAX_SAFE_INTEGER;
+  for (const [table, col] of [["k_int", "id"], ["k_big", "id"], ["k_int8", "Id"], ["k_level", "id"]] as const) {
+    a.db.exec(`INSERT INTO ${table} (v) VALUES ('one'), ('two')`);
+    const ids = a.db.selectValues(`SELECT "${col}" FROM ${table} ORDER BY "${col}"`);
+    expect(ids.every(range), `${table}: an omitted id is ranged`).toBe(true);
+    expect(new Set(ids).size, `${table}: two rows, two ids`).toBe(2);
+    expect(a.db.selectValue("SELECT last_insert_rowid()"), `${table}: last_insert_rowid() answers the ranged id`).toBe(ids[1]);
+  }
+  const refused = (sql: string): void => expect(() => a.db.exec(sql), sql).toThrow(/CHANGES_REFUSED: .*key/);
+  refused("INSERT INTO k_text (code, v) VALUES (NULL, 'null code')");
+  refused("INSERT INTO k_pair (x, y, v) VALUES ('k', NULL, 'half')");
+  a.db.exec("INSERT INTO k_text (code, v) VALUES ('c1', 'one'); INSERT INTO k_pair (x, y, v) VALUES ('k', 'y', 'whole');");
+  refused("UPDATE k_text SET code = NULL WHERE code = 'c1'");
+  refused("UPDATE k_pair SET y = NULL WHERE x = 'k'");
+  expect(a.db.selectValue("SELECT count(*) FROM k_text WHERE code IS NULL") + a.db.selectValue("SELECT count(*) FROM k_pair WHERE y IS NULL")).toBe(0);
+
+  await b.mergeFrom(await a.bytes());
+  for (const table of ["k_int", "k_big", "k_int8", "k_level", "k_text", "k_pair"]) {
+    expect(b.dump()[table], `${table}: every row reaches the other copy`).toEqual(a.dump()[table]);
+  }
+  expect(b.dump()["k_int"]).toHaveLength(2);
+  a.close();
+  b.close();
+});
+
 /** 1d-H2, the key half (catalog K10). A key above 2^53 is carried exactly, as a save, a merge and a later edit. */
 test("1d-H2: an integer key above 2^53 is saved, merged and edited exactly", async () => {
   const { a, b } = await base();
