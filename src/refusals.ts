@@ -132,6 +132,19 @@ export const REFUSALS = {
       "src/changesets.ts). The merged rows stand; the error names the trigger, which is missing until the " +
       "application creates it again.",
   },
+  CHANGES_SAVE_REFUSED: {
+    recoverable: false,
+    means:
+      "A save failed and no retry can cure it (P3, src/changesets.ts): the session could not read back what it " +
+      "held, or a value could not be encoded. The document is refused once, with SAVE_REFUSED's sentence: its last " +
+      "saved work is kept, later writes and merges are held, and Save a copy keeps what is on screen.",
+  },
+  CHANGES_REFUSED: {
+    recoverable: true,
+    means:
+      "A statement the data interface cannot carry was refused as it ran, before any data was accepted under it " +
+      "(R-V, src/changesets.ts). The message carries the rule it broke, as one sentence; nothing was written.",
+  },
   CHANGES_KEY_UNREWRITABLE: {
     recoverable: false,
     means:
@@ -371,6 +384,14 @@ export const REFUSALS = {
 } as const;
 
 export type RefusalCode = keyof typeof REFUSALS;
+
+/**
+ * What a person reads when a save fails and cannot succeed on a retry (P3):
+ * the document is refused, in one sentence, its last saved work kept. Shown by
+ * the host as it is, with no code and nothing around it.
+ */
+export const SAVE_REFUSED =
+  "This document can't save its latest change, so it keeps its last saved work and takes no more changes; use Save a copy to keep what is on screen.";
 
 /** Whether a string is one of the names above. */
 export function isRefusalCode(value: unknown): value is RefusalCode {

@@ -86,6 +86,7 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
+import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -3353,6 +3354,10 @@ window.addEventListener("message", (event) => {
     if (state === "saved") savedFor = window.setTimeout(() => { el.hidden = true; }, 3000);
     if (state === "failed" && wonElsewhere(data.error)) {
       tellOverDocument(elsewhereSentence(data.error), true);
+    } else if (state === "failed" && data.error === SAVE_REFUSED) {
+      // The data interface's own refusal (P3): one sentence, which already names what to do.
+      el.title = "";
+      tellOverDocument(SAVE_REFUSED, true);
     } else if (state === "failed") {
       tellOverDocument(
         `This document could not be saved on this device${typeof data.error === "string" ? ` (${data.error})` : ""}. ` +

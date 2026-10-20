@@ -1077,6 +1077,19 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       },
       (error: unknown) => {
         saving = null;
+        /*
+         * A save no retry cures refuses the document (P3): said once, in the
+         * data interface's own sentence, and never retried. What the store
+         * holds is the last save that succeeded; later writes are held by the
+         * data interface, and Save a copy keeps what is on screen.
+         */
+        if (changes && changes.refusal) {
+          if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+          autosaveTimer = undefined;
+          autosaveDb = null;
+          tellSaveStatus("failed", String(changes.refusal));
+          return;
+        }
         // Kept, not dropped: the data is still only here.
         if (!autosaveDb) autosaveDb = db;
         const delay = RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length - 1)] as number;
@@ -1095,6 +1108,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     // A mount the host will not write saves nothing (D108): what is here is
     // kept as it came, and no save is asked only to be refused.
     if (!autosaves || mountReadOnly) return;
+    // Nor one refused under P3: no save of it can succeed, and the refusal has been said.
+    if (changes && changes.refusal) return;
     autosaveDb = db;
     if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
@@ -1451,6 +1466,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     const bytes = request && request.databaseBytes;
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new Error("NOT_A_DATABASE");
     if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
+    // A document refused under P3 takes nothing in: its own changes can no longer be logged before an apply (R-S).
+    if (changes && changes.refusal) throw new Error("CHANGES_SAVE_REFUSED");
 
     if (!mergeModule) {
       const source = request.mergeSource;

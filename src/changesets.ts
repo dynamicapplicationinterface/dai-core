@@ -53,7 +53,7 @@
  * while merged rows are applied (`dai_projecting()`), and `PRAGMA foreign_keys`
  * is on from open.
  */
-import { decode as cborDecode, encode as cborEncode, type CborValue } from "./cbor.js";
+import { CborError, decode as cborDecode, encode as cborEncode, type CborValue } from "./cbor.js";
 import { createEntity, type Rows } from "./replicated-rows.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -62,6 +62,7 @@ type Any = any;
 import { CHANGES_DECLARATION, CHANGES_LOG, HIDDEN_KEY, withHiddenKeys } from "./changes-log.js";
 import { declaredIn, type Declared } from "./declarations.js";
 import { rewriteReplicated } from "./replicated.js";
+import { SAVE_REFUSED } from "./refusals.js";
 export { CHANGES_DECLARATION, CHANGES_LOG };
 
 /** Author-ranged integer keys: the author index in bits 32..52, a counter in bits 0..31. 2^53-1 is the largest id, exact in JavaScript. */
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS _cs_flag (tbl TEXT NOT NULL, pk TEXT NOT NULL, kind T
 CREATE TABLE IF NOT EXISTS _cs_held (tbl TEXT NOT NULL, pk TEXT NOT NULL, reason TEXT NOT NULL, row TEXT NOT NULL, PRIMARY KEY (tbl, pk)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_keys (tbl TEXT PRIMARY KEY, kind TEXT NOT NULL, pk TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_settle (tbl TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS _cs_shape (kind TEXT NOT NULL, tbl TEXT NOT NULL, col TEXT NOT NULL, now TEXT, PRIMARY KEY (kind, tbl, col)) WITHOUT ROWID;
 `;
 
 /** The flags a row can carry, as `_cs_flag.kind` holds them. */
@@ -111,10 +113,58 @@ interface Keys {
 type Op = [string, unknown[], "I" | "U" | "D", Map<string, unknown>, Map<string, unknown>, Map<string, string[]>, string[]];
 
 const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+const unhex = (s: string): Uint8Array => Uint8Array.from(s.match(/../g) ?? [], (x) => parseInt(x, 16));
 const q = (name: string): string => `"${String(name).split('"').join('""')}"`;
 const plain = (v: unknown): unknown =>
   typeof v === "bigint" && v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(v) : v;
-const shown = (v: unknown): unknown => (v instanceof Uint8Array ? `<${v.length} bytes>` : plain(v));
+const shown = (v: unknown): unknown => {
+  const p = plain(v);
+  return p instanceof Uint8Array ? `<${p.length} bytes>` : typeof p === "bigint" ? p.toString() : p;
+};
+
+/**
+ * A key as the runtime's tables hold it (`_cs_cell.pk` and every table keyed
+ * like it): a JSON array, exact for every storage class (K10, M15). An integer
+ * past 2^53 is `{"$int": "<digits>"}` and a BLOB `{"$blob": "<hex>"}`, so no
+ * key is rounded or turned into an object it was not. Integers and text read
+ * as plain JSON, as they always have.
+ */
+export function keyText(k: unknown[]): string {
+  return JSON.stringify(
+    k.map((v) => {
+      const p = plain(v);
+      return typeof p === "bigint" ? { $int: p.toString() } : p instanceof Uint8Array ? { $blob: hex(p) } : p;
+    }),
+  );
+}
+
+/** The key values `keyText` wrote, each in its own storage class. */
+export function keyValues(text: string): unknown[] {
+  return JSON.parse(text, (_k, v) =>
+    v && typeof v === "object" && !Array.isArray(v) ? ("$int" in v ? BigInt(v.$int) : "$blob" in v ? unhex(String(v.$blob)) : v) : v,
+  ) as unknown[];
+}
+
+/** Two values SQLite would store alike: the same storage class and the same value. */
+function sameValue(a: unknown, b: unknown): boolean {
+  const x = plain(a);
+  const y = plain(b);
+  if (x instanceof Uint8Array || y instanceof Uint8Array) {
+    return x instanceof Uint8Array && y instanceof Uint8Array && x.length === y.length && x.every((v, i) => v === y[i]);
+  }
+  return x === y || (x == null && y == null);
+}
+
+
+/** What a schema change the data interface cannot follow is refused with (R-V), by case. */
+export const SCHEMA_REFUSED = {
+  alone: "A schema change runs as a statement of its own, with no values bound to it.",
+  declared: "A column a -- dai: declaration names keeps its name and stays in its table.",
+  renamedOnto: "A table can take the name of a table dropped since the last save only if it was made since then too.",
+} as const;
+
+/** The SQLite result codes of a capture failure a retry can cure: busy, locked, out of memory, interrupted, I/O, full. */
+const RETRYABLE_RC = new Set([5, 6, 7, 9, 10, 13]);
 
 /**
  * The author index a key range is drawn from: 21 bits of the author id, never
@@ -190,6 +240,8 @@ class SessionCapture {
   constructor(
     private readonly sqlite3: Any,
     private readonly db: Any,
+    /** A table the session leaves alone for now: one made since the last save, or the target of a schema change as it runs. */
+    private readonly excluded: (table: string) => boolean = () => false,
   ) {
     this.open();
   }
@@ -210,7 +262,7 @@ class SessionCapture {
     // on each change until it is attached.
     this.filter ||= wasm.installFunction("ipp", (_ctx: number, zTab: number) => {
       const name = wasm.cstrToJs(zTab) as string;
-      if (internalNamed(name)) return 0;
+      if (internalNamed(name) || this.excluded(name)) return 0;
       return this.db.selectValue("SELECT 1 FROM pragma_table_info(?) WHERE pk > 0", [name]) == null ? 0 : 1;
     });
     capi.sqlite3session_table_filter(this.session, this.filter, 0);
@@ -288,6 +340,26 @@ class SessionCapture {
       const pInd = wasm.pstack.allocPtr();
       const pPk = wasm.pstack.allocPtr();
       const pPkN = wasm.pstack.allocPtr();
+      const pVal = wasm.pstack.allocPtr();
+      /*
+       * Text is carried as the string sqlite-wasm reads, which replaces bytes
+       * that are not UTF-8 (text made from a BLOB by CAST). Read back to the
+       * bytes SQLite holds and compared, so such text is never carried changed:
+       * the save fails, and no retry cures it (P3).
+       */
+      const exact = (read: (it: number, i: number, out: number) => number, i: number, v: unknown): unknown => {
+        if (typeof v !== "string") return v;
+        if (read(it, i, pVal)) return v;
+        const p = wasm.peekPtr(pVal);
+        const n = capi.sqlite3_value_bytes(p) as number;
+        const at = Number(capi.sqlite3_value_blob(p));
+        const held = wasm.heap8u().subarray(at, at + n);
+        const encoded = new TextEncoder().encode(v);
+        if (encoded.length !== n || encoded.some((b, j) => b !== held[j])) {
+          throw new Error("CHANGES_CAPTURE (sqlite3changeset_value: text that is not UTF-8)");
+        }
+        return v;
+      };
       while (capi.sqlite3changeset_next(it) === capi.SQLITE_ROW) {
         capi.sqlite3changeset_op(it, pTab, pN, pOp, pInd);
         const table = wasm.cstrToJs(wasm.peekPtr(pTab)) as string;
@@ -302,11 +374,11 @@ class SessionCapture {
           const isPk = wasm.peek8(Number(pkFlags) + i) !== 0;
           const name = names[i]!;
           if (op !== "INSERT") {
-            const v = capi.sqlite3changeset_old_js(it, i);
+            const v = exact(capi.sqlite3changeset_old, i, capi.sqlite3changeset_old_js(it, i));
             if (v !== undefined) (isPk ? entry.pk : entry.old)[name] = plain(v);
           }
           if (op !== "DELETE") {
-            const v = capi.sqlite3changeset_new_js(it, i);
+            const v = exact(capi.sqlite3changeset_new, i, capi.sqlite3changeset_new_js(it, i));
             if (v !== undefined) (isPk ? entry.pk : entry.new)[name] = plain(v);
           }
         }
@@ -399,6 +471,25 @@ export class Changes {
   private authorizer: unknown = null;
   /** Triggers on runtime tables an imported schema carried, dropped at open (T11). */
   readonly refused: string[] = [];
+  /** Set once a save has failed in a way no retry cures (P3): the sentence the person reads. Later writes are held. */
+  refusal: string | null = null;
+  /** True once the constructor has adopted what the document held: a table made after that is the application's. */
+  private started = false;
+  /** While an application's schema change runs (R-S): the tables it alters or drops, which the session leaves alone. */
+  private schemaChanging = false;
+  private readonly schemaTargets = new Set<string>();
+  /**
+   * Tables made since the last save, which the session does not capture; and
+   * every name whose table was made, dropped or renamed onto since then. At
+   * the next save each such name is logged by the difference between what its
+   * table holds and what its history shows (`unsettledChanges`).
+   */
+  private readonly uncaptured = new Set<string>();
+  private readonly unsettled = new Set<string>();
+  /** Tables whose flagged and held rows are decided again at the next apply: a rename here may place them now. */
+  private readonly redecide = new Set<string>();
+  /** The renames this copy made, as `here` reads them. */
+  private readonly shapeCache = new Map<string, string>();
   private readonly exec: (sql: Any) => unknown;
   /** The Rows view the authorship layer writes the log through. */
   readonly rows: Rows;
@@ -463,10 +554,11 @@ export class Changes {
     this.trusted(() => {
       // Foreign keys are enforced from open: the runtime never set it before, so a declared REFERENCES was decoration.
       if (capi.sqlite3_get_autocommit(db.pointer)) this.exec("PRAGMA foreign_keys = ON");
-      this.capture = new SessionCapture(sqlite3, db);
+      this.capture = new SessionCapture(sqlite3, db, (t) => this.uncaptured.has(t) || this.schemaTargets.has(t));
       this.adoptTables();
       this.counter = this.highestOwnCounter();
     });
+    this.started = true;
   }
 
   /**
@@ -524,8 +616,24 @@ export class Changes {
       capi.SQLITE_DROP_VIEW,
       capi.SQLITE_DROP_TEMP_VIEW,
     ]);
-    this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, _db: unknown, trigger: unknown): number => {
+    this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, db: unknown, trigger: unknown): number => {
       const target = writes.has(code) || named.has(code) ? a1 : onTable.has(code) ? a2 : null;
+      // A document refused under P3 holds every later write: nothing more is accepted that no save could log.
+      if (this.refusal && this.depth === 0 && target !== null) return capi.SQLITE_DENY;
+      /*
+       * A schema change to an application table runs only as `watch` runs it,
+       * between two capture epochs (R-S), which records the table it touches.
+       * One prepared any other way, or spelled so `watch` does not see it, is
+       * refused before it runs: it would break the capture under the save.
+       */
+      if ((code === capi.SQLITE_DROP_TABLE || code === capi.SQLITE_ALTER_TABLE) && this.depth === 0) {
+        const table = code === capi.SQLITE_DROP_TABLE ? a1 : a2;
+        const schema = code === capi.SQLITE_DROP_TABLE ? db : a1;
+        if (typeof table === "string" && !runtimeNamed(table) && schema !== "temp") {
+          if (!this.schemaChanging) return capi.SQLITE_DENY;
+          this.schemaTargets.add(table);
+        }
+      }
       if (typeof target !== "string" || !runtimeNamed(target)) return capi.SQLITE_OK;
       if (typeof trigger === "string" && trigger.length > 0) return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
       return this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
@@ -554,22 +662,234 @@ export class Changes {
     }
   }
 
-  /** The application's handle, watched for schema changes: a table it creates is adopted before its first row. */
+  /**
+   * The application's handle, watched for schema changes: a table it creates
+   * is adopted before its first row, and a script holding an ALTER TABLE or a
+   * DROP TABLE runs one statement at a time, so each such statement runs
+   * between two capture epochs (R-S, `schemaChange`).
+   */
   watch(handle: Any): void {
     const exec = handle.exec.bind(handle);
     handle.exec = (...args: Any[]): Any => {
-      const before = handle.selectValue("PRAGMA schema_version");
-      let result: Any;
-      try {
-        result = exec(...args);
-      } finally {
-        this.settleFrames();
+      // The runtime's own calls (its reads go through exec too) run as they are.
+      if (this.depth > 0) return exec(...args);
+      const sql = sqlOf(args);
+      if (!sql ||!/\b(ALTER|DROP)\b/i.test(sql.text)) return this.statement(handle, () => exec(...args));
+      const statements = splitStatements(this.sqlite3, sql.text);
+      if (!sql.plain) {
+        if (statements.filter(changesSchema).length === 0) return this.statement(handle, () => exec(...args));
+        if (statements.length > 1) throw new Error(`CHANGES_REFUSED: ${SCHEMA_REFUSED.alone}`);
+        return this.schemaChange(() => exec(...args));
       }
-      if (handle.selectValue("PRAGMA schema_version") !== before) this.adoptTables();
-      // An apply that waited for the application's transaction runs once it ends (R-S).
-      if (this.deferred && !this.inTransaction) this.projectAdmitted();
-      return result;
+      for (const s of statements) {
+        if (changesSchema(s)) this.schemaChange(() => exec(s));
+        else this.statement(handle, () => exec(s));
+      }
+      return handle;
     };
+  }
+
+  /** One statement, or one script with no schema change in it, as the application ran it. */
+  private statement(handle: Any, run: () => Any): Any {
+    const before = handle.selectValue("PRAGMA schema_version");
+    let result: Any;
+    try {
+      result = run();
+    } finally {
+      this.settleFrames();
+    }
+    if (handle.selectValue("PRAGMA schema_version") !== before) this.adoptTables();
+    // An apply that waited for the application's transaction runs once it ends (R-S).
+    if ((this.deferred || this.redecide.size > 0) && !this.inTransaction) this.projectAdmitted();
+    return result;
+  }
+
+  /**
+   * An ALTER TABLE or a DROP TABLE, between two capture epochs (R-S: DDL
+   * closes the epoch). The epoch is logged first, so no change the session
+   * holds is read back under the new schema; inside the application's
+   * transaction its log row is written in that transaction, and commits or
+   * rolls back with it. The statement runs with the table it alters or drops
+   * left out of the session, so what it does to that table's rows is the
+   * change's, while a cascade it causes elsewhere is captured. Then what it
+   * wrote is logged, and a new epoch begins with the new schema. A change the
+   * runtime cannot follow is undone and refused (`followSchema`).
+   */
+  private schemaChange(run: () => Any): Any {
+    const before = this.trusted(() => {
+      const shape = this.shapeOf();
+      this.closeEpoch();
+      this.exec("SAVEPOINT cs_schema");
+      return shape;
+    });
+    // The statement itself runs as the application's, under every check the authorizer makes of one.
+    this.schemaChanging = true;
+    let result: Any;
+    try {
+      result = run();
+      this.schemaChanging = false;
+      this.trusted(() => this.followSchema(before, this.shapeOf()));
+    } catch (e) {
+      this.schemaChanging = false;
+      this.schemaTargets.clear();
+      this.trusted(() => {
+        try {
+          this.exec("ROLLBACK TO cs_schema");
+          this.exec("RELEASE cs_schema");
+        } catch {
+          // A failure that rolled the whole transaction back took the savepoint with it.
+        }
+      });
+      this.settleFrames();
+      throw e;
+    }
+    this.trusted(() => {
+      this.exec("RELEASE cs_schema");
+      this.schemaTargets.clear();
+      this.settleFrames();
+      this.closeEpoch();
+    });
+    this.adoptTables();
+    if ((this.deferred || this.redecide.size > 0) && !this.inTransaction) this.projectAdmitted();
+    return result;
+  }
+
+  /** The application's tables and their columns, in order: what a schema change is read from. */
+  private shapeOf(): Map<string, string[]> {
+    return new Map(
+      appTablesOf(this.rows).map((t) => [t, this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [t]) as string[]]),
+    );
+  }
+
+  /**
+   * The runtime's records follow a schema change (R-S). A table or column
+   * renamed takes its history with it, and the rename is recorded, so a
+   * change made before it, arriving later, lands under the new name; a held
+   * row naming the new one is decided again (1d-M2). A table dropped, made,
+   * or made since the last save and renamed, is left to the next save, which
+   * logs it by difference (`unsettledChanges`). A dropped column is recorded,
+   * so a merged value for it is kept in the cells and not written. Refused
+   * before anything is changed: a declared column renamed or dropped, and a
+   * captured table renamed onto a name dropped since the last save.
+   */
+  private followSchema(before: Map<string, string[]>, after: Map<string, string[]>): void {
+    const gone = [...before.keys()].filter((t) => !after.has(t));
+    const made = [...after.keys()].filter((t) => !before.has(t));
+    const columnChanges: { table: string; from: string; to: string | null }[] = [];
+    for (const [table, was] of before) {
+      const now = after.get(table);
+      if (!now || now.join("\u0000") === was.join("\u0000")) continue;
+      if (now.length === was.length) {
+        const at = was.findIndex((c, i) => c !== now[i]);
+        if (at >= 0 && was.every((c, i) => i === at || c === now[i])) columnChanges.push({ table, from: was[at]!, to: now[at]! });
+      } else if (now.length < was.length) {
+        for (const c of was.filter((c) => !now.includes(c))) columnChanges.push({ table, from: c, to: null });
+      }
+    }
+    const renamed = gone.length === 1 && made.length === 1 ? { from: gone[0]!, to: made[0]! } : null;
+    for (const change of columnChanges) {
+      if (this.uncaptured.has(change.table)) continue;
+      const d = this.declaredOf(change.table);
+      if ([...d.coupled.flat(), ...d.consequential].includes(change.from)) throw new Error(`CHANGES_REFUSED: ${SCHEMA_REFUSED.declared}`);
+    }
+    if (renamed && !this.uncaptured.has(renamed.from) && this.unsettled.has(renamed.to)) {
+      throw new Error(`CHANGES_REFUSED: ${SCHEMA_REFUSED.renamedOnto}`);
+    }
+
+    const meta = ["_cs_cell", "_cs_sup", "_cs_seen", "_cs_flag", "_cs_held"];
+    if (renamed && this.uncaptured.has(renamed.from)) {
+      // Made since the last save: nothing of it is in the history, and both names are settled at the save.
+      this.uncaptured.delete(renamed.from);
+      this.uncaptured.add(renamed.to);
+      this.unsettled.add(renamed.from).add(renamed.to);
+      this.moveKeys(renamed.from, renamed.to);
+    } else if (renamed) {
+      for (const t of meta) {
+        const cols = (this.db.selectValues(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, [t]) as string[]).map(q);
+        const moved = cols.map((c) => (c === '"tbl"' ? "?" : c)).join(", ");
+        this.exec({ sql: `INSERT OR IGNORE INTO main.${t} (${cols.join(", ")}) SELECT ${moved} FROM main.${t} WHERE tbl = ?`, bind: [renamed.to, renamed.from] });
+        this.exec({ sql: `DELETE FROM main.${t} WHERE tbl = ?`, bind: [renamed.from] });
+      }
+      this.moveKeys(renamed.from, renamed.to);
+      this.exec({ sql: "INSERT OR REPLACE INTO main._cs_shape (kind, tbl, col, now) VALUES ('table', ?, '', ?)", bind: [renamed.from, renamed.to] });
+      this.exec({ sql: "UPDATE OR REPLACE main._cs_shape SET tbl = ? WHERE tbl = ? AND kind <> 'table'", bind: [renamed.to, renamed.from] });
+      this.exec({ sql: "DELETE FROM main._cs_shape WHERE kind = 'dropped' AND tbl = ? AND col = ''", bind: [renamed.to] });
+      this.redecide.add(renamed.to);
+    } else {
+      for (const t of gone) this.unsettled.add(t);
+    }
+    for (const change of columnChanges) {
+      if (this.uncaptured.has(change.table)) continue;
+      if (change.to === null) {
+        this.exec({ sql: "INSERT OR REPLACE INTO main._cs_shape (kind, tbl, col, now) VALUES ('dropped', ?, ?, NULL)", bind: [change.table, change.from] });
+        continue;
+      }
+      for (const t of ["_cs_cell", "_cs_sup"]) {
+        const cols = (this.db.selectValues(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, [t]) as string[]).map(q);
+        const moved = cols.map((c) => (c === '"col"' ? "?" : c)).join(", ");
+        this.exec({
+          sql: `INSERT OR IGNORE INTO main.${t} (${cols.join(", ")}) SELECT ${moved} FROM main.${t} WHERE tbl = ? AND col = ?`,
+          bind: [change.to, change.table, change.from],
+        });
+        this.exec({ sql: `DELETE FROM main.${t} WHERE tbl = ? AND col = ?`, bind: [change.table, change.from] });
+      }
+      this.exec({ sql: "UPDATE main._cs_shape SET now = ? WHERE kind = 'column' AND tbl = ? AND now = ?", bind: [change.to, change.table, change.from] });
+      this.exec({ sql: "INSERT OR REPLACE INTO main._cs_shape (kind, tbl, col, now) VALUES ('column', ?, ?, ?)", bind: [change.table, change.from, change.to] });
+      this.exec({ sql: "DELETE FROM main._cs_shape WHERE kind = 'dropped' AND tbl = ? AND col = ?", bind: [change.table, change.to] });
+      this.redecide.add(change.table);
+    }
+    this.shapeCache.clear();
+    this.keysCache.clear();
+    this.declaredCache.clear();
+    this.capture.schemaChanged();
+  }
+
+  /** A table's key record under its new name. */
+  private moveKeys(from: string, to: string): void {
+    this.exec({ sql: "INSERT OR REPLACE INTO main._cs_keys (tbl, kind, pk) SELECT ?, kind, pk FROM main._cs_keys WHERE tbl = ?", bind: [to, from] });
+    this.exec({ sql: "DELETE FROM main._cs_keys WHERE tbl = ?", bind: [from] });
+  }
+
+  /** What a name in another copy's changeset is called here, after the renames this copy made (1d-M2). */
+  private here(table: string, col?: string): string {
+    const key = col === undefined ? `t|${table}` : `c|${table}|${col}`;
+    let found = this.shapeCache.get(key);
+    if (found === undefined) {
+      if (col === undefined) {
+        found = table;
+        for (let i = 0; i < 32; i++) {
+          const next: unknown = this.db.selectValue("SELECT now FROM main._cs_shape WHERE kind = 'table' AND tbl = ? AND col = ''", [found]);
+          if (next == null || next === found) break;
+          found = String(next);
+        }
+      } else {
+        found = String(this.db.selectValue("SELECT now FROM main._cs_shape WHERE kind = 'column' AND tbl = ? AND col = ?", [table, col]) ?? col);
+      }
+      this.shapeCache.set(key, found);
+    }
+    return found;
+  }
+
+  /** Whether this copy dropped the table, or the column of it. */
+  private droppedHere(table: string, col = ""): boolean {
+    const key = `d|${table}|${col}`;
+    let found = this.shapeCache.get(key);
+    if (found === undefined) {
+      found = this.db.selectValue("SELECT 1 FROM main._cs_shape WHERE kind = 'dropped' AND tbl = ? AND col = ?", [table, col]) != null ? "1" : "";
+      this.shapeCache.set(key, found);
+    }
+    return found === "1";
+  }
+
+  /**
+   * Logs the capture epoch as it stands and starts the next (R-S), at a
+   * schema change. Inside the application's transaction the log row is
+   * written in it. The names left to the next save are not settled here: a
+   * table made in a rebuild is settled only once the rebuild is done.
+   */
+  private closeEpoch(): void {
+    this.trusted(() => this.saving({ epoch: true }));
+    this.capture.clear();
   }
 
   /**
@@ -609,7 +929,7 @@ export class Changes {
       "SELECT DISTINCT c.pk FROM _cs_cell c JOIN _cs_keys k ON k.tbl = c.tbl AND k.kind IN ('ranged', 'hidden')",
     ) as string[];
     for (const text of cells) {
-      const id = JSON.parse(text)[0];
+      const id = keyValues(text)[0];
       if (typeof id === "number" && id >= base && id < base + SPAN) high = Math.max(high, id - base);
     }
     return high;
@@ -655,6 +975,12 @@ export class Changes {
       const withoutRowid = /WITHOUT\s+ROWID\s*$/i.test(sql.trim());
       const virtual = /^\s*CREATE\s+VIRTUAL\b/i.test(sql);
       if (virtual) continue;
+      // Made by the application: logged at the next save by what it holds, not captured row by row, so a
+      // table a rebuild copies into is the rebuild's and not an edit (R-S).
+      if (this.started) {
+        this.uncaptured.add(table);
+        this.unsettled.add(table);
+      }
       let kind: KeyKind = "natural";
       const dflt = String(pks[0]?.dflt_value ?? "");
       if (pks.length === 0) {
@@ -849,7 +1175,7 @@ export class Changes {
    * signed is here, not in the log, until the next save (Q07).
    */
   get dirty(): boolean {
-    return !this.capture.isEmpty();
+    return !this.capture.isEmpty() || this.unsettled.size > 0;
   }
 
   /**
@@ -867,32 +1193,60 @@ export class Changes {
     return this.trusted(() => this.saving());
   }
 
-  private saving(): SavedChanges | null {
-    if (this.inTransaction) return null;
-    const ops = this.capture.changes();
-    if (ops.length === 0) {
-      // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
-      // over, so `dirty` says exactly whether a save has something to log.
-      if (!this.capture.isEmpty()) this.capture.clear();
-      return null;
-    }
-    let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string; touched: [string, string][] };
-    this.exec("SAVEPOINT cs_save");
+  /**
+   * `epoch`: a schema change closing the capture epoch, inside the
+   * application's transaction or not; it logs what the session holds and
+   * nothing else. Otherwise a save, which also settles every name a schema
+   * change left to it.
+   */
+  private saving(opts: { epoch?: boolean } = {}): SavedChanges | null {
+    if (this.refusal) return null;
+    if (this.inTransaction && !opts.epoch) return null;
+    let ops: ReturnType<SessionCapture["changes"]>;
+    let settling: { ops: ReturnType<SessionCapture["changes"]>; dropped: string[] } = { ops: [], dropped: [] };
+    let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string; touched: [string, string][] } | null = null;
     try {
-      const payloadOps = ops.map((op) => this.withBases(op));
-      const payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
-      const entity = crypto.getRandomValues(new Uint8Array(16));
-      const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
-      const ver = `${this.authorHex}:${row._r_seq}`;
-      const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
-      this.exec("RELEASE cs_save");
-      logged = { payloadOps, payload, ver, touched };
+      ops = this.capture.changes();
+      if (!opts.epoch) settling = this.unsettledChanges();
     } catch (e) {
-      this.exec("ROLLBACK TO cs_save");
-      this.exec("RELEASE cs_save");
-      throw e;
+      throw this.refusedBy(e);
     }
-    this.capture.clear();
+    const all = [...ops, ...settling.ops];
+    if (all.length > 0) {
+      this.exec("SAVEPOINT cs_save");
+      try {
+        let payloadOps: Op[];
+        let payload: Uint8Array;
+        try {
+          payloadOps = all.map((op) => this.withBases(op));
+          payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
+        } catch (e) {
+          throw this.refusedBy(e);
+        }
+        const entity = crypto.getRandomValues(new Uint8Array(16));
+        const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
+        const ver = `${this.authorHex}:${row._r_seq}`;
+        const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
+        this.exec("RELEASE cs_save");
+        logged = { payloadOps, payload, ver, touched };
+      } catch (e) {
+        this.exec("ROLLBACK TO cs_save");
+        this.exec("RELEASE cs_save");
+        throw e;
+      }
+    }
+    // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
+    // over too, so `dirty` says exactly whether a save has something to log.
+    if (logged || !this.capture.isEmpty()) this.capture.clear();
+    if (!opts.epoch) {
+      for (const t of settling.dropped) {
+        this.exec({ sql: "INSERT OR REPLACE INTO main._cs_shape (kind, tbl, col, now) VALUES ('dropped', ?, '', NULL)", bind: [t] });
+      }
+      if (settling.dropped.length) this.shapeCache.clear();
+      this.uncaptured.clear();
+      this.unsettled.clear();
+    }
+    if (!logged) return null;
     const { payloadOps, payload, ver, touched } = logged;
     // A save over a flagged or held row may have resolved it: decide it again.
     const marked = touched.filter(
@@ -904,6 +1258,95 @@ export class Changes {
     );
     if (marked.length) this.withoutCapture(() => this.project(marked));
     return { ver, ops: payloadOps.length, bytes: payload.length };
+  }
+
+  /**
+   * A save's failure, classified (P3). One a retry can cure (a busy or full
+   * database, a write that failed) is returned as it was, and the save is
+   * retried with everything it held. One no retry cures (the session cannot
+   * read back what it holds, or a value cannot be encoded) refuses the
+   * document: the sentence is kept in `refusal`, later writes are held, and
+   * no later save or merge runs, so nothing more is accepted that no save
+   * could log.
+   */
+  private refusedBy(e: unknown): Error {
+    const message = e instanceof Error ? e.message : String(e);
+    const rc = /CHANGES_CAPTURE \(sqlite3session_changeset rc=(\d+)\)/.exec(message);
+    const permanent =
+      e instanceof CborError || e instanceof TypeError || /CHANGES_CAPTURE \(sqlite3changeset_/.test(message) || (rc !== null && !RETRYABLE_RC.has(Number(rc[1])));
+    if (!permanent) return e instanceof Error ? e : new Error(message);
+    this.refusal = SAVE_REFUSED;
+    return new Error(`CHANGES_SAVE_REFUSED: ${SAVE_REFUSED}`, { cause: e });
+  }
+
+  /**
+   * Each name a schema change left to this save, logged by difference (R-S):
+   * what the table under that name holds now against what the history shows
+   * under it. A table made since the last save is all inserts, so its rows
+   * are logged as the application wrote them; a rebuild (a table made, filled,
+   * and renamed onto the name of the one it replaces) logs only what it
+   * changed, and a row it copied unchanged is no edit; a name with no table
+   * now logs a delete of each row its history shows, so a dropped table's
+   * rows go on every copy. A column the history has no value for in a row
+   * (one added since) is the schema change's, and is not compared. A held row
+   * is left as it is.
+   */
+  private unsettledChanges(): { ops: ReturnType<SessionCapture["changes"]>; dropped: string[] } {
+    const ops: ReturnType<SessionCapture["changes"]> = [];
+    const dropped: string[] = [];
+    const exists = new Set(appTablesOf(this.rows));
+    for (const table of [...this.unsettled].sort()) {
+      const keys = this.keysOf(table);
+      if (!keys || keys.pk.length === 0) continue;
+      const history = new Map<string, Record<string, unknown>>();
+      for (const pk of this.db.selectValues("SELECT DISTINCT pk FROM main._cs_cell WHERE tbl = ? ORDER BY pk", [table]) as string[]) {
+        if (this.db.selectValue("SELECT 1 FROM main._cs_held WHERE tbl = ? AND pk = ?", [table, pk]) != null) continue;
+        const state = this.stateOf(table, pk);
+        if (state && !state.deleted) history.set(pk, state.values);
+      }
+      const keyOf = (pk: string): Record<string, unknown> => Object.fromEntries(keyValues(pk).map((v, i) => [keys.pk[i]!, v]));
+      if (!exists.has(table)) {
+        for (const [pk, values] of history) ops.push({ table, op: "DELETE", pk: keyOf(pk), old: values, new: {} });
+        dropped.push(table);
+        continue;
+      }
+      const cols = (this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [table]) as string[]).filter((c) => !keys.pk.includes(c));
+      const current = new Map<string, Record<string, unknown>>();
+      const all = [...keys.pk, ...cols];
+      // Each text value with the bytes SQLite holds for it, so text that is not UTF-8 is refused here as at capture.
+      const raw = all.map((c, i) => `CASE WHEN typeof(${q(c)}) = 'text' THEN CAST(${q(c)} AS BLOB) END AS "_cs_raw_${i}"`);
+      for (const r of this.db.selectObjects(`SELECT ${[...all.map(q), ...raw].join(", ")} FROM main.${q(table)}`) as Any[]) {
+        all.forEach((c, i) => {
+          const held = r[`_cs_raw_${i}`] as Uint8Array | null;
+          const encoded = typeof r[c] === "string" ? new TextEncoder().encode(r[c]) : null;
+          if (held && encoded && (encoded.length !== held.length || encoded.some((b, j) => b !== held[j]))) {
+            throw new Error("CHANGES_CAPTURE (sqlite3changeset_value: text that is not UTF-8)");
+          }
+        });
+        const row = Object.fromEntries(all.map((c) => [c, plain(r[c])]));
+        current.set(keyText(keys.pk.map((c) => row[c])), row);
+      }
+      for (const [pk, row] of [...current].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+        const pkCols = Object.fromEntries(keys.pk.map((c) => [c, row[c]]));
+        const was = history.get(pk);
+        if (!was) {
+          ops.push({ table, op: "INSERT", pk: pkCols, old: {}, new: Object.fromEntries(cols.map((c) => [c, row[c] ?? null])) });
+          continue;
+        }
+        const changed = cols.filter((c) => c in was && !sameValue(was[c], row[c]));
+        if (changed.length) {
+          ops.push({
+            table,
+            op: "UPDATE",
+            pk: pkCols,
+            old: Object.fromEntries(changed.map((c) => [c, was[c]])),
+            new: Object.fromEntries(changed.map((c) => [c, row[c] ?? null])),
+          });
+        }
+      }
+      for (const [pk, values] of history) if (!current.has(pk)) ops.push({ table, op: "DELETE", pk: keyOf(pk), old: values, new: {} });
+    }
+    return { ops, dropped };
   }
 
   private stmt(sql: string): Any {
@@ -946,7 +1389,7 @@ export class Changes {
     const keys = this.keysOf(op.table);
     const keyCols = keys?.pk?.length ? keys.pk : Object.keys(op.pk);
     const k = keyCols.map((c) => op.pk[c]);
-    const pk = JSON.stringify(k);
+    const pk = keyText(k);
     const n = new Map<string, unknown>();
     const p = new Map<string, unknown>();
     const b = new Map<string, string[]>();
@@ -984,22 +1427,25 @@ export class Changes {
   /** Records one changeset's versions. Grow-only, so the order changesets arrive in does not matter. */
   private ingest(ops: Op[], ver: string, lc: number, author: string): [string, string][] {
     const touched: [string, string][] = [];
-    for (const [table, k, , n, , b, seen] of ops) {
-      const pk = JSON.stringify(k);
+    for (const [named, k, , n, , b, seen] of ops) {
+      // Under the names this copy uses: a table or column it renamed since the change was made (1d-M2).
+      const table = this.here(named);
+      const col = (c: string): string => (c === "" ? c : this.here(table, c));
+      const pk = keyText(k);
       // Any author's id in this author's range raises the counter, not only its own (K06, K07).
       this.counterAbove(table, k);
-      for (const [col, val] of n) {
+      for (const [c, val] of n) {
         this.runCached("INSERT OR IGNORE INTO _cs_cell (tbl, pk, col, ver, val, lc, author) VALUES (?, ?, ?, ?, ?, ?, ?)", [
           table,
           pk,
-          col,
+          col(c),
           ver,
           val ?? null,
           lc,
           author,
         ]);
       }
-      for (const [col, vers] of b) for (const v of vers) this.runCached("INSERT OR IGNORE INTO _cs_sup (tbl, pk, col, ver) VALUES (?, ?, ?, ?)", [table, pk, col, v]);
+      for (const [c, vers] of b) for (const v of vers) this.runCached("INSERT OR IGNORE INTO _cs_sup (tbl, pk, col, ver) VALUES (?, ?, ?, ?)", [table, pk, col(c), v]);
       for (const v of seen) this.runCached("INSERT OR IGNORE INTO _cs_seen (tbl, pk, del, ver) VALUES (?, ?, ?, ?)", [table, pk, ver, v]);
       touched.push([table, pk]);
     }
@@ -1022,11 +1468,13 @@ export class Changes {
    * what this copy had seen, so it stands as the person's change or as one
    * side of a pending conflict.
    */
-  projectAdmitted(): { changesets: number; rows: number; deferred?: boolean } {
+  projectAdmitted(): { changesets: number; rows: number; deferred?: boolean; refused?: boolean } {
     return this.trusted(() => this.projectingAdmitted());
   }
 
-  private projectingAdmitted(): { changesets: number; rows: number; deferred?: boolean } {
+  private projectingAdmitted(): { changesets: number; rows: number; deferred?: boolean; refused?: boolean } {
+    // A document refused under P3 applies nothing: its own epoch can no longer be logged first (R-S).
+    if (this.refusal) return { changesets: 0, rows: 0, refused: true };
     /*
      * The capture-epoch boundary (R-S, C07/Q08). The session records a row's
      * values as they are when it is extracted, so a merged value written into
@@ -1048,8 +1496,13 @@ export class Changes {
         WHERE NOT EXISTS (SELECT 1 FROM _cs_ingested i WHERE i.ver = lower(hex(c._r_replica)) || ':' || c._r_seq)
         ORDER BY _r_lc, author, _r_seq`,
     );
-    if (fresh.length === 0) return { changesets: 0, rows: 0 };
-    const touched: [string, string][] = [];
+    // The flagged and held rows of a table this copy renamed, decided again: the rename may place them.
+    const again = [...this.redecide];
+    this.redecide.clear();
+    const touched: [string, string][] = again.flatMap(
+      (t) => this.db.selectObjects("SELECT tbl, pk FROM main._cs_flag WHERE tbl = ? UNION SELECT tbl, pk FROM main._cs_held WHERE tbl = ?", [t, t]) as Any[],
+    ).map((r: Any) => [String(r.tbl), String(r.pk)] as [string, string]);
+    if (fresh.length === 0 && again.length === 0) return { changesets: 0, rows: 0 };
     this.withoutCapture(() => {
       for (const row of fresh) {
         const decoded = cborDecode(row["payload"] as Uint8Array) as unknown as [number, Op[]];
@@ -1286,7 +1739,8 @@ export class Changes {
   }
 
   private write(table: string, keys: Keys, k: unknown[], values: Record<string, unknown>): void {
-    const data = Object.keys(values).filter((c) => !keys.pk.includes(c));
+    // A column this copy dropped keeps its merged values in the cells, and is not written (R-S).
+    const data = Object.keys(values).filter((c) => !keys.pk.includes(c) && !this.droppedHere(table, c));
     const cols = [...keys.pk, ...data];
     const vals = [...k, ...data.map((c) => values[c] ?? null)];
     const update = data.map((c) => `${q(c)} = excluded.${q(c)}`).join(", ");
@@ -1297,11 +1751,18 @@ export class Changes {
   }
 
   private place(table: string, pk: string, force = false): void {
-    const keys = this.keysOf(table);
-    if (!keys) return;
     const state = this.stateOf(table, pk);
     if (!state) return;
-    const k = JSON.parse(pk) as unknown[];
+    // A table this copy does not have: one it dropped keeps the rows in the cells; any other holds them,
+    // flagged, until it is made here (a copy behind on a schema change, S05).
+    if (this.db.selectValue("SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = ? COLLATE NOCASE", [table]) == null) {
+      if (this.droppedHere(table) || state.deleted) return;
+      this.hold(table, pk, `no such table: ${table}`, state.values);
+      return;
+    }
+    const keys = this.keysOf(table);
+    if (!keys) return;
+    const k = keyValues(pk);
     if (state.deleted && !force) {
       this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, k);
       return;
@@ -1320,7 +1781,7 @@ export class Changes {
           const earlier = (x: Any, y: Any): boolean => (x && y ? x.lc < y.lc || (x.lc === y.lc && x.author < y.author) : !!x);
           if (earlier(mine, theirs)) {
             this.hold(table, occupant, `UNIQUE: lost the slot to ${pk}`, this.stateOf(table, occupant)?.values ?? {});
-            this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, JSON.parse(occupant));
+            this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, keyValues(occupant));
             this.write(table, keys, k, state.values);
             return;
           }
@@ -1355,7 +1816,7 @@ export class Changes {
         cols.map((c) => values[c]),
       ) as Any;
       if (hit) {
-        const other = JSON.stringify(keys.pk.map((c) => plain(hit[c])));
+        const other = keyText(keys.pk.map((c) => hit[c]));
         if (other !== pk) return other;
       }
     }
@@ -1375,10 +1836,10 @@ export class Changes {
         if (!child || !parentKeys) continue;
         const to = fk.map((f) => f.to ?? parentKeys.pk[0]);
         if (to.join(",") !== parentKeys.pk.join(",")) continue;
-        const pk = JSON.stringify(fk.map((f) => plain(child[f.from])));
+        const pk = keyText(fk.map((f) => child[f.from]));
         const state = this.stateOf(o.parent, pk);
         if (!state) {
-          this.flag(o.table, JSON.stringify([plain(o.rowid)]), "orphan", { parent: o.parent, key: pk });
+          this.flag(o.table, keyText([o.rowid]), "orphan", { parent: o.parent, key: pk });
           continue;
         }
         if (this.db.selectValue("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? AND kind = 'kept-referenced'", [o.parent, pk]) != null) continue;
@@ -1414,6 +1875,38 @@ export class Changes {
     if (this.authorizer) this.sqlite3.capi.sqlite3_set_authorizer(this.db.pointer, 0, 0);
     this.authorizer = null;
   }
+}
+
+/** The SQL an exec call carries, and whether it carries nothing else (no values bound, no callback, no rows asked for). */
+function sqlOf(args: Any[]): { text: string; plain: boolean } | null {
+  const [first, second] = args;
+  const bare = (o: unknown): boolean => o === undefined || (typeof o === "object" && o !== null && Object.keys(o).length === 0);
+  if (typeof first === "string") return { text: first, plain: bare(second) };
+  if (first && typeof first === "object" && typeof first.sql === "string") {
+    return { text: first.sql, plain: second === undefined && Object.keys(first).every((k) => k === "sql") };
+  }
+  return null;
+}
+
+/** A script cut into its statements where SQLite itself would end each one (sqlite3_complete), trigger bodies whole. */
+function splitStatements(sqlite3: Any, text: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  for (let i = text.indexOf(";"); i >= 0; i = text.indexOf(";", i + 1)) {
+    const piece = text.slice(start, i + 1);
+    if (sqlite3.capi.sqlite3_complete(piece)) {
+      out.push(piece);
+      start = i + 1;
+    }
+  }
+  if (text.slice(start).trim()) out.push(text.slice(start));
+  return out;
+}
+
+/** Whether a statement is an ALTER TABLE or a DROP TABLE, read past the comments in front of it. */
+function changesSchema(statement: string): boolean {
+  const head = statement.replace(/^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*/, "");
+  return /^(?:ALTER|DROP)\s+TABLE\b/i.test(head);
 }
 
 /** A statement's text with its whitespace runs made one space: how a stored trigger is compared with the runtime's. */

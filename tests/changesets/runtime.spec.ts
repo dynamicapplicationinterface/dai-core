@@ -9,6 +9,7 @@ import { compileDirectory } from "../../src/compile.js";
 import { decode as cborDecode } from "../../src/cbor.js";
 import { TO_DOCUMENT } from "../../src/bridge.js";
 import { FRAME_INTERNAL } from "../../src/frame.js";
+import { SAVE_REFUSED } from "../../src/refusals.js";
 
 /**
  * The ordinary data interface through the real runtime: a document with no
@@ -351,6 +352,40 @@ test.describe("the ordinary data interface, through the real runtime", () => {
       .filter((op) => op[0] === "notes")
       .map((op) => op[3].get("body"));
     expect(bodies, "the batch in flight holds only what was captured before it").toEqual(["in flight"]);
+  });
+
+  /**
+   * 1d-H2, P3. A save that fails and cannot succeed on a retry refuses the
+   * document: the host says the data interface's one sentence, the store keeps
+   * the last save that succeeded, and the application's next write is held.
+   * The shape is a real one: text made from a BLOB that is not UTF-8, which
+   * would be carried with its bytes replaced.
+   */
+  test("8. P3: a save no retry cures is one sentence, the last saved work is kept, and later writes are held", async ({ page }) => {
+    const file = await build(mkdtempSync(join(tmpdir(), "dai-cs-refused-")));
+    const app = await firstOpen(page, file);
+    const uuid = await uuidOf(page);
+    await sql(app, "INSERT INTO notes (body) VALUES ('kept')");
+    await expect
+      .poll(async () => query(await stored(page, uuid), "SELECT count(*) AS n FROM notes WHERE body = 'kept'")[0]?.["n"], {
+        timeout: 60_000,
+        message: "the first edit is saved",
+      })
+      .toBe(1);
+    await sql(app, "INSERT INTO notes (body) VALUES (CAST(x'ff41' AS TEXT))");
+    await expect(page.locator("#doc-note"), "the refusal, as its own sentence").toHaveText(SAVE_REFUSED, { timeout: 60_000 });
+    await expect(page.locator("#save-state")).toHaveText("Not saved");
+    const held = await app.locator("#app").evaluate((_el) => {
+      try {
+        (window as unknown as { __db: { exec(s: string): unknown } }).__db.exec("INSERT INTO notes (body) VALUES ('after')");
+        return "written";
+      } catch (e) {
+        return String(e);
+      }
+    });
+    expect(held, "a later write is held").toMatch(/not authorized/);
+    const kept = query(await stored(page, uuid), "SELECT body FROM notes ORDER BY id").map((r) => r["body"]);
+    expect(kept, "the store holds the last save that succeeded").toEqual(["seed one", "seed two", "kept"]);
   });
 });
 
