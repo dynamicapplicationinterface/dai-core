@@ -18,7 +18,7 @@
  */
 
 import { hiddenKeyTables } from "./changes-log.js";
-import { DECLARATION, declarationLines, marksPolicyLayer, ONE_SHAPE } from "./declarations.js";
+import { DECLARATION, declarationLines, marksPolicyLayer, ONE_SHAPE, RESERVED_NAME, reservedNames } from "./declarations.js";
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
 import { seatWritesIn } from "./seat-check.js";
@@ -236,6 +236,7 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
     ),
     ...lintOneShape(files),
     ...lintDeclarations(files),
+    ...lintReservedNames(files),
     ...lintShared(files),
     ...lintLiteralIds(files),
     ...lintPositionalInserts(files),
@@ -248,6 +249,14 @@ function lintOneShape(files: Record<string, string>): (Finding & { file: string 
     .filter(([name]) => /\.sql$/i.test(name))
     .filter(([, source]) => marksPolicyLayer(source))
     .map(([file]) => ({ ...ONE_SHAPE, file }));
+}
+
+/* A schema object named with a reserved prefix in any spelling (1e-M1, 1e-M2): the scan is src/declarations.ts's, shared with the compiler. */
+function lintReservedNames(files: Record<string, string>): (Finding & { file: string })[] {
+  return Object.entries(files)
+    .filter(([name]) => /\.sql$/i.test(name))
+    .filter(([, source]) => reservedNames(source).length > 0)
+    .map(([file]) => ({ ...RESERVED_NAME, file }));
 }
 
 /*

@@ -83,8 +83,13 @@ const folded = (name: string): string => name.normalize("NFKC").toLowerCase();
 /** The runtime's own objects: the application reads them, and never writes them or hangs code on them (T11, P01). */
 const runtimeNamed = (name: string): boolean => /^(_dai|_cs_)/.test(folded(name));
 
-/** The runtime's own tables and SQLite's, never captured and never adopted. */
-const internalNamed = (name: string): boolean => runtimeNamed(name) || folded(name).startsWith("sqlite_");
+/**
+ * The runtime's own tables and SQLite's, never captured and never adopted.
+ * SQLite reserves sqlite_ in ASCII case only, as it compares names, so a
+ * table an application named in another spelling of it (one the compiler
+ * refuses, 1e-M2) is the application's, and is captured.
+ */
+const internalNamed = (name: string): boolean => runtimeNamed(name) || /^sqlite_/i.test(name);
 
 const META = `
 CREATE TABLE IF NOT EXISTS _cs_cell (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, ver TEXT NOT NULL, val, lc INTEGER NOT NULL, author TEXT NOT NULL, PRIMARY KEY (tbl, pk, col, ver)) WITHOUT ROWID;
@@ -837,7 +842,8 @@ export class Changes {
         // A virtual table is not carried (C04): written where an imported document holds one.
         if (writes.has(code) && typeof a1 === "string" && db !== "temp" && this.virtualSet.has(folded(a1))) return deny(REFUSED.virtual);
         // Only the document's own database is kept (S06).
-        // An empty name is SQLite's own temporary database, as VACUUM attaches one: as ephemeral as TEMP.
+        // An empty name passes here only for VACUUM, which attaches one as it runs: the application's own
+        // ATTACH '' is refused by its text, before it is prepared (`schemaStatements`, 1e-L2).
         if (code === capi.SQLITE_ATTACH && typeof a1 === "string" && a1 !== "") return deny(REFUSED.attach);
         // The settings the runtime's assumptions rest on are the runtime's (P03): set, not read.
         if (code === capi.SQLITE_PRAGMA && typeof a2 === "string" && typeof a1 === "string" && RUNTIME_PRAGMAS.has(a1.toLowerCase())) return deny(REFUSED.pragma);
@@ -974,7 +980,7 @@ export class Changes {
    * those no-ops admitted to the authorizer.
    */
   private admitted<T>(text: string | null, run: () => T): T {
-    const names = text !== null && /\b(?:CREATE|ALTER|DROP)\b/i.test(text) ? this.schemaStatements(text) : null;
+    const names = text !== null && /\b(?:CREATE|ALTER|DROP|ATTACH|DETACH)\b/i.test(text) ? this.schemaStatements(text) : null;
     if (!names?.size) return run();
     const was = this.admitting;
     this.admitting = names;
@@ -996,6 +1002,8 @@ export class Changes {
   private schemaStatements(text: string): Set<string> {
     const admitted = new Set<string>();
     for (const statement of splitStatements(this.sqlite3, text)) {
+      // Only the document's own database is kept (S06): SQLite's own temporary one, named '', included (1e-L2).
+      if (["attach", "detach"].includes(sqlTokens(statement)[0] ?? "")) throw new Error(`CHANGES_REFUSED: ${REFUSED.attach}`);
       const create = createOf(statement);
       if (create === undefined) continue;
       if (create === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);

@@ -180,8 +180,42 @@ export function marksPolicyLayer(sql: string): boolean {
  */
 export function schemaRefusal(sql: string, options: { policyLayer?: boolean } = {}): string | null {
   if (declarationLines(sql).some((line) => !line.ok)) return `DAI: ${DECLARATION.what} ${DECLARATION.fix}`;
+  if (reservedNames(sql).length > 0) return `DAI: ${RESERVED_NAME.what} ${RESERVED_NAME.fix}`;
   if (marksPolicyLayer(sql) && options.policyLayer !== true) return `DAI: ${ONE_SHAPE.what} ${ONE_SHAPE.fix}`;
   return null;
+}
+
+/** The one message for a schema object named with a reserved prefix in any spelling: the lint's finding and the compiler's refusal. */
+export const RESERVED_NAME = {
+  id: "reserved-name",
+  what: "Its schema names a table, index, trigger or view with a prefix the runtime or SQLite reserves (_dai, _cs_, sqlite_), in some spelling.",
+  why:
+    "The runtime keeps its own records under _dai and _cs_, and SQLite its own under sqlite_. A name that folds to one " +
+    "of them, in any case or character width (ſqlite_, ＳＱＬＩＴＥ_, _ｃｓ_), reads as theirs to a reader or a host, so " +
+    "the application's rows under it could be left out of what is saved and sent.",
+  fix: "Rename it so it starts with none of _dai, _cs_ or sqlite_, in any case or character width.",
+};
+
+/**
+ * The names a schema gives its tables, indexes, triggers and views that fold
+ * to a reserved prefix (1e-M1, 1e-M2): Unicode compatibility forms and case
+ * folded, as the runtime compares names. Comments are not read.
+ */
+export function reservedNames(sql: string): string[] {
+  const text = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+  const name = String.raw`("(?:[^"]|"")*"|\x60[^\x60]*\x60|\[[^\]]*\]|[^\s(.;,]+)`;
+  const made = new RegExp(
+    String.raw`\bCREATE\s+(?:TEMP\s+|TEMPORARY\s+)?(?:UNIQUE\s+)?(?:VIRTUAL\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?` + name + String.raw`(?:\s*\.\s*` + name + ")?",
+    "gi",
+  );
+  const unquote = (n: string): string =>
+    /^".*"$/s.test(n) ? n.slice(1, -1).split('""').join('"') : /^(\[.*\]|\x60.*\x60)$/s.test(n) ? n.slice(1, -1) : n;
+  const out: string[] = [];
+  for (const m of text.matchAll(made)) {
+    const n = unquote(m[2] ?? m[1]!);
+    if (/^(_dai|_cs_|sqlite_)/.test(n.normalize("NFKC").toLowerCase())) out.push(n);
+  }
+  return out;
 }
 
 /** The one message for a declaration that does not read exactly: the lint's finding and the compiler's refusal. */
