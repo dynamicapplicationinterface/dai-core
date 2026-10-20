@@ -316,6 +316,9 @@ principle beside them.
     code names its next action before release. Recorded in format-design.md's
     properties as a product principle, not a format rule. *Rejected:*
     technically safe dead ends; promising data survives deletion everywhere.
+    *Added 19 October:* a save that fails and cannot succeed on a retry is a
+    document-level refusal: one sentence, the last saved work kept, Save a
+    copy offered, later writes held.
 
 ### The owner/author rulings (18 October)
 
@@ -611,6 +614,8 @@ and causal baseline.
 - The local epoch is logged and the session rotated BEFORE any remote apply
   or runtime bookkeeping touches the database.
 - Remote apply runs on a connection carrying no app TEMP triggers.
+- DDL closes the capture epoch (added 19 October): the epoch is logged,
+  the DDL executes, and a new epoch begins with the new schema.
 
 Nothing arriving remotely, written by the runtime, or occurring after
 extraction can become part of the person's authorship.
@@ -638,6 +643,13 @@ and compile options are recorded in `docs/format.md` as the conformance
 baseline. Keyless capture is by the explicit `_dai_id` column, not the
 session's rowid mode: rowids do not survive VACUUM. *Evidence:* the
 catalog, C01, S10, P11, and its version corrections.
+
+**R-V. Refuse before accepting.** Ruled 19 October. Every SQLite shape the
+data interface does not support is refused at execution, before any data
+is accepted under it. No input is accepted and then mishandled.
+*Rejected:* accepting a write and losing, misattributing or diverging it
+later, at the save or on another copy. *Evidence:* the review of Builds
+1c and 1d (`handoff-2026-10-19.md`), 1d-H1 to 1d-H5.
 
 ### The data interface's runtime rules
 
