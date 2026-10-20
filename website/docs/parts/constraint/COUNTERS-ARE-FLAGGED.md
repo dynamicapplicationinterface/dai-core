@@ -3,9 +3,9 @@
 ::: info COUNTERS-ARE-FLAGGED
 **A counter two people change at once is flagged, not added up**
 
-qty = qty + 1 on two copies at once is not summed when they merge: the runtime keeps both numbers, shows one, and marks the row pending until someone writes it again. For something several people add to, insert a row per addition and count the rows.
+qty = qty + 1 on two copies at once is not summed: the row is pending, both numbers kept, until someone writes it again. For something several people add to, insert a row per addition and count the rows.
 
-**Why.** A change travels as the value it left, not the arithmetic: qty = qty + 1 and qty = 6 are the same change. Summing would guess at intent, and a wrong guess is a silent loss; a flag is not.
+**Why.** A change travels as the value it left, not the arithmetic; summing would guess at intent, and a flag never loses.
 
 <small>Applies to every shape · refused at run time · [COUNTERS-ARE-FLAGGED in Constraints](/docs/constraints#COUNTERS-ARE-FLAGGED)</small>
 :::

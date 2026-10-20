@@ -327,7 +327,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     rule:
       "Compute a total, a count, a balance or a \"how many left\" in the query that shows it (SELECT count(*) FROM workouts, SELECT sum(amount) FROM entries). Never keep one in a column that a trigger or the application updates as rows are added or changed.",
     why:
-      "Two copies that each add a row each store the total they computed, and after a merge both agree on a wrong number: two workouts, a count of 1. The runtime keeps both versions and marks the row pending; it does not guess. A total read from the rows is right on every copy.",
+      "Two copies that each add a row each store their own total, and the merge cannot know the right one: it keeps both, pending. A total read from the rows is right on every copy.",
     enforced: ["prose"],
     anchors: [{ file: "src/changesets.ts", contains: "Two concurrent versions are a conflict even when their values are equal" }],
   },
@@ -337,11 +337,22 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "qty = qty + 1 on two copies at once is not summed when they merge: the runtime keeps both numbers, shows one, and marks the row pending until someone writes it again. For something several people add to, insert a row per addition and count the rows.",
+      "qty = qty + 1 on two copies at once is not summed: the row is pending, both numbers kept, until someone writes it again. For something several people add to, insert a row per addition and count the rows.",
     why:
-      "A change travels as the value it left, not the arithmetic: qty = qty + 1 and qty = 6 are the same change. Summing would guess at intent, and a wrong guess is a silent loss; a flag is not.",
+      "A change travels as the value it left, not the arithmetic; summing would guess at intent, and a flag never loses.",
     enforced: ["runtime"],
     anchors: [{ file: "src/changesets.ts", contains: "Two concurrent versions are a conflict even when their values are equal" }],
+  },
+  {
+    id: "NO-REFUSED-SQL",
+    title: "What the runtime refuses",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "Refused as it runs: virtual tables; ATTACH; rowid on an INTEGER-keyed table; a NULL key; names starting _dai, _cs_ or dai_; triggers writing those tables; PRAGMA writable_schema. Run ALTER and DROP TABLE through exec; rebuild a table (create, copy, drop, rename) in one transaction.",
+    why: "Each would be kept here and lost elsewhere; refused, nothing is written.",
+    enforced: ["runtime"],
+    anchors: [{ file: "src/changesets.ts", contains: "export const REFUSED = {" }],
   },
   {
     id: "WRITE-AS-IT-HAPPENS",
