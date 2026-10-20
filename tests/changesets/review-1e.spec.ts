@@ -103,13 +103,13 @@ test("M15: a value's storage class is kept through the baseline, the alternative
   }
   const shown = a.db.selectValue("SELECT typeof(v) FROM vals");
   expect(b.db.selectValue("SELECT typeof(v) FROM vals"), "shown in one class on both").toBe(shown);
-  // The resolution to the value shown, which changes no byte, is logged in that class.
+  // Writing the value shown back changes no byte: an echo, which logs nothing and leaves the class as it was (R-X).
   a.db.exec("UPDATE vals SET v = v WHERE id = 1");
-  a.save();
+  expect(a.save()).toBeNull();
   await b.mergeFrom(await a.bytes());
   for (const c of [a, b]) {
-    expect(c.db.selectValue("SELECT typeof(v) FROM vals"), "resolved, the class kept").toBe(shown);
-    expect(c.flags()).toEqual([]);
+    expect(c.db.selectValue("SELECT typeof(v) FROM vals"), "the class kept").toBe(shown);
+    expect(c.flags().map((f: Any) => f.kind), "still pending").toEqual(["pending"]);
   }
   // A copy made from the log alone.
   const c = await Copy.open(await person(), await b.bytes());

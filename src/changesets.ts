@@ -686,26 +686,6 @@ export class Changes {
      */
     db.createFunction("last_insert_rowid", () => this.lastInsert.id ?? 0, { arity: 0, deterministic: false });
     /*
-     * A column of a flagged row the application wrote (RW-12, R-S). Writing
-     * the value a pending row shows changes no byte, so the session records
-     * nothing, and the resolution was lost. Each column's runtime trigger
-     * (`touchTriggers`) names the write here, and the next save logs the shown
-     * value as that column's: a new version superseding what this copy saw.
-     * Kept in TEMP, in the application's transaction, so a write that rolls
-     * back takes its note with it; written as the runtime, so the
-     * application's counts are its own (D08).
-     */
-    db.createFunction(
-      "dai_touched",
-      (_c: unknown, t: unknown, col: unknown, ...k: unknown[]) => {
-        this.trusted(() =>
-          this.exec({ sql: "INSERT OR IGNORE INTO temp._cs_touch (tbl, pk, col) VALUES (?, ?, ?)", bind: [String(t), this.identity(String(t), k), String(col)] }),
-        );
-        return null;
-      },
-      { arity: -1, deterministic: false },
-    );
-    /*
      * changes() and total_changes() answer for the application's statements
      * only (D08). The runtime writes on the same connection (a save's log row,
      * a seal, a merged row), and native SQLite would count those: changes()
@@ -715,7 +695,6 @@ export class Changes {
     db.createFunction("changes", () => (this.runtimeWrote ? this.appChanges : Number(capi0.sqlite3_changes(db.pointer))), { arity: 0, deterministic: false });
     db.createFunction("total_changes", () => Number(capi0.sqlite3_total_changes(db.pointer)) - this.runtimeChanges, { arity: 0, deterministic: false });
     this.exec(META);
-    this.exec("CREATE TEMP TABLE IF NOT EXISTS _cs_touch (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, PRIMARY KEY (tbl, pk, col)) WITHOUT ROWID");
     // Before any write the runtime trusts: a trigger an imported schema hung on a runtime table is gone (T11).
     this.refuseForeignTriggers();
     this.authorize();
@@ -1179,7 +1158,6 @@ export class Changes {
       });
     }
     this.slotEveryInsert();
-    this.touchTriggers();
     this.refuseNullKeys();
     this.guardTriggers();
     this.keysCache.clear();
@@ -1252,35 +1230,6 @@ export class Changes {
       if (!sql || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
       this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${tbl}`)} AFTER INSERT ON ${q(tbl)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.rowid); END`);
     }
-  }
-
-  /**
-   * One runtime trigger per column of each table, naming a write the
-   * application makes to a row flagged pending or delete-conflict
-   * (`dai_touched`, RW-12). `UPDATE OF` fires only for the columns the
-   * statement sets, so a write to one column names that column alone (RW-09).
-   * Standing down while merged rows are applied. TEMP, so they are this
-   * connection's and never the document's: a reader applying the log fires
-   * none of them. The application makes no TEMP trigger (R-W), so every TEMP
-   * trigger is one of these.
-   */
-  private touchTriggers(): void {
-    const want = new Map<string, string>();
-    for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys") as Any[]) {
-      const keys = String(pk).split(",").filter(Boolean);
-      if (!keys.length) continue;
-      const at = keys.map((c) => `NEW.${q(c)}`).join(", ");
-      const cols = this.db.selectValues("SELECT name FROM pragma_table_xinfo(?, 'main') WHERE hidden = 0 ORDER BY cid", [tbl]) as string[];
-      for (const col of cols.filter((c) => !keys.includes(c))) {
-        want.set(
-          `_cs_touch_${tbl}_${col}`,
-          `AFTER UPDATE OF ${q(col)} ON main.${q(tbl)} WHEN dai_projecting() = 0 AND (EXISTS (SELECT 1 FROM main._cs_flag ` +
-            `WHERE tbl = ${sqlText(tbl)} AND kind IN ('pending', 'delete-conflict') AND pk = dai_key(${sqlText(tbl)}, ${at}))) ` +
-            `BEGIN SELECT dai_touched(${sqlText(tbl)}, ${sqlText(col)}, ${at}); END`,
-        );
-      }
-    }
-    for (const [name, body] of want) this.exec(`CREATE TEMP TRIGGER IF NOT EXISTS ${q(name)} ${body}`);
   }
 
   /**
@@ -1455,7 +1404,10 @@ export class Changes {
    * signed is here, not in the log, until the next save (Q07).
    */
   get dirty(): boolean {
-    return !this.capture.isEmpty() || this.touchCount() > 0;
+    // The session counts a row an UPDATE named as touched though no value changed: an echo, which a save
+    // logs nothing for (R-X). Dirty is what the next save would log.
+    if (this.capture.isEmpty()) return false;
+    return this.trusted(() => this.respelled(this.capture.changes()).length > 0);
   }
 
   /**
@@ -1501,7 +1453,7 @@ export class Changes {
     let ops: ReturnType<SessionCapture["changes"]>;
     let logged: { payloadOps: Op[]; payload: Uint8Array; ver: string } | null = null;
     try {
-      ops = this.withTouches(this.respelled(this.capture.changes()));
+      ops = this.respelled(this.capture.changes());
     } catch (e) {
       throw this.refusedBy(e);
     }
@@ -1532,7 +1484,6 @@ export class Changes {
           const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
           const ver = `${this.authorHex}:${row._r_seq}`;
           const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
-          this.exec("DELETE FROM temp._cs_touch");
           // A save over a flagged or held row may have resolved it: decide it again.
           const marked = touched.filter(
             ([t, pk]) =>
@@ -1550,9 +1501,6 @@ export class Changes {
       } finally {
         if (fk) this.exec("PRAGMA foreign_keys = ON");
       }
-    } else if (this.touchCount() > 0) {
-      // Notes of writes to rows since gone: nothing of them to log.
-      this.exec("DELETE FROM temp._cs_touch");
     }
     // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
     // over too, so `dirty` says exactly whether a save has something to log.
@@ -1625,50 +1573,6 @@ export class Changes {
       else out[ins] = { table: n.table, op: "UPDATE", pk: n.pk, old: was, new: now };
     }
     return out.filter((_, i) => !drop.has(i));
-  }
-
-  /** How many column writes to flagged rows wait for the next save (`dai_touched`). */
-  private touchCount(): number {
-    return Number(this.trusted(() => this.db.selectValue("SELECT count(*) FROM temp._cs_touch")));
-  }
-
-  /**
-   * The captured changes, with each column write to a flagged row the
-   * session did not record (RW-12): the value the row shows, written as that
-   * column's new version. Merged into the row's UPDATE where there is one; a
-   * row since inserted or deleted, or gone, has nothing to add.
-   */
-  private withTouches(ops: ReturnType<SessionCapture["changes"]>): ReturnType<SessionCapture["changes"]> {
-    const touches = this.db.selectObjects("SELECT tbl, pk, col FROM temp._cs_touch ORDER BY tbl, pk, col") as Any[];
-    if (touches.length === 0) return ops;
-    const out = ops.slice();
-    const byRow = new Map<string, (typeof out)[number]>();
-    for (const op of out) {
-      const keys = this.keysOf(op.table);
-      const cols = keys?.pk.length ? keys.pk : Object.keys(op.pk);
-      byRow.set(`${op.table}\u0000${this.identity(op.table, cols.map((c) => op.pk[c]))}`, op);
-    }
-    for (const t of touches) {
-      const table = String(t.tbl);
-      const col = String(t.col);
-      const keys = this.keysOf(table);
-      if (!keys?.pk.length) continue;
-      const at = `${table}\u0000${t.pk}`;
-      let op = byRow.get(at);
-      if (op && (op.op !== "UPDATE" || col in op.new)) continue;
-      const read = [...keys.pk, col].map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ");
-      const now = this.db.selectObject(`SELECT ${read} FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(String(t.pk)).map(compared)) as Any;
-      if (!now) continue;
-      if (!op) {
-        op = { table, op: "UPDATE", pk: Object.fromEntries(keys.pk.map((c) => [c, typed(now[`_cs_t_${c}`], now[c])])), old: {}, new: {} };
-        out.push(op);
-        byRow.set(at, op);
-      }
-      const v = typed(now[`_cs_t_${col}`], now[col]);
-      op.old[col] = v;
-      op.new[col] = v;
-    }
-    return out;
   }
 
   /**

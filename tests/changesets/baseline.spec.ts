@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { Copy, DOC, openBytes, person } from "./copy.js";
+import { Copy, DOC, openBytes } from "./copy.js";
 import { decode as cborDecode } from "../../src/cbor.js";
 import * as merge from "../../src/replicated-frame.js";
 import { base, item } from "./scenarios.js";
@@ -145,39 +145,25 @@ test("RW-11: a save that fails after extraction, after logging, or after the bas
   clean.b.close();
 });
 
-test("RW-12: a resolution to the displayed value is recorded though no byte changed, and a later unseen alternative is not erased", async () => {
+/*
+ * RW-12's outcome stands: a resolution to the displayed value is recorded
+ * though no byte changed. Its mechanism, a write of the displayed value read
+ * as a resolution, is retired by R-X: that SQL is indistinguishable from a
+ * form writing an untouched field back. The resolution is the kit's explicit
+ * call (`resolution.spec.ts`); the write is an echo.
+ */
+test("RW-12, under R-X: writing the displayed value back is an echo, which logs nothing and resolves nothing", async () => {
   const { a, b } = await pendingTitle();
   const tent = tentOf(a);
   const shown = a.db.selectValue("SELECT title FROM items WHERE id = ?", [tent]);
   const seq = lastSeq(a);
-  // The person keeps what they see: the same bytes, written.
   a.db.exec({ sql: "UPDATE items SET title = ? WHERE id = ?", bind: [shown, tent] });
-  expect(a.changes.dirty, "the resolution is something to save").toBe(true);
-  expect(a.save(), "it is logged").not.toBeNull();
-  expect(opsAt(a, seq + 1), "as a write of the title").toEqual([["items", [tent], "U", ["title"]]]);
-  expect(a.flags(), "resolved here").toEqual([]);
+  expect(a.changes.dirty, "nothing to save").toBe(false);
+  expect(a.save()).toBeNull();
+  expect(lastSeq(a), "nothing logged").toBe(seq);
+  expect(a.flags().map((f: Any) => f.kind), "still pending").toEqual(["pending"]);
   await b.mergeFrom(await a.bytes());
-  expect(b.flags(), "and on the other copy").toEqual([]);
-  expect(b.db.selectValue("SELECT title FROM items WHERE id = ?", [tent])).toBe(shown);
+  expect(b.flags().map((f: Any) => f.kind), "and on the other copy").toEqual(["pending"]);
   a.close();
   b.close();
-});
-
-test("RW-12: a third copy's alternative A never saw stays pending after A's resolution", async () => {
-  const { a, b } = await base();
-  const tent = item(a, "Tent");
-  const third = await Copy.open(await person(), await a.bytes());
-  a.db.exec({ sql: "UPDATE items SET title = 'Tent (2p)' WHERE id = ?", bind: [tent] });
-  b.db.exec({ sql: "UPDATE items SET title = 'Tent (4p)' WHERE id = ?", bind: [tent] });
-  third.db.exec({ sql: "UPDATE items SET title = 'Tent (6p)' WHERE id = ?", bind: [tent] });
-  await a.mergeFrom(await b.bytes());
-  const shown = a.db.selectValue("SELECT title FROM items WHERE id = ?", [tent]);
-  a.db.exec({ sql: "UPDATE items SET title = ? WHERE id = ?", bind: [shown, tent] });
-  a.save();
-  expect(a.flags(), "A resolved what it saw").toEqual([]);
-  await a.mergeFrom(await third.bytes());
-  const pending = a.flags().find((f: Any) => f.kind === "pending");
-  expect(pending, "the third copy's title, unseen, is pending against A's resolution").toBeDefined();
-  expect(JSON.parse(pending.detail)[0].values.map((v: Any) => v.val).sort()).toEqual([shown, "Tent (6p)"].sort());
-  for (const c of [a, b, third]) c.close();
 });
