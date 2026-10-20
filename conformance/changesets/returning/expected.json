@@ -1,0 +1,133 @@
+{
+  "scenario": "D07 returning",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 4986749088432136,
+          "item_id": 4986749088432134,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 4986749088432129,
+          "name": "Food"
+        },
+        {
+          "id": 4986749088432130,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 4986749088432129,
+          "done": 0,
+          "id": 4986749088432131,
+          "note": null,
+          "qty": 11,
+          "title": "Bread"
+        },
+        {
+          "category_id": 4986749088432130,
+          "done": 0,
+          "id": 4986749088432132,
+          "note": null,
+          "qty": 11,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4986749088432133,
+          "note": "from B",
+          "qty": 11,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4986749088432134,
+          "note": null,
+          "qty": 11,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4986749088432135,
+          "note": null,
+          "qty": 11,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [],
+    "held": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 4986749088432136,
+          "item_id": 4986749088432134,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 4986749088432129,
+          "name": "Food"
+        },
+        {
+          "id": 4986749088432130,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 4986749088432129,
+          "done": 0,
+          "id": 4986749088432131,
+          "note": null,
+          "qty": 11,
+          "title": "Bread"
+        },
+        {
+          "category_id": 4986749088432130,
+          "done": 0,
+          "id": 4986749088432132,
+          "note": null,
+          "qty": 11,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4986749088432133,
+          "note": "from B",
+          "qty": 11,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4986749088432134,
+          "note": null,
+          "qty": 11,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4986749088432135,
+          "note": null,
+          "qty": 11,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [],
+    "held": []
+  }
+}

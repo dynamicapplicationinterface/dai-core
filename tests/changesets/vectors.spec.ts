@@ -25,13 +25,17 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ROOT = join(repo, "conformance", "changesets");
 const PYTHON = process.platform === "win32" ? "python" : "python3";
 
-/** The five vectors, each from one of test 3's scenarios. */
+/** The vectors, each from one merge scenario (`scenarios.ts`). */
 const VECTORS: Record<string, string> = {
   "different-rows": "S1 inserts",
   "different-columns": "S2 columns",
   "same-column": "S3 same column",
   "delete-update": "S4 delete/update",
   "trigger-suppressed": "S8 app trigger",
+  "key-moved": "K12 key moved",
+  "returning": "D07 returning",
+  "resolution": "RW-12 resolution",
+  "respelled-key": "1e-H3 respelled key",
 };
 
 interface Applied {
@@ -67,6 +71,8 @@ test("write the changeset vectors (only when asked)", async () => {
   test.skip(process.env["DAI_WRITE_CHANGESET_VECTORS"] !== "1", "the vectors are committed; set DAI_WRITE_CHANGESET_VECTORS=1 to write them again");
   test.setTimeout(180_000);
   for (const [name, scenario] of Object.entries(VECTORS)) {
+    // Written once: a vector already committed keeps its bytes.
+    if (existsSync(join(ROOT, name))) continue;
     const s = SCENARIOS[scenario]!;
     const { a, b } = await base({ trigger: s.trigger, extra: s.extra });
     await s.write(a, b);
@@ -87,7 +93,7 @@ test("write the changeset vectors (only when asked)", async () => {
   }
 });
 
-test("the five vectors are committed, one per scenario", () => {
+test("the vectors are committed, one per scenario", () => {
   expect(existsSync(ROOT), "conformance/changesets exists").toBe(true);
   const dirs = readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
   expect(dirs).toEqual(Object.keys(VECTORS).sort());

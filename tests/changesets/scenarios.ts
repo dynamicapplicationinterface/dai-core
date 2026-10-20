@@ -270,6 +270,42 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("INSERT INTO items (title) VALUES ('unrelated')");
     },
   },
+  // The catalog's K12: a text key moved on one copy while the other edits the row under the old key.
+  "K12 key moved": {
+    extra: ["CREATE TABLE codes (code TEXT PRIMARY KEY, v TEXT)", "INSERT INTO codes (code, v) VALUES ('old', 'base')"],
+    write: (a, b) => {
+      a.db.exec("UPDATE codes SET code = 'new' WHERE code = 'old'");
+      b.db.exec("UPDATE codes SET v = 'edited' WHERE code = 'old'");
+    },
+  },
+  // The catalog's D07: a RETURNING statement stepped once and reset; SQLite has run it whole.
+  "D07 returning": {
+    write: (a, b) => {
+      const stmt = a.db.prepare("UPDATE items SET qty = qty + 10 RETURNING id");
+      stmt.step();
+      stmt.reset();
+      stmt.finalize();
+      b.db.exec("UPDATE items SET note = 'from B' WHERE title = 'Map'");
+    },
+  },
+  // RW-12: A saw B's title, and kept the one it showed by writing it again, no byte changed; B edited another column.
+  "RW-12 resolution": {
+    write: async (a, b) => {
+      a.db.exec("UPDATE items SET title = 'Tent (2p)' WHERE title = 'Tent'");
+      b.db.exec("UPDATE items SET title = 'Tent (4p)' WHERE title = 'Tent'");
+      await a.mergeFrom(await b.bytes());
+      a.db.exec("UPDATE items SET title = title WHERE title LIKE 'Tent%'");
+      b.db.exec("UPDATE items SET qty = 2 WHERE title LIKE 'Tent%'");
+    },
+  },
+  // 1e-H3: a key respelled under its collation on one copy while the other edits another column of the row.
+  "1e-H3 respelled key": {
+    extra: ["CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT)", "INSERT INTO people (email, name) VALUES ('bob@x.com', 'Bob')"],
+    write: (a, b) => {
+      a.db.exec("UPDATE people SET email = 'Bob@X.com' WHERE email = 'bob@x.com'");
+      b.db.exec("UPDATE people SET name = 'Robert' WHERE email = 'bob@x.com'");
+    },
+  },
   // The catalog's M06: one transaction over two rows, one of which becomes pending.
   "M06 effect group": {
     extra: [

@@ -19,6 +19,10 @@ One directory per scenario, from the merge scenarios in
 | `same-column` | S3 same column | both values kept, the later by (lc, author) shown, the row `pending` |
 | `delete-update` | S4 delete/update | the row kept with the update, flagged `delete-conflict` |
 | `trigger-suppressed` | S8 app trigger | an application trigger does not fire again on merged rows |
+| `key-moved` | K12 key moved | a key moved on one copy while the other edits the old key: both rows kept, the old key flagged `delete-conflict` |
+| `returning` | D07 returning | a RETURNING statement stepped once and reset is logged whole, and applied once |
+| `resolution` | RW-12 resolution | a write of the value a pending row shows, though no byte changed, is a new version superseding what its copy saw: resolved on both |
+| `respelled-key` | 1e-H3 respelled key | a key respelled under its NOCASE collation travels as a value change, beside the other copy's edit of another column |
 
 Each holds:
 
@@ -62,6 +66,11 @@ admitted log to emptied tables from the log alone:
 - A column with one current version shows it. With more than one, it shows
   the later by (lc, author), with the higher author id first on a clock tie,
   and the row is `pending`.
+- Where a key can be spelled more than one way (a NOCASE or RTRIM key, or a
+  key column with no type, where 1.0 is 1), the key's columns are registers
+  too: a birth and a respelling write them, an edit of another column does
+  not, and the row is written with their shown values. A log that carries
+  none is written with its earliest-born version's spelling.
 - A row is deleted when its existence holds only deletes, and every data
   version is one a delete saw. A delete with a concurrent change keeps the
   row, `delete-conflict`.
@@ -86,7 +95,8 @@ python conformance/reference/dai_changes.py --vectors conformance/changesets
 
 `tests/changesets/vectors.spec.ts` runs the runtime and this reader over the
 committed files. The bytes are signed with fresh keys, so the vectors are
-written once and committed, never rewritten by a check:
+written once and committed, never rewritten by a check; the writer skips a
+vector already on disk:
 
 ```
 DAI_WRITE_CHANGESET_VECTORS=1 npx playwright test tests/changesets/vectors.spec.ts --project=node
