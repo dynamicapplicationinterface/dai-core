@@ -399,3 +399,117 @@ test("1d-H2: a save that cannot succeed refuses the document once, holds later w
   expect(() => d.save(), "text that is not UTF-8, in a new table").toThrow(/^CHANGES_SAVE_REFUSED: /);
   d.close();
 });
+
+/** An imported copy of A: A's stored bytes with `sql` run on them outside any runtime, reopened as A. */
+async function imported(a: Copy, sql: string): Promise<Copy> {
+  const raw = await openBytes(await a.bytes());
+  raw.db.exec(sql);
+  const bytes = raw.sqlite3.capi.sqlite3_js_db_export(raw.db.pointer) as Uint8Array;
+  raw.db.close();
+  return Copy.open(a.author, bytes);
+}
+
+/**
+ * 1d-M1. The application's triggers stand down while merged rows are
+ * applied (dai_projecting()), and are framed for the last-insert slot. Two
+ * kinds were left as written: one named like the runtime's (`_cs_*`), and one
+ * whose text already named dai_projecting(). Now the runtime's own triggers
+ * are known by their bodies, not their names, so any other is guarded; a
+ * guard is recognized only in the exact form the runtime writes; and a
+ * trigger under a runtime name is refused as the application makes it.
+ */
+test("1d-M1: a trigger named like the runtime's, or naming dai_projecting(), stands down on merged rows like any other", async () => {
+  const { a, b } = await base();
+  expect(() => a.db.exec("CREATE TRIGGER _cs_dup AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'dup'); END"), "made now").toThrow(
+    /not authorized/,
+  );
+  a.db.exec("CREATE TRIGGER replay_only AFTER INSERT ON items WHEN dai_projecting() = 1 BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'replay'); END");
+  const c = await imported(a, "CREATE TRIGGER _cs_dup AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'dup'); END");
+  b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
+  const bBytes = await b.bytes();
+  await a.mergeFrom(bBytes);
+  await c.mergeFrom(bBytes);
+  expect(a.db.selectValues("SELECT what FROM audit WHERE what = 'replay'"), "the trigger naming dai_projecting() does not fire on the merged row").toEqual([]);
+  expect(c.db.selectValues("SELECT what FROM audit WHERE what = 'dup'"), "the imported _cs_* trigger does not fire on the merged row").toEqual([]);
+  c.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
+  expect(c.db.selectValues("SELECT what FROM audit WHERE what = 'dup'"), "and still fires on the application's own write").toEqual(["dup"]);
+  await b.mergeFrom(await a.bytes());
+  expect(a.state(), "converged").toBe(b.state());
+  a.close();
+  b.close();
+  c.close();
+});
+
+/**
+ * 1d-M2. A renamed column travels: the runtime's history goes with the
+ * rename and records it, so a copy that has not renamed holds the row,
+ * flagged, until it does, and then shows it; and an edit made under the old
+ * name, arriving after the rename, lands under the new one. A column a
+ * declaration names keeps its name, refused as the rename runs.
+ */
+test("1d-M2: a renamed column's edits reach a copy that renames too, from before the rename and after", async () => {
+  const { a, b } = await base({ extra: ["CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL -- dai:coupled lat lng\n)"] });
+  a.db.exec("ALTER TABLE items RENAME COLUMN note TO memo");
+  a.db.exec("UPDATE items SET memo = 'A memo' WHERE title = 'Bread'");
+  b.db.exec("UPDATE items SET note = 'B note' WHERE title = 'Tent'");
+  await b.mergeFrom(await a.bytes());
+  expect(b.held().map((h) => h.tbl), "B, not renamed yet, holds A's row, flagged").toEqual(["items"]);
+  await a.mergeFrom(await b.bytes());
+  expect(a.db.selectValue("SELECT memo FROM items WHERE title = 'Tent'"), "an edit from before the rename lands under the new name").toBe("B note");
+  b.db.exec("ALTER TABLE items RENAME COLUMN note TO memo");
+  expect(b.db.selectObjects("SELECT title, memo FROM items WHERE memo IS NOT NULL ORDER BY title")).toEqual([
+    { title: "Bread", memo: "A memo" },
+    { title: "Tent", memo: "B note" },
+  ]);
+  expect([b.flags(), b.held()], "nothing held once B renames").toEqual([[], []]);
+  await a.mergeFrom(await b.bytes());
+  expect(a.state()).toBe(b.state());
+  expect(() => a.db.exec("ALTER TABLE places RENAME COLUMN lat TO latitude"), "a declared column keeps its name").toThrow(/CHANGES_REFUSED: .*declaration/);
+  expect(a.db.selectValues("SELECT name FROM pragma_table_info('places')"), "and the rename is undone").toContain("lat");
+  a.close();
+  b.close();
+});
+
+/**
+ * 1d-L1. A trigger whose body writes a runtime table is refused by the
+ * authorizer when it would run, and a merged row's write fires it: every
+ * merged row of its table was held. Now it is found when it is made, by
+ * preparing (never running) the writes that would fire it: refused as the
+ * application makes it, and dropped at open from an imported document, so
+ * merged rows land.
+ */
+test("1d-L1: a trigger that writes a runtime table is refused when made and dropped at open, and merged rows land", async () => {
+  const { a, b } = await base();
+  expect(() => a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END"), "made now").toThrow(/CHANGES_REFUSED: .*runtime/);
+  expect(a.db.selectValue("SELECT count(*) FROM sqlite_schema WHERE name = 'items_forge'"), "and not kept").toBe(0);
+  const c = await imported(a, "CREATE TRIGGER items_forge AFTER UPDATE OF qty ON items BEGIN INSERT INTO _cs_flag (tbl, pk, kind) VALUES ('items', '[0]', 'held'); END");
+  expect(c.changes.refused, "dropped at open").toContain("items_forge");
+  b.db.exec("INSERT INTO items (title) VALUES ('Soap'); UPDATE items SET qty = 4 WHERE title = 'Bread';");
+  await c.mergeFrom(await b.bytes());
+  expect(c.held(), "no merged row is held").toEqual([]);
+  expect(c.db.selectValue("SELECT qty FROM items WHERE title = 'Bread'")).toBe(4);
+  a.close();
+  b.close();
+  c.close();
+});
+
+/**
+ * 1d-L3. An apply that waited for the application's transaction ran only
+ * from exec: a COMMIT through prepare().step() left the merged values
+ * unapplied until the next exec. A prepared statement's step now ends the
+ * wait as exec does.
+ */
+test("1d-L3: an apply waiting on a transaction runs when a prepared COMMIT ends it", async () => {
+  const { a, b } = await base();
+  b.db.exec("UPDATE items SET note = 'B-note' WHERE title = 'Bread'");
+  const bBytes = await b.bytes();
+  a.db.exec("BEGIN");
+  a.db.exec("UPDATE items SET qty = 7 WHERE title = 'Bread'");
+  await a.mergeFrom(bBytes);
+  const commit = a.db.prepare("COMMIT");
+  commit.step();
+  commit.finalize();
+  expect(a.db.selectObject("SELECT qty, note FROM items WHERE title = 'Bread'"), "applied as the transaction ends").toEqual({ qty: 7, note: "B-note" });
+  a.close();
+  b.close();
+});

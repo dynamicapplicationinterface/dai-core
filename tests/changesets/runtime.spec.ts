@@ -387,6 +387,57 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     const kept = query(await stored(page, uuid), "SELECT body FROM notes ORDER BY id").map((r) => r["body"]);
     expect(kept, "the store holds the last save that succeeded").toEqual(["seed one", "seed two", "kept"]);
   });
+
+  /**
+   * 1d-L2. When the apply after a merge's COMMIT threw, the frame's catch
+   * issued a ROLLBACK with no transaction open, and that error replaced the
+   * real one. Forced in that order: the application writes text that is not
+   * UTF-8 as the merge verifies its batches (the frame shares the window, so a
+   * wrapped crypto.subtle.verify is its own), after the merge's own capture.
+   * The save the apply begins with is refused (P3); the merge's answer is that
+   * refusal, and the person reads its sentence.
+   */
+  test("9. 1d-L2: a merge whose apply is refused after its commit answers with the refusal, not a ROLLBACK error", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-cs-rollback-"));
+    const file = await build(scratch);
+    const pageA = await device(browser);
+    const pageB = await device(browser);
+    const a = await firstOpen(pageA, file);
+    const uuid = await uuidOf(pageA);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM _cs_log WHERE _r_batch IS NULL")[0]?.["n"] ?? -1, { timeout: 60_000 }).toBe(0);
+    const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
+    const b = await firstOpen(pageB, a1);
+    await sql(b, "INSERT INTO notes (body) VALUES ('from B')");
+    const uuidB = await uuidOf(pageB);
+    await expect.poll(async () => query(await stored(pageB, uuidB), "SELECT count(*) AS n FROM notes WHERE body = 'from B'")[0]?.["n"], { timeout: 60_000 }).toBe(1);
+    const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
+
+    const shell = () => pageA.mainFrame().childFrames()[0]!;
+    await shell().evaluate((type) => {
+      window.addEventListener("message", (event) => {
+        if ((event.data as { type?: string })?.type === type) (window as any).__mergeResult = event.data;
+      });
+    }, FRAME_INTERNAL.MERGE_RESULT);
+    await a.locator("#app").evaluate(() => {
+      const subtle = crypto.subtle as unknown as { verify: (...args: unknown[]) => Promise<boolean> };
+      const verify = subtle.verify.bind(subtle);
+      let armed = true;
+      subtle.verify = (...args: unknown[]) => {
+        if (armed) {
+          armed = false;
+          (window as unknown as { __db: { exec(s: string): unknown } }).__db.exec("INSERT INTO notes (body) VALUES (CAST(x'ff41' AS TEXT))");
+        }
+        return verify(...args);
+      };
+    });
+    await pageA.setInputFiles("#file", b1);
+    await expect(pageA.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await pageA.locator("#card-open").click();
+    await expect
+      .poll(() => shell().evaluate(() => String((window as any).__mergeResult?.refused ?? "")), { timeout: 60_000, message: "the merge's answer" })
+      .toMatch(/^CHANGES_SAVE_REFUSED/);
+    await expect(pageA.locator("#doc-note"), "the person reads the refusal's sentence").toHaveText(SAVE_REFUSED, { timeout: 30_000 });
+  });
 });
 
 /** A budget written with the kit, and one listener: its amount is declared consequential. */

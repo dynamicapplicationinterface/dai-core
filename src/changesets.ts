@@ -223,6 +223,12 @@ export const SCHEMA_REFUSED = {
 /** What a key with a NULL in it is refused with, as it executes (1d-H3, R-V). */
 export const KEY_REFUSED = "A row's key cannot be NULL: give every primary-key column a value, or leave out an integer key to have one given.";
 
+/** The bodies of the runtime's own triggers on application tables: the last-insert slot, and the NULL-key refusal. */
+const OWN_BODY = /^BEGIN SELECT (?:dai_inserted\(NEW\.rowid, NEW\.(?:"(?:[^"]|"")*"|rowid)\)|RAISE\(ABORT, 'CHANGES_REFUSED: (?:[^']|'')*'\)); END$/;
+
+/** What a trigger that writes the runtime's tables is refused with, as it is made (1d-L1, R-V). */
+export const TRIGGER_REFUSED = "A trigger cannot write the runtime's tables (_dai*, _cs_*): write the application's own tables only.";
+
 /** The SQLite result codes of a capture failure a retry can cure: busy, locked, out of memory, interrupted, I/O, full. */
 const RETRYABLE_RC = new Set([5, 6, 7, 9, 10, 13]);
 
@@ -559,6 +565,9 @@ export class Changes {
   private readonly unsettled = new Set<string>();
   /** Tables whose flagged and held rows are decided again at the next apply: a rename here may place them now. */
   private readonly redecide = new Set<string>();
+  /** While the runtime prepares, never runs, the writes that would fire each trigger (`refuseRuntimeWriters`). */
+  private probing = false;
+  private readonly probed = new Set<string>();
   /** Each table's key collations (`keyCollations`). */
   private readonly collCache = new Map<string, string[]>();
   /** The renames this copy made, as `here` reads them. */
@@ -709,8 +718,16 @@ export class Changes {
           this.schemaTargets.add(table);
         }
       }
+      // A trigger or an index the application makes under a runtime name: the runtime's own are known by
+      // their names on its tables, and by name and body on the application's (1d-M1).
+      const made = [capi.SQLITE_CREATE_TRIGGER, capi.SQLITE_CREATE_TEMP_TRIGGER, capi.SQLITE_CREATE_INDEX, capi.SQLITE_CREATE_TEMP_INDEX].includes(code);
+      if (made && this.depth === 0 && typeof a1 === "string" && runtimeNamed(a1)) return capi.SQLITE_DENY;
       if (typeof target !== "string" || !runtimeNamed(target)) return capi.SQLITE_OK;
-      if (typeof trigger === "string" && trigger.length > 0) return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
+      if (typeof trigger === "string" && trigger.length > 0) {
+        // Found by preparing, never running, the writes that would fire it (1d-L1).
+        if (this.probing && !own.has(trigger)) this.probed.add(trigger);
+        return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
+      }
       return this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
     };
     capi.sqlite3_set_authorizer(this.db.pointer, this.authorizer, 0);
@@ -744,6 +761,25 @@ export class Changes {
    * between two capture epochs (R-S, `schemaChange`).
    */
   watch(handle: Any): void {
+    /*
+     * A statement the application prepares and steps itself ends a
+     * transaction as exec does: an apply that waited for it runs when a step
+     * leaves the connection in autocommit (1d-L3). sqlite-wasm's own exec makes
+     * its statements directly, and the runtime's own reads (depth > 0) are left
+     * as they are.
+     */
+    const prepare = handle.prepare.bind(handle);
+    handle.prepare = (...args: Any[]): Any => {
+      const stmt = prepare(...args);
+      if (this.depth > 0) return stmt;
+      const step = stmt.step.bind(stmt);
+      stmt.step = (): Any => {
+        const row = step();
+        if (this.depth === 0 && (this.deferred || this.redecide.size > 0) && !this.inTransaction) this.projectAdmitted();
+        return row;
+      };
+      return stmt;
+    };
     const exec = handle.exec.bind(handle);
     handle.exec = (...args: Any[]): Any => {
       // The runtime's own calls (its reads go through exec too) run as they are.
@@ -1091,6 +1127,55 @@ export class Changes {
     this.declaredCache.clear();
     this.settleViews();
     this.capture?.schemaChanged();
+    this.refuseRuntimeWriters();
+  }
+
+  /**
+   * An application trigger whose program writes a runtime table (1d-L1, R-V).
+   * The authorizer refuses such a write when the statement that fires it is
+   * prepared, whatever the trigger's WHEN, so every merged row of its table
+   * would be held. Found by preparing, never running, an insert, an update of
+   * every column and a delete on each table that carries a trigger, and
+   * dropping each trigger whose program the authorizer refused: at open (an
+   * imported document; the names go in `refused`), and as the application
+   * makes one, which is refused with one sentence.
+   */
+  private refuseRuntimeWriters(): void {
+    const triggered = new Set(this.db.selectValues("SELECT DISTINCT tbl_name FROM sqlite_temp_schema WHERE type = 'trigger' UNION SELECT DISTINCT tbl_name FROM sqlite_schema WHERE type = 'trigger'") as string[]);
+    const tables = appTablesOf(this.rows).filter((t) => triggered.has(t));
+    if (tables.length === 0) return;
+    this.probing = true;
+    this.probed.clear();
+    try {
+      for (const t of tables) {
+        const cols = this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [t]) as string[];
+        for (const sql of [
+          `INSERT INTO main.${q(t)} DEFAULT VALUES`,
+          `UPDATE main.${q(t)} SET ${cols.map((c) => `${q(c)} = ${q(c)}`).join(", ")}`,
+          `DELETE FROM main.${q(t)}`,
+        ]) {
+          let stmt: Any = null;
+          try {
+            stmt = this.db.prepare(sql);
+          } catch {
+            // Refused: the trigger that made it so is in `probed`.
+          } finally {
+            stmt?.finalize();
+          }
+        }
+      }
+    } finally {
+      this.probing = false;
+    }
+    const found = [...this.probed];
+    this.probed.clear();
+    if (found.length === 0) return;
+    for (const name of found) {
+      const schema = this.db.selectValue("SELECT 'temp' FROM sqlite_temp_schema WHERE type = 'trigger' AND name = ?", [name]) ?? "main";
+      this.paused(() => this.exec(`DROP TRIGGER IF EXISTS ${schema}.${q(name)}`));
+      this.refused.push(name);
+    }
+    if (this.started) throw new Error(`CHANGES_REFUSED: ${TRIGGER_REFUSED}`);
   }
 
   /**
@@ -1148,17 +1233,20 @@ export class Changes {
     for (const { name, tbl_name, sql } of this.db.selectObjects(
       "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL",
     ) as Any[]) {
-      if (String(name).startsWith("_cs_") || !apps.has(tbl_name)) continue;
+      if (!apps.has(tbl_name)) continue;
       const at = String(sql).search(/\bBEGIN\b/i);
       if (at < 0) continue;
       let head = String(sql).slice(0, at);
       let body = String(sql).slice(at);
-      if (!head.includes("dai_projecting()")) {
+      // The runtime's own, known by its name and its body together, never by a name alone (1d-M1).
+      if (runtimeNamed(String(name)) && OWN_BODY.test(body.trim())) continue;
+      // A guard only in the exact form written below; an application's own mention of dai_projecting() is not one (1d-M1).
+      if (!/\bWHEN dai_projecting\(\) = 0(?: AND \(|\s*$)/.test(head)) {
         head = /\bWHEN\b/i.test(head)
           ? head.replace(/\bWHEN\b([\s\S]*)$/i, "WHEN dai_projecting() = 0 AND ($1) ")
           : `${head.trimEnd()} WHEN dai_projecting() = 0 `;
       }
-      if (!body.includes("dai_enter()") && /\bEND\s*;?\s*$/i.test(body)) {
+      if (!/^BEGIN SELECT dai_enter\(\);/.test(body) && /\bEND\s*;?\s*$/i.test(body)) {
         body = body.replace(/^BEGIN\b/i, "BEGIN SELECT dai_enter();").replace(/\bEND\s*;?\s*$/i, "SELECT dai_leave(); END");
       }
       if (head + body === String(sql)) continue;

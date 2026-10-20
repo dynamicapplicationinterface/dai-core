@@ -494,10 +494,9 @@ test("T11/P02: no trigger an imported schema hangs on a runtime table runs under
     refused(sql);
   }
   expect(() => a.db.prepare("DELETE FROM _cs_cell"), "a prepared statement").toThrow(/not authorized/);
-  // A trigger on the application's own table, and a view's INSTEAD OF trigger: refused when they would run.
-  a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END");
-  refused("INSERT INTO items (title) VALUES ('forged')");
-  a.db.exec("DROP TRIGGER items_forge");
+  // A trigger on the application's own table: refused as it is made (1d-L1). A view's INSTEAD OF trigger: when it would run.
+  expect(() => a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END")).toThrow(/CHANGES_REFUSED/);
+  a.db.exec("INSERT INTO items (title) VALUES ('not forged')");
   a.db.exec("CREATE VIEW forge AS SELECT 1 AS x; CREATE TRIGGER forge_in INSTEAD OF INSERT ON forge BEGIN DELETE FROM _cs_cell; END;");
   refused("INSERT INTO forge VALUES (1)");
   a.db.exec("DROP VIEW forge");

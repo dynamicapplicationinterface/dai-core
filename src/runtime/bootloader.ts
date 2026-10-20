@@ -1546,6 +1546,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // own bookkeeping.
       if (sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       liveDb.exec("BEGIN");
+      // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
+      // ROLLBACK with no transaction open would replace it (1d-L2).
+      let committed = false;
       try {
         // The two signed-view digests when the shell relayed them: this
         // document's and the sibling's. The merge refuses the sibling whole
@@ -1568,6 +1571,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           return report;
         }
         liveDb.exec("COMMIT");
+        committed = true;
         noteRefusedBatches(report);
         // The admitted changesets, applied to the application's tables by the
         // policy (src/changesets.ts). After the commit, because projection
@@ -1592,7 +1596,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "carrier" } }));
         return report;
       } catch (error) {
-        liveDb.exec("ROLLBACK");
+        if (!committed) liveDb.exec("ROLLBACK");
+        // A save inside the merge that no retry cures refuses the document here as at an autosave (P3).
+        if (changes && changes.refusal) tellSaveStatus("failed", String(changes.refusal));
         throw error;
       }
     } finally {
@@ -1819,6 +1825,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       if (!liveDb) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
       const into = frameRows(liveDb);
       liveDb.exec("BEGIN");
+      // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
+      // ROLLBACK with no transaction open would replace it (1d-L2).
+      let committed = false;
       try {
         const report = merge.mergeVerified(into, frameRows(staged), {
           level: 1,
@@ -1831,12 +1840,15 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           return report;
         }
         liveDb.exec("COMMIT");
+        committed = true;
         noteRefusedBatches(report);
         scheduleAutosave(liveDb);
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
         return report;
       } catch (error) {
-        liveDb.exec("ROLLBACK");
+        if (!committed) liveDb.exec("ROLLBACK");
+        // A save inside the merge that no retry cures refuses the document here as at an autosave (P3).
+        if (changes && changes.refusal) tellSaveStatus("failed", String(changes.refusal));
         throw error;
       }
     } finally {

@@ -3901,6 +3901,8 @@ function flushDocument(): Promise<boolean> {
  */
 export function describeMerge(report: MergeReport): string {
   if (report.refused) {
+    // The data interface refused the document (P3): its own sentence, which names what to do.
+    if (String(report.refused).startsWith("CHANGES_SAVE_REFUSED")) return SAVE_REFUSED;
     switch (report.refused) {
       case "SCHEMA_MISMATCH":
         return "These two copies were built from different versions of the app, so their rows cannot be lined up. Open the newer one first.";
