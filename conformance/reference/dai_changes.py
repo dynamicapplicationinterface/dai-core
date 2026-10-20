@@ -30,6 +30,7 @@ status is 1 if any differs.
 from __future__ import annotations
 
 import json
+import re
 import struct
 import sqlite3
 import sys
@@ -115,7 +116,8 @@ def q(name: str) -> str:
 
 
 def app_tables(db: sqlite3.Connection) -> list[str]:
-    names = [r[0] for r in db.execute("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")]
+    # An ordinary table only: a virtual table's shadow tables are its module's (C04).
+    names = [r[0] for r in db.execute("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' ORDER BY name")]
     return [n for n in names if not n.startswith(INTERNAL)]
 
 
@@ -386,21 +388,94 @@ def apply_log(db: sqlite3.Connection) -> None:
             k + [values[c] for c in data],
         )
 
+    def unique_index(sql, columns):
+        """A UNIQUE index's terms and WHERE, as the runtime's uniqueIndex reads them (M03)."""
+        if not sql:
+            return (columns, None) if all(c is not None for c in columns) else None
+        m = re.search(r"\bON\b", sql, re.I)
+        opened = sql.find("(", m.start()) if m else -1
+        if opened < 0:
+            return None
+        terms, depth, quote, start, close = [], 0, "", opened + 1, -1
+        i = opened + 1
+        while i < len(sql) and close < 0:
+            ch = sql[i]
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "'\"`":
+                quote = ch
+            elif ch == "[":
+                quote = "]"
+            elif ch == "(":
+                depth += 1
+            elif ch == ")" and depth > 0:
+                depth -= 1
+            elif ch in ",)" and depth == 0:
+                terms.append(re.sub(r"\s+(ASC|DESC)$", "", sql[start:i].strip(), flags=re.I))
+                start = i + 1
+                if ch == ")":
+                    close = i
+            i += 1
+        if close < 0:
+            return None
+        rest = sql[close + 1 :].strip()
+        where = re.sub(r"^WHERE\b", "", rest, flags=re.I).strip() if re.match(r"^WHERE\b", rest, re.I) else None
+        return terms, where
+
+    def table_columns(table: str) -> list:
+        return [r[0] for r in db.execute(f"SELECT name FROM pragma_table_info({sql_text(table)}) ORDER BY cid")]
+
+    def row_of(table: str, pk: str, values: dict) -> dict:
+        return {**dict(zip(keys[table][1], key_values(pk))), **values}
+
+    def collides(table: str, index, x: dict, y: dict) -> bool:
+        """Whether two rows take one slot of a UNIQUE index, its terms and WHERE as SQLite evaluates them."""
+        terms, where = index
+        cols = [c for c in table_columns(table) if c in x and c in y]
+        same = [f"((SELECT {t} FROM x) IS (SELECT {t} FROM y))" for t in terms]
+        if where:
+            same += [f"(SELECT {where} FROM x)", f"(SELECT {where} FROM y)"]
+        marks = ", ".join("?" for _ in cols)
+        names = ", ".join(q(c) for c in cols)
+        got = db.execute(
+            f"WITH x({names}) AS (VALUES ({marks})), y({names}) AS (VALUES ({marks})) SELECT {' AND '.join(same)}",
+            [x[c] for c in cols] + [y[c] for c in cols],
+        ).fetchone()
+        return bool(got and got[0] == 1)
+
     def occupant(table: str, pk: str, values: dict):
+        """The other row holding a UNIQUE slot this row's values want, for an index on columns, expressions or with a WHERE."""
         pk_cols = keys[table][1]
+        row = row_of(table, pk, values)
+        mine = [c for c in table_columns(table) if c in row]
         for (name,) in db.execute(f"SELECT name FROM pragma_index_list({sql_text(table)}) WHERE \"unique\" = 1 AND origin <> 'pk'").fetchall():
-            cols = [r[0] for r in db.execute(f"SELECT name FROM pragma_index_info({sql_text(name)}) ORDER BY seqno")]
-            if any(c not in values for c in cols):
+            sql = db.execute("SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?", [name]).fetchone()
+            columns = [None if r[0] is None else q(r[0]) for r in db.execute(f"SELECT name FROM pragma_index_info({sql_text(name)}) ORDER BY seqno")]
+            index = unique_index(sql[0] if sql else None, columns)
+            if not index:
                 continue
+            terms, where = index
+            cols = [c for c in table_columns(table) if any(re.search(r'(^|[^\w"])"?' + re.escape(c) + r'"?($|[^\w"])', t, re.I) for t in terms)]
+            if any(c not in row for c in cols):
+                continue
+            extra = f" AND ({where}) AND (SELECT {where} FROM mine)" if where else ""
             hit = db.execute(
-                f"SELECT {', '.join(q(c) for c in pk_cols)} FROM {q(table)} WHERE {' AND '.join(f'{q(c)} IS ?' for c in cols)}",
-                [values[c] for c in cols],
+                f"WITH mine({', '.join(q(c) for c in mine)}) AS (VALUES ({', '.join('?' for _ in mine)})) "
+                f"SELECT {', '.join(q(c) for c in pk_cols)} FROM {q(table)} WHERE {' AND '.join(f'({t}) IS (SELECT {t} FROM mine)' for t in terms)}{extra}",
+                [row[c] for c in mine],
             ).fetchone()
             if hit:
                 other = key_text(list(hit), folds(table))
                 if other != pk:
-                    return other
+                    return other, index
         return None
+
+    room = [0]
+
+    def same_value(a: object, b: object) -> bool:
+        """Two values SQLite stores alike: the same storage class and value."""
+        return type(a) is type(b) and a == b if not (isinstance(a, (int, float)) and isinstance(b, (int, float))) else (isinstance(a, float) == isinstance(b, float) and a == b)
 
     def hold(table: str, pk: str, reason: str, values: dict) -> None:
         held[(table, pk)] = (reason, values)
@@ -424,11 +499,29 @@ def apply_log(db: sqlite3.Connection) -> None:
         except sqlite3.IntegrityError as e:
             message = str(e)
             if "UNIQUE" in message:
-                other = occupant(table, pk, s["values"])
+                found = occupant(table, pk, s["values"])
+                other = found[0] if found else None
+                # The row in the slot moves out of it in this same apply (M04, a swap): taken out, this row
+                # written, and placed again under its own merged values.
+                theirs = state(table, other) if found and room[0] < 8 else None
+                if found and theirs and (theirs["deleted"] or not collides(table, found[1], row_of(table, pk, s["values"]), row_of(table, other, theirs["values"]))):
+                    room[0] += 1
+                    try:
+                        db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", key_values(other))
+                        wrote = True
+                        try:
+                            write(table, k, s["values"])
+                        except sqlite3.IntegrityError:
+                            wrote = False
+                        place(table, other)
+                        if wrote:
+                            return
+                    finally:
+                        room[0] -= 1
                 if other:
                     mine, theirs = birth(table, pk), birth(table, other)
                     if mine and (not theirs or mine < theirs):
-                        hold(table, other, f"UNIQUE: lost the slot to {pk}", (state(table, other) or {}).get("values", {}))
+                        hold(table, other, f"UNIQUE: {pk} holds the slot", (state(table, other) or {}).get("values", {}))
                         db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", key_values(other))
                         write(table, k, s["values"])
                         return

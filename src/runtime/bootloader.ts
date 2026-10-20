@@ -1052,6 +1052,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       .then(() => captureSave(db))
       .then(sealPending)
       .then(() => {
+        // What the application wrote while the signature was out is logged before the bytes are taken
+        // (Q09, D263): the stored copy never holds an edit no log row carries. The row is unsealed, so this
+        // copy's queued save is kept below, and seals it.
+        captureSave(db);
         // The seal is a write, and queues a save of its own; the bytes taken
         // here already hold it, so that save is this one. Not when a row was
         // written while the signature was out (D178): the seal did not take
@@ -1823,6 +1827,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // one the transaction opens on is the one the merge writes to (cold review
       // of step 4). A document closed meanwhile takes nothing.
       if (!liveDb) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
+      // As a file merge (R-S, P3): refused before it writes while the application holds a transaction, or
+      // once the document is refused.
+      if (changes && changes.refusal) throw new Error("CHANGES_SAVE_REFUSED");
+      if (sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       const into = frameRows(liveDb);
       liveDb.exec("BEGIN");
       // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
@@ -1842,6 +1850,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         liveDb.exec("COMMIT");
         committed = true;
         noteRefusedBatches(report);
+        // The admitted changesets, applied as a file merge applies them (Q13): admitted alone, they reached
+        // the application's tables only at the next file merge or reopen.
+        if (changes) report.projected = changes.projectAdmitted();
         scheduleAutosave(liveDb);
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
         return report;
@@ -3093,7 +3104,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       return Promise.resolve()
         .then(() => captureSave(db))
         .then(sealPending)
-        .then(() => saveState(exportDatabase(db), { ...(options ?? {}), setup }, db === liveDb ? sealsRecorded : undefined));
+        .then(() => {
+          // Logged before the bytes are taken, as an automatic save is (Q09, D263).
+          captureSave(db);
+          return saveState(exportDatabase(db), { ...(options ?? {}), setup }, db === liveDb ? sealsRecorded : undefined);
+        });
     },
     // Two arguments only: which seals a save carries is the runtime's to say.
     saveState: (bytes?: Uint8Array | null, options?: Any) => saveState(bytes, options),

@@ -241,6 +241,22 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("INSERT INTO people (email, name) VALUES ('bob@x', 'from B'); INSERT INTO tags (code, label) VALUES ('red  ', 'B'); INSERT INTO nums (k, v) VALUES (1.0, 'B');");
     },
   },
+  // The catalog's M03: an expression UNIQUE index two concurrent rows collide under.
+  "M03 expression unique": {
+    extra: ["CREATE TABLE emails (id INTEGER PRIMARY KEY, address TEXT)", "CREATE UNIQUE INDEX one_address ON emails (lower(address))"],
+    write: (a, b) => {
+      a.db.exec("INSERT INTO emails (address) VALUES ('Ann@X')");
+      b.db.exec("INSERT INTO emails (address) VALUES ('ann@x')");
+    },
+  },
+  // The catalog's M04: two rows swap a UNIQUE value through a placeholder.
+  "M04 unique swap": {
+    extra: ["CREATE TABLE slots (id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE)", "INSERT INTO slots (id, code) VALUES (1, 'a'), (2, 'b')"],
+    write: (a, b) => {
+      a.db.exec("BEGIN; UPDATE slots SET code = 'tmp' WHERE id = 1; UPDATE slots SET code = 'a' WHERE id = 2; UPDATE slots SET code = 'b' WHERE id = 1; COMMIT;");
+      b.db.exec("INSERT INTO items (title) VALUES ('unrelated')");
+    },
+  },
   // The catalog's M06: one transaction over two rows, one of which becomes pending.
   "M06 effect group": {
     extra: [

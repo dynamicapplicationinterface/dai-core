@@ -100,24 +100,20 @@ test("C07/Q08: a remote edit to another column of a locally edited row is never 
 test("T01: neither a TEMP trigger nor an attached schema's trigger fires while merged rows are applied", async () => {
   const { a, b } = await base({ trigger: true });
   a.db.exec(`CREATE TEMP TABLE fired_temp (what TEXT);
-    CREATE TEMP TRIGGER items_temp AFTER INSERT ON main.items BEGIN INSERT INTO fired_temp (what) VALUES (NEW.title); END;
-    ATTACH ':memory:' AS aux;
-    CREATE TABLE aux.items (id INTEGER PRIMARY KEY, title TEXT);
-    CREATE TABLE aux.fired (what TEXT);
-    CREATE TRIGGER aux.items_aux AFTER INSERT ON items BEGIN INSERT INTO fired (what) VALUES (NEW.title); END;`);
+    CREATE TEMP TRIGGER items_temp AFTER INSERT ON main.items BEGIN INSERT INTO fired_temp (what) VALUES (NEW.title); END;`);
+  // An attached schema is refused before it can carry a trigger (S06).
+  expect(() => a.db.exec("ATTACH ':memory:' AS aux"), "an attached schema").toThrow(/CHANGES_REFUSED: .*ATTACH/);
   b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
   await a.mergeFrom(await b.bytes());
 
   expect(a.db.selectValue("SELECT title FROM main.items WHERE title = 'Soap'"), "the merged row is applied").toBe("Soap");
   expect.soft(a.db.selectValues("SELECT what FROM temp.fired_temp"), "the TEMP trigger").toEqual([]);
-  expect.soft(a.db.selectValues("SELECT what FROM aux.fired"), "the attached schema's trigger").toEqual([]);
   // The main schema's trigger ran once, on B, and its row came in B's changeset.
   expect(a.db.selectValue("SELECT count(*) FROM audit x JOIN items i ON i.id = x.item_id WHERE i.title = 'Soap' AND x.what = 'created'")).toBe(1);
   expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE type = 'trigger'"), "the TEMP trigger is back").toEqual(["items_temp"]);
 
   a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
   expect(a.db.selectValues("SELECT what FROM temp.fired_temp"), "the TEMP trigger runs for the application's own write").toEqual(["Lamp"]);
-  a.db.exec("DETACH aux");
   a.close();
   b.close();
 });

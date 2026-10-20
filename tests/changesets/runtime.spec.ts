@@ -355,6 +355,70 @@ test.describe("the ordinary data interface, through the real runtime", () => {
   });
 
   /**
+   * Q09 (D263). The save in flight stored bytes that already held an edit made
+   * while its signature was out, before any log row carried it: a crash there
+   * stored a row no log row carries. Held in that window: the in-flight save's
+   * signature is given back, and the next one is held, so the stored copy is
+   * the one the in-flight save wrote. Its edit made during the signature is in
+   * a log row there (unsealed, for the next save to seal).
+   */
+  test("10. Q09: the stored copy never holds an edit no log row carries", async ({ page }) => {
+    await page.context().addInitScript(
+      ({ signed, authored }) => {
+        if (window === window.top || window.parent !== window.top) return;
+        const w = window as any;
+        w.__giveBack = (): void => {
+          const held = w.__heldSigned;
+          w.__heldSigned = null;
+          w.__holdSign = true;
+          w.__holdNext = true;
+          window.dispatchEvent(new MessageEvent("message", { data: held, source: window.parent }));
+        };
+        window.addEventListener("message", (event) => {
+          const data = event.data as any;
+          const fromHost = event.source === window.parent;
+          if (w.__holdSign && fromHost && data?.type === signed && event.isTrusted && (!w.__heldSigned || w.__holdNext)) {
+            if (w.__holdNext) w.__heldNext = data;
+            else w.__heldSigned = data;
+            event.stopImmediatePropagation();
+          } else if (w.__holdSign !== undefined && !fromHost && data?.type === authored) {
+            event.stopImmediatePropagation();
+          }
+        });
+      },
+      { signed: TO_DOCUMENT.SIGNED, authored: FRAME_INTERNAL.AUTHORED },
+    );
+    const shell = () => page.mainFrame().childFrames()[0]!;
+    const file = await build(mkdtempSync(join(tmpdir(), "dai-cs-window-")));
+    const app = await firstOpen(page, file);
+    const uuid = await uuidOf(page);
+    const settled = async (): Promise<boolean> => {
+      const saves = await page.evaluate(() => {
+        const runner = (window as any).__runner;
+        return { asked: Number(runner.saves ?? 0), written: Number(runner.savesWritten ?? 0) };
+      });
+      const open = query(await stored(page, uuid), "SELECT count(*) AS n FROM _cs_log WHERE _r_batch IS NULL")[0]?.["n"];
+      return saves.asked === saves.written && open === 0;
+    };
+    await expect.poll(settled, { timeout: 60_000, message: "the first open's saves have landed, sealed" }).toBe(true);
+    await shell().evaluate(() => {
+      (window as any).__holdSign = true;
+    });
+    await sql(app, "INSERT INTO notes (body) VALUES ('in flight')");
+    await expect.poll(() => shell().evaluate(() => Boolean((window as any).__heldSigned)), { timeout: 30_000 }).toBe(true);
+    await sql(app, "INSERT INTO notes (body) VALUES ('during the signature')");
+    await shell().evaluate(() => (window as any).__giveBack());
+    const inStore = async (sqlText: string): Promise<number> => Number(query(await stored(page, uuid), sqlText)[0]?.["n"] ?? 0);
+    await expect
+      .poll(() => inStore("SELECT count(*) AS n FROM notes WHERE body = 'during the signature'"), { timeout: 60_000, message: "the in-flight save stored the edit" })
+      .toBe(1);
+    expect(
+      await inStore("SELECT count(*) AS n FROM _cs_log WHERE instr(payload, CAST('during the signature' AS BLOB)) > 0"),
+      "and a log row carries it",
+    ).toBe(1);
+  });
+
+  /**
    * 1d-H2, P3. A save that fails and cannot succeed on a retry refuses the
    * document: the host says the data interface's one sentence, the store keeps
    * the last save that succeeded, and the application's next write is held.

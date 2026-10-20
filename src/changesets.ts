@@ -220,6 +220,25 @@ export const SCHEMA_REFUSED = {
   renamedOnto: "A table can take the name of a table dropped since the last save only if it was made since then too.",
 } as const;
 
+/**
+ * What the authorizer refuses with, as one sentence each (R-V): the
+ * application reads it as `CHANGES_REFUSED: <sentence> (SQLite: not
+ * authorized)`. These are the authoring rules the model file teaches.
+ */
+export const REFUSED = {
+  runtimeTables: "The runtime's tables (_dai*, _cs_*) are read-only to the application.",
+  schemaByExec: "Run ALTER TABLE and DROP TABLE through exec, each as a statement of its own.",
+  runtimeName: "Name tables, triggers and indexes without the runtime's prefixes (_dai, _cs_).",
+  virtual: "Keep data in ordinary tables: a virtual table (FTS5, R-tree) is not carried between copies.",
+  attach: "Keep data in the document's own database: ATTACH is refused.",
+  pragma: "PRAGMA writable_schema, schema_version, ignore_check_constraints, legacy_alter_table and trusted_schema are the runtime's to set.",
+  rowid: "Name a table's key column, not rowid: here an integer key is not the rowid.",
+  functionName: "Name application functions without the runtime's prefix (dai_), and leave last_insert_rowid(), changes() and total_changes() as they are.",
+} as const;
+
+/** The settings whose change the authorizer refuses (P03). */
+const RUNTIME_PRAGMAS = new Set(["writable_schema", "schema_version", "ignore_check_constraints", "legacy_alter_table", "trusted_schema"]);
+
 /** What a key with a NULL in it is refused with, as it executes (1d-H3, R-V). */
 export const KEY_REFUSED = "A row's key cannot be NULL: give every primary-key column a value, or leave out an integer key to have one given.";
 
@@ -249,14 +268,15 @@ export function authorIndexOf(author: Uint8Array): number {
 export function declaresChanges(rows: Rows): boolean {
   return (
     rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?", [CHANGES_LOG]).length > 0 &&
-    rows.all("SELECT 1 FROM pragma_table_info(?) WHERE name = '_r_replica'", [CHANGES_LOG]).length > 0
+    rows.all("SELECT 1 FROM pragma_table_info(?, 'main') WHERE name = '_r_replica'", [CHANGES_LOG]).length > 0
   );
 }
 
 /** The application's tables: everything that is not the runtime's own. */
 export function appTablesOf(rows: Rows): string[] {
+  // An ordinary table only: a virtual table's shadow tables are its module's (C04), and are never adopted or captured.
   return rows
-    .all("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name")
+    .all("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name")
     .map((r) => String(r["name"]))
     .filter((n) => !internalNamed(n));
 }
@@ -277,13 +297,15 @@ export function rewriteKeySql(sql: string, table: string, column: string, kind: 
   const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const name = escape(column);
   const col = `(?:"${name}"|\`${name}\`|\\[${name}\\]|${name})`;
+  // Between two tokens, SQLite reads a comment as it reads a space (K01).
+  const gap = "(?:\\s|/\\*[\\s\\S]*?\\*/|--[^\\n]*(?:\\n|$))+";
   if (kind === "ranged") {
     const fn = `DEFAULT (dai_id(${sqlText(table)}))`;
-    const declared = `${type.trim().split(/\s+/).map(escape).join("\\s+")}(?=[\\s,)]|$)(?:\\s+NOT\\s+NULL)?`;
-    const inline = new RegExp(`(${col}\\s+)${declared}(\\s+PRIMARY\\s+KEY(?:\\s+(?:ASC|DESC))?)(\\s+AUTOINCREMENT)?`, "i");
+    const declared = `${type.trim().split(/\s+/).map(escape).join(gap)}(?=[\\s,)/-]|$)(?:${gap}NOT${gap}NULL)?`;
+    const inline = new RegExp(`(${col}${gap})${declared}(${gap}PRIMARY${gap}KEY(?:${gap}(?:ASC|DESC))?)(${gap}AUTOINCREMENT)?`, "i");
     if (inline.test(sql)) return sql.replace(inline, `$1INT NOT NULL ON CONFLICT REPLACE ${fn}$2`);
     // A table-level PRIMARY KEY (id) over `id INTEGER`.
-    const typed = new RegExp(`([(,]\\s*${col}\\s+)${declared}`, "i");
+    const typed = new RegExp(`([(,](?:\\s|/\\*[\\s\\S]*?\\*/|--[^\\n]*(?:\\n|$))*${col}${gap})${declared}`, "i");
     if (typed.test(sql)) return sql.replace(typed, `$1INT NOT NULL ON CONFLICT REPLACE ${fn}`);
     throw new Error(`CHANGES_KEY_UNREWRITABLE (${table})`);
   }
@@ -334,7 +356,7 @@ class SessionCapture {
     this.filter ||= wasm.installFunction("ipp", (_ctx: number, zTab: number) => {
       const name = wasm.cstrToJs(zTab) as string;
       if (internalNamed(name) || this.excluded(name)) return 0;
-      return this.db.selectValue("SELECT 1 FROM pragma_table_info(?) WHERE pk > 0", [name]) == null ? 0 : 1;
+      return this.db.selectValue("SELECT 1 FROM pragma_table_info(?, 'main') WHERE pk > 0", [name]) == null ? 0 : 1;
     });
     capi.sqlite3session_table_filter(this.session, this.filter, 0);
     const rc = capi.sqlite3session_attach(this.session, null);
@@ -344,6 +366,7 @@ class SessionCapture {
   /** Captures nothing while `f` runs: the runtime's own writes to the application's tables. */
   paused<T>(f: () => T): T {
     const capi = this.sqlite3.capi;
+    if (!this.session) return f();
     const was = capi.sqlite3session_enable(this.session, -1);
     capi.sqlite3session_enable(this.session, 0);
     try {
@@ -356,6 +379,7 @@ class SessionCapture {
   /** Captures what `f` writes, even inside `paused`. */
   captured<T>(f: () => T): T {
     const capi = this.sqlite3.capi;
+    if (!this.session) return f();
     const was = capi.sqlite3session_enable(this.session, -1);
     capi.sqlite3session_enable(this.session, 1);
     try {
@@ -367,6 +391,7 @@ class SessionCapture {
 
   changes(): { table: string; op: "INSERT" | "UPDATE" | "DELETE"; pk: Record<string, unknown>; old: Record<string, unknown>; new: Record<string, unknown> }[] {
     const { capi, wasm } = this.sqlite3;
+    if (!this.session) throw new Error("CHANGES_CAPTURE (sqlite3changeset_ has no session to read)");
     const stack = wasm.pstack.pointer;
     let bytes: Uint8Array;
     try {
@@ -386,12 +411,14 @@ class SessionCapture {
 
   /** Whether anything has been captured since the last `clear`. */
   isEmpty(): boolean {
-    return Boolean(this.sqlite3.capi.sqlite3session_isempty(this.session));
+    return !this.session || Boolean(this.sqlite3.capi.sqlite3session_isempty(this.session));
   }
 
   /** Starts over: what was captured is logged. */
   clear(): void {
-    this.sqlite3.capi.sqlite3session_delete(this.session);
+    if (this.session) this.sqlite3.capi.sqlite3session_delete(this.session);
+    // Never left naming a deleted session: if the next cannot be made, there is none (Q11).
+    this.session = 0;
     this.open();
   }
 
@@ -472,7 +499,7 @@ class SessionCapture {
   /** The changeset's column names. */
   private namesOf(table: string, n: number): string[] {
     if (!this.columns.has(table)) {
-      const cols = (this.db.selectObjects(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, [table]) as Any[]).map((c) => String(c.name));
+      const cols = (this.db.selectObjects(`SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid`, [table]) as Any[]).map((c) => String(c.name));
       this.columns.set(table, cols);
     }
     return this.columns.get(table)!.slice(0, n);
@@ -565,6 +592,22 @@ export class Changes {
   private readonly unsettled = new Set<string>();
   /** Tables whose flagged and held rows are decided again at the next apply: a rename here may place them now. */
   private readonly redecide = new Set<string>();
+  /** How deep `place` is in making room for a row (M04): a ring of moves ends, its last row decided as before. */
+  private roomDepth = 0;
+  /** Rows the runtime wrote on this connection, and the application's last statement's count (D08). */
+  private runtimeChanges = 0;
+  private runtimeWrote = false;
+  private appChanges = 0;
+  private appLast = 0;
+  private appTotal = 0;
+  private runtimeLast = 0;
+  /** The reason the authorizer last refused with, which the application's error carries (`explained`). */
+  private deniedBecause: string | null = null;
+  /** What the authorizer reads without a statement of its own (`refreshAuthorized`). */
+  private virtualSet = new Set<string>();
+  /** The tables adopted so far, as the capture filter reads them (C06). */
+  private adopted = new Set<string>();
+  private rangedSet = new Set<string>();
   /** While the runtime prepares, never runs, the writes that would fire each trigger (`refuseRuntimeWriters`). */
   private probing = false;
   private readonly probed = new Set<string>();
@@ -631,6 +674,15 @@ export class Changes {
      * seal, a merged row.
      */
     db.createFunction("last_insert_rowid", () => this.lastInsert.id ?? 0, { arity: 0, deterministic: false });
+    /*
+     * changes() and total_changes() answer for the application's statements
+     * only (D08). The runtime writes on the same connection (a save's log row,
+     * a seal, a merged row), and native SQLite would count those: changes()
+     * after one would be the runtime's, read as the application's last.
+     */
+    const capi0 = sqlite3.capi;
+    db.createFunction("changes", () => (this.runtimeWrote ? this.appChanges : Number(capi0.sqlite3_changes(db.pointer))), { arity: 0, deterministic: false });
+    db.createFunction("total_changes", () => Number(capi0.sqlite3_total_changes(db.pointer)) - this.runtimeChanges, { arity: 0, deterministic: false });
     this.exec(META);
     // Before any write the runtime trusts: a trigger an imported schema hung on a runtime table is gone (T11).
     this.refuseForeignTriggers();
@@ -638,7 +690,10 @@ export class Changes {
     this.trusted(() => {
       // Foreign keys are enforced from open: the runtime never set it before, so a declared REFERENCES was decoration.
       if (capi.sqlite3_get_autocommit(db.pointer)) this.exec("PRAGMA foreign_keys = ON");
-      this.capture = new SessionCapture(sqlite3, db, (t) => this.uncaptured.has(t) || this.schemaTargets.has(t));
+      // A table the application made is left alone until it is adopted (C06): a row written in the same
+      // exec that made it is logged by the next save's difference, never captured under a key the adoption
+      // then rewrites.
+      this.capture = new SessionCapture(sqlite3, db, (t) => this.uncaptured.has(t) || this.schemaTargets.has(t) || (this.started && !this.adopted.has(t)));
       this.adoptTables();
       this.counter = this.highestOwnCounter();
     });
@@ -651,11 +706,23 @@ export class Changes {
    * merge's admission among them, go through it too.
    */
   trusted<T>(f: () => T): T {
+    // What the runtime writes is counted apart, so changes() and total_changes() answer the application's (D08).
+    const outer = this.depth === 0;
+    const before = outer ? Number(this.sqlite3.capi.sqlite3_total_changes(this.db.pointer)) : 0;
     this.depth += 1;
     try {
       return f();
     } finally {
       this.depth -= 1;
+      if (outer) {
+        const wrote = Number(this.sqlite3.capi.sqlite3_total_changes(this.db.pointer)) - before;
+        if (wrote > 0) {
+          this.runtimeChanges += wrote;
+          if (!this.runtimeWrote) this.appChanges = this.appLast;
+          this.runtimeWrote = true;
+          this.runtimeLast = Number(this.sqlite3.capi.sqlite3_changes(this.db.pointer));
+        }
+      }
     }
   }
 
@@ -702,35 +769,68 @@ export class Changes {
     ]);
     this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, db: unknown, trigger: unknown): number => {
       const target = writes.has(code) || named.has(code) ? a1 : onTable.has(code) ? a2 : null;
+      const app = this.depth === 0;
+      const deny = (why: string): number => {
+        this.deniedBecause = why;
+        return capi.SQLITE_DENY;
+      };
       // A document refused under P3 holds every later write: nothing more is accepted that no save could log.
-      if (this.refusal && this.depth === 0 && target !== null) return capi.SQLITE_DENY;
+      if (this.refusal && app && target !== null) return deny(this.refusal);
       /*
        * A schema change to an application table runs only as `watch` runs it,
        * between two capture epochs (R-S), which records the table it touches.
        * One prepared any other way, or spelled so `watch` does not see it, is
        * refused before it runs: it would break the capture under the save.
        */
-      if ((code === capi.SQLITE_DROP_TABLE || code === capi.SQLITE_ALTER_TABLE) && this.depth === 0) {
+      if ((code === capi.SQLITE_DROP_TABLE || code === capi.SQLITE_ALTER_TABLE) && app) {
         const table = code === capi.SQLITE_DROP_TABLE ? a1 : a2;
         const schema = code === capi.SQLITE_DROP_TABLE ? db : a1;
         if (typeof table === "string" && !runtimeNamed(table) && schema !== "temp") {
-          if (!this.schemaChanging) return capi.SQLITE_DENY;
+          if (!this.schemaChanging) return deny(REFUSED.schemaByExec);
           this.schemaTargets.add(table);
         }
       }
       // A trigger or an index the application makes under a runtime name: the runtime's own are known by
       // their names on its tables, and by name and body on the application's (1d-M1).
       const made = [capi.SQLITE_CREATE_TRIGGER, capi.SQLITE_CREATE_TEMP_TRIGGER, capi.SQLITE_CREATE_INDEX, capi.SQLITE_CREATE_TEMP_INDEX].includes(code);
-      if (made && this.depth === 0 && typeof a1 === "string" && runtimeNamed(a1)) return capi.SQLITE_DENY;
+      if (made && app && typeof a1 === "string" && runtimeNamed(a1) && (db === "main" || db === "temp")) return deny(REFUSED.runtimeName);
+      if (app) {
+        // A virtual table is not carried (C04): made at runtime, or written where an imported document holds one.
+        if (code === capi.SQLITE_CREATE_VTABLE) return deny(REFUSED.virtual);
+        if (writes.has(code) && typeof a1 === "string" && db !== "temp" && this.virtualSet.has(folded(a1))) return deny(REFUSED.virtual);
+        // Only the document's own database is kept (S06).
+        // An empty name is SQLite's own temporary database, as VACUUM attaches one: as ephemeral as TEMP.
+        if (code === capi.SQLITE_ATTACH && typeof a1 === "string" && a1 !== "") return deny(REFUSED.attach);
+        // The settings the runtime's assumptions rest on are the runtime's (P03): set, not read.
+        if (code === capi.SQLITE_PRAGMA && typeof a2 === "string" && typeof a1 === "string" && RUNTIME_PRAGMAS.has(a1.toLowerCase())) return deny(REFUSED.pragma);
+        // Under a ranged key the rowid is not the key, as it was where the key was the rowid's alias (K11).
+        if (code === capi.SQLITE_READ && a2 === "ROWID" && typeof a1 === "string" && db !== "temp" && this.rangedSet.has(folded(a1))) {
+          if (!(typeof trigger === "string" && runtimeNamed(trigger))) return deny(REFUSED.rowid);
+        }
+      }
       if (typeof target !== "string" || !runtimeNamed(target)) return capi.SQLITE_OK;
+      // The document's own schemas: VACUUM copies every table through a schema of its own, which is not one.
+      if (typeof db === "string" && db !== "main" && db !== "temp") return capi.SQLITE_OK;
       if (typeof trigger === "string" && trigger.length > 0) {
         // Found by preparing, never running, the writes that would fire it (1d-L1).
         if (this.probing && !own.has(trigger)) this.probed.add(trigger);
-        return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
+        return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : deny(REFUSED.runtimeTables);
       }
-      return this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
+      return this.depth > 0 ? capi.SQLITE_OK : deny(REFUSED.runtimeTables);
     };
     capi.sqlite3_set_authorizer(this.db.pointer, this.authorizer, 0);
+  }
+
+  /**
+   * What the authorizer reads, which may not prepare a statement of its own
+   * while SQLite prepares one: the virtual tables (C04) and the tables keyed by
+   * ranged ids (K11), folded. Refreshed at every adoption.
+   */
+  private refreshAuthorized(): void {
+    this.virtualSet = new Set(
+      (this.db.selectValues("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'virtual'") as string[]).map(folded),
+    );
+    this.rangedSet = new Set((this.db.selectValues("SELECT tbl FROM _cs_keys WHERE kind = 'ranged'") as string[]).map(folded));
   }
 
   /**
@@ -741,6 +841,17 @@ export class Changes {
    * as the runtime writes it. The names are kept in `refused`.
    */
   private refuseForeignTriggers(): void {
+    // A runtime view, as T11 holds triggers (D264): the apply reads _cs_log_current, so a view an imported
+    // document carries under a runtime name is the runtime's text or it goes, put back as the runtime writes it.
+    const views = runtimeObjects(this.sqlite3).views;
+    for (const v of this.db.selectObjects("SELECT name, sql FROM main.sqlite_schema WHERE type = 'view'") as Any[]) {
+      if (!runtimeNamed(String(v.name))) continue;
+      const want = views.get(String(v.name));
+      if (want && spaced(String(v.sql)) === spaced(want)) continue;
+      this.exec(`DROP VIEW main.${q(String(v.name))}`);
+      if (want) this.exec(want);
+      this.refused.push(String(v.name));
+    }
     const expected = runtimeTriggers(this.sqlite3);
     for (const schema of ["main", "temp"]) {
       for (const t of this.db.selectObjects(`SELECT name, tbl_name, sql FROM ${schema}.sqlite_schema WHERE type = 'trigger'`) as Any[]) {
@@ -770,15 +881,38 @@ export class Changes {
      */
     const prepare = handle.prepare.bind(handle);
     handle.prepare = (...args: Any[]): Any => {
-      const stmt = prepare(...args);
-      if (this.depth > 0) return stmt;
+      if (this.depth > 0) return prepare(...args);
+      this.deniedBecause = null;
+      let stmt: Any;
+      try {
+        stmt = prepare(...args);
+      } catch (e) {
+        throw this.explained(e);
+      }
       const step = stmt.step.bind(stmt);
       stmt.step = (): Any => {
+        this.counting();
         const row = step();
+        this.counted();
         if (this.depth === 0 && (this.deferred || this.redecide.size > 0) && !this.inTransaction) this.projectAdmitted();
         return row;
       };
       return stmt;
+    };
+    // The handle's own counts answer for the application's statements, as the SQL functions do (D08).
+    const changes = handle.changes.bind(handle);
+    handle.changes = (total = false, big = false): Any => {
+      const n = total ? Number(changes(true, false)) - this.runtimeChanges : this.runtimeWrote ? this.appChanges : Number(changes(false, false));
+      return big ? BigInt(n) : n;
+    };
+    // The runtime's own functions, and the built-ins it answers for, are not the application's to replace (D11).
+    const createFunction = handle.createFunction.bind(handle);
+    handle.createFunction = (...args: Any[]): Any => {
+      const name = typeof args[0] === "string" ? args[0] : args[0]?.name;
+      if (typeof name === "string" && (/^dai_/i.test(name) || /^(last_insert_rowid|changes|total_changes)$/i.test(name))) {
+        throw new Error(`CHANGES_REFUSED: ${REFUSED.functionName}`);
+      }
+      return createFunction(...args);
     };
     const exec = handle.exec.bind(handle);
     handle.exec = (...args: Any[]): Any => {
@@ -800,12 +934,50 @@ export class Changes {
     };
   }
 
+  /**
+   * An error the authorizer caused, carrying the rule it refused by, as one
+   * sentence (R-V): `CHANGES_REFUSED: <sentence> (SQLite: not authorized)`.
+   * Any other error is returned as it was.
+   */
+  private explained(e: unknown): unknown {
+    const why = this.deniedBecause;
+    this.deniedBecause = null;
+    if (!why || !/not authorized|is prohibited|authorization denied/.test(String((e as Error)?.message ?? e))) return e;
+    return new Error(`CHANGES_REFUSED: ${why} (SQLite: not authorized)`, { cause: e });
+  }
+
+  /** Before an application statement: the total it starts from (D08). */
+  private counting(): void {
+    this.appTotal = Number(this.sqlite3.capi.sqlite3_total_changes(this.db.pointer));
+  }
+
+  /**
+   * After an application statement (D08). One that wrote rows, or set the
+   * count anew, is the latest the application's changes() answers natively,
+   * until the runtime writes again; one that wrote nothing (a SELECT) leaves
+   * the answer where it was.
+   */
+  private counted(): void {
+    const capi = this.sqlite3.capi;
+    const now = Number(capi.sqlite3_changes(this.db.pointer));
+    const moved = Number(capi.sqlite3_total_changes(this.db.pointer)) > this.appTotal;
+    if (!this.runtimeWrote || moved || now !== this.runtimeLast) {
+      this.runtimeWrote = false;
+      this.appLast = now;
+    }
+  }
+
   /** One statement, or one script with no schema change in it, as the application ran it. */
   private statement(handle: Any, run: () => Any): Any {
     const before = handle.selectValue("PRAGMA schema_version");
     let result: Any;
+    this.deniedBecause = null;
+    this.counting();
     try {
       result = run();
+      this.counted();
+    } catch (e) {
+      throw this.explained(e);
     } finally {
       this.settleFrames();
     }
@@ -835,6 +1007,7 @@ export class Changes {
     });
     // The statement itself runs as the application's, under every check the authorizer makes of one.
     this.schemaChanging = true;
+    this.deniedBecause = null;
     let result: Any;
     try {
       result = run();
@@ -852,7 +1025,7 @@ export class Changes {
         }
       });
       this.settleFrames();
-      throw e;
+      throw this.explained(e);
     }
     this.trusted(() => {
       this.exec("RELEASE cs_schema");
@@ -868,7 +1041,7 @@ export class Changes {
   /** The application's tables and their columns, in order: what a schema change is read from. */
   private shapeOf(): Map<string, string[]> {
     return new Map(
-      appTablesOf(this.rows).map((t) => [t, this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [t]) as string[]]),
+      appTablesOf(this.rows).map((t) => [t, this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [t]) as string[]]),
     );
   }
 
@@ -916,7 +1089,7 @@ export class Changes {
       this.moveKeys(renamed.from, renamed.to);
     } else if (renamed) {
       for (const t of meta) {
-        const cols = (this.db.selectValues(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, [t]) as string[]).map(q);
+        const cols = (this.db.selectValues(`SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid`, [t]) as string[]).map(q);
         const moved = cols.map((c) => (c === '"tbl"' ? "?" : c)).join(", ");
         this.exec({ sql: `INSERT OR IGNORE INTO main.${t} (${cols.join(", ")}) SELECT ${moved} FROM main.${t} WHERE tbl = ?`, bind: [renamed.to, renamed.from] });
         this.exec({ sql: `DELETE FROM main.${t} WHERE tbl = ?`, bind: [renamed.from] });
@@ -936,7 +1109,7 @@ export class Changes {
         continue;
       }
       for (const t of ["_cs_cell", "_cs_sup"]) {
-        const cols = (this.db.selectValues(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, [t]) as string[]).map(q);
+        const cols = (this.db.selectValues(`SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid`, [t]) as string[]).map(q);
         const moved = cols.map((c) => (c === '"col"' ? "?" : c)).join(", ");
         this.exec({
           sql: `INSERT OR IGNORE INTO main.${t} (${cols.join(", ")}) SELECT ${moved} FROM main.${t} WHERE tbl = ? AND col = ?`,
@@ -1032,7 +1205,7 @@ export class Changes {
     let high = 0;
     for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys WHERE kind IN ('ranged', 'hidden')") as Any[]) {
       const col = q(pk);
-      const m = this.db.selectValue(`SELECT max(${col}) FROM ${q(tbl)} WHERE ${col} >= ? AND ${col} < ?`, [base, base + SPAN]);
+      const m = this.db.selectValue(`SELECT max(${col}) FROM main.${q(tbl)} WHERE ${col} >= ? AND ${col} < ?`, [base, base + SPAN]);
       if (m != null) high = Math.max(high, Number(m) - base);
     }
     // Every id the range has held is in the cells, deleted rows included, whoever wrote it: a row another
@@ -1081,7 +1254,7 @@ export class Changes {
     const known = new Set(db.selectValues("SELECT tbl FROM _cs_keys") as string[]);
     for (const table of appTablesOf(this.rows)) {
       if (known.has(table)) continue;
-      const info = db.selectObjects("SELECT name, type, pk, dflt_value FROM pragma_table_info(?) ORDER BY cid", [table]) as Any[];
+      const info = db.selectObjects("SELECT name, type, pk, dflt_value FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as Any[];
       const pks = info.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk);
       const sql = String(db.selectValue("SELECT sql FROM sqlite_schema WHERE name = ?", [table]) ?? "");
       const withoutRowid = /WITHOUT\s+ROWID\s*$/i.test(sql.trim());
@@ -1092,6 +1265,8 @@ export class Changes {
       if (this.started) {
         this.uncaptured.add(table);
         this.unsettled.add(table);
+        // Rows another copy wrote under this name, held here until the table was made, are decided again (S05).
+        if (db.selectValue("SELECT 1 FROM main._cs_held WHERE tbl = ? LIMIT 1", [table]) != null) this.redecide.add(table);
       }
       let kind: KeyKind = "natural";
       const dflt = String(pks[0]?.dflt_value ?? "");
@@ -1127,6 +1302,8 @@ export class Changes {
     this.declaredCache.clear();
     this.settleViews();
     this.capture?.schemaChanged();
+    this.adopted = new Set(this.db.selectValues("SELECT tbl FROM _cs_keys") as string[]);
+    this.refreshAuthorized();
     this.refuseRuntimeWriters();
   }
 
@@ -1148,7 +1325,7 @@ export class Changes {
     this.probed.clear();
     try {
       for (const t of tables) {
-        const cols = this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [t]) as string[];
+        const cols = this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [t]) as string[];
         for (const sql of [
           `INSERT INTO main.${q(t)} DEFAULT VALUES`,
           `UPDATE main.${q(t)} SET ${cols.map((c) => `${q(c)} = ${q(c)}`).join(", ")}`,
@@ -1251,7 +1428,7 @@ export class Changes {
       }
       if (head + body === String(sql)) continue;
       this.paused(() => {
-        this.exec(`DROP TRIGGER ${q(name)}`);
+        this.exec(`DROP TRIGGER main.${q(name)}`);
         this.exec(head + body);
       });
     }
@@ -1274,7 +1451,7 @@ export class Changes {
     }
     if (rewritten === sql) return false;
     // The ordinary columns, by name: a generated column takes no value (C05), and SELECT * would hand it one.
-    const cols = (this.db.selectValues("SELECT name FROM pragma_table_xinfo(?) WHERE hidden = 0 ORDER BY cid", [table]) as string[]).map(q).join(", ");
+    const cols = (this.db.selectValues("SELECT name FROM pragma_table_xinfo(?, 'main') WHERE hidden = 0 ORDER BY cid", [table]) as string[]).map(q).join(", ");
     const others = this.db.selectValues(
       "SELECT sql FROM sqlite_schema WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL",
       [table],
@@ -1287,11 +1464,11 @@ export class Changes {
       exec("PRAGMA legacy_alter_table = ON");
       try {
         exec("SAVEPOINT cs_rebuild");
-        exec(`ALTER TABLE ${q(table)} RENAME TO ${q(old)}`);
+        exec(`ALTER TABLE main.${q(table)} RENAME TO ${q(old)}`);
         exec(rewritten);
-        if (kind === "hidden") this.capture.captured(() => exec(`INSERT INTO ${q(table)} (${cols}) SELECT ${cols} FROM ${q(old)}`));
-        else exec(`INSERT INTO ${q(table)} (${cols}) SELECT ${cols} FROM ${q(old)}`);
-        exec(`DROP TABLE ${q(old)}`);
+        if (kind === "hidden") this.capture.captured(() => exec(`INSERT INTO main.${q(table)} (${cols}) SELECT ${cols} FROM main.${q(old)}`));
+        else exec(`INSERT INTO main.${q(table)} (${cols}) SELECT ${cols} FROM main.${q(old)}`);
+        exec(`DROP TABLE main.${q(old)}`);
         for (const s of others) exec(s);
         exec("RELEASE cs_rebuild");
       } catch (e) {
@@ -1311,7 +1488,7 @@ export class Changes {
     if (!d) {
       // Read strictly, against the columns SQLite reports: a line that does not read exactly is ignored (1b-H2).
       const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]) ?? "");
-      d = declaredIn(sql, this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [table]) as string[]);
+      d = declaredIn(sql, this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]);
       this.declaredCache.set(table, d);
     }
     return d;
@@ -1380,7 +1557,29 @@ export class Changes {
    * itself in the log and every change it held for the next save.
    */
   save(): SavedChanges | null {
-    return this.trusted(() => this.saving());
+    const was = this.refusal;
+    try {
+      return this.trusted(() => this.saving());
+    } finally {
+      if (this.refusal && !was) this.expireStatements();
+    }
+  }
+
+  /**
+   * Every statement the application prepared before a P3 refusal is made to
+   * prepare again (S09): the authorizer acts as SQLite prepares, so a
+   * statement prepared before the refusal would otherwise still write. A
+   * schema change expires them all, and SQLite prepares each again at its next
+   * step, under the authorizer as it now stands.
+   */
+  private expireStatements(): void {
+    this.trusted(() => {
+      try {
+        this.exec("CREATE TABLE main._cs_expire (x); DROP TABLE main._cs_expire;");
+      } catch {
+        // Inside a transaction the application rolled back, nothing is prepared that it could still step.
+      }
+    });
   }
 
   /**
@@ -1427,7 +1626,19 @@ export class Changes {
     }
     // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
     // over too, so `dirty` says exactly whether a save has something to log.
-    if (logged || !this.capture.isEmpty()) this.capture.clear();
+    if (logged || !this.capture.isEmpty()) {
+      try {
+        this.capture.clear();
+      } catch (e) {
+        // Logged, and the session not started over: the next save would log the same changes again as new
+        // work (Q11). No retry cures that, so it refuses the document (P3).
+        if (logged) {
+          this.refusal = SAVE_REFUSED;
+          throw new Error(`CHANGES_SAVE_REFUSED: ${SAVE_REFUSED}`, { cause: e });
+        }
+        throw e;
+      }
+    }
     if (!opts.epoch) {
       for (const t of settling.dropped) {
         this.exec({ sql: "INSERT OR REPLACE INTO main._cs_shape (kind, tbl, col, now) VALUES ('dropped', ?, '', NULL)", bind: [t] });
@@ -1500,7 +1711,7 @@ export class Changes {
         dropped.push(table);
         continue;
       }
-      const cols = (this.db.selectValues("SELECT name FROM pragma_table_info(?) ORDER BY cid", [table]) as string[]).filter((c) => !keys.pk.includes(c));
+      const cols = (this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]).filter((c) => !keys.pk.includes(c));
       const current = new Map<string, Record<string, unknown>>();
       const all = [...keys.pk, ...cols];
       // Each text value with the bytes SQLite holds for it, so text that is not UTF-8 is refused here as at capture.
@@ -1875,7 +2086,7 @@ export class Changes {
   private respells(table: string): boolean {
     const keys = this.keysOf(table)?.pk ?? [];
     const untyped = keys.some((c) => {
-      const type = String(this.db.selectValue("SELECT type FROM pragma_table_info(?) WHERE name = ?", [table, c]) ?? "").toUpperCase();
+      const type = String(this.db.selectValue("SELECT type FROM pragma_table_info(?, 'main') WHERE name = ?", [table, c]) ?? "").toUpperCase();
       return !/INT|CHAR|CLOB|TEXT|REAL|FLOA|DOUB/.test(type) && (type === "" || type.includes("BLOB"));
     });
     return untyped || this.keyCollations(table).some((c) => c !== "BINARY");
@@ -1889,10 +2100,10 @@ export class Changes {
     let colls = this.collCache.get(table);
     if (!colls) {
       const keys = this.keysOf(table)?.pk ?? [];
-      const index = this.db.selectValue("SELECT name FROM pragma_index_list(?) WHERE origin = 'pk'", [table]) as string | undefined;
+      const index = this.db.selectValue("SELECT name FROM pragma_index_list(?, 'main') WHERE origin = 'pk'", [table]) as string | undefined;
       const by = new Map<string, string>(
         index
-          ? (this.db.selectObjects("SELECT name, coll FROM pragma_index_xinfo(?) WHERE key = 1", [index]) as Any[]).map((r) => [String(r.name), String(r.coll).toUpperCase()])
+          ? (this.db.selectObjects("SELECT name, coll FROM pragma_index_xinfo(?, 'main') WHERE key = 1", [index]) as Any[]).map((r) => [String(r.name), String(r.coll).toUpperCase()])
           : [],
       );
       colls = keys.map((c) => by.get(c) ?? "BINARY");
@@ -2039,13 +2250,42 @@ export class Changes {
     } catch (e) {
       const message = String((e as Error).message);
       if (/UNIQUE/.test(message)) {
-        const occupant = this.occupantOf(table, pk, state.values);
+        const found = this.occupantOf(table, pk, state.values);
+        const occupant = found?.pk;
+        /*
+         * The row in the slot moves out of it in this same apply (M04): its
+         * merged values no longer hold the slot's value, as two rows that
+         * swapped a UNIQUE value each find the other's old value. It is taken
+         * out, this row is written, and it is placed again under its own merged
+         * values, which now fit.
+         */
+        const theirs = found && this.roomDepth < 8 ? this.stateOf(table, found.pk) : null;
+        const rowOf = (key: string, v: Record<string, unknown>): Record<string, unknown> => ({
+          ...Object.fromEntries(keys.pk.map((c, i) => [c, keyValues(key)[i]])),
+          ...v,
+        });
+        if (found && theirs && (theirs.deleted || !this.collides(table, found.index, rowOf(pk, state.values), rowOf(found.pk, theirs.values)))) {
+          this.roomDepth += 1;
+          try {
+            this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(found.pk).map(compared));
+            let wrote = true;
+            try {
+              this.write(table, keys, k, state.values);
+            } catch {
+              wrote = false;
+            }
+            this.place(table, found.pk);
+            if (wrote) return;
+          } finally {
+            this.roomDepth -= 1;
+          }
+        }
         if (occupant) {
           const mine = this.birthOf(table, pk);
           const theirs = this.birthOf(table, occupant);
           const earlier = (x: Any, y: Any): boolean => (x && y ? x.lc < y.lc || (x.lc === y.lc && x.author < y.author) : !!x);
           if (earlier(mine, theirs)) {
-            this.hold(table, occupant, `UNIQUE: lost the slot to ${pk}`, this.stateOf(table, occupant)?.values ?? {});
+            this.hold(table, occupant, `UNIQUE: ${pk} holds the slot`, this.stateOf(table, occupant)?.values ?? {});
             this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(occupant).map(compared));
             this.write(table, keys, k, state.values);
             return;
@@ -2071,18 +2311,55 @@ export class Changes {
   }
 
   /** The other row holding a UNIQUE slot this row's values want. */
-  private occupantOf(table: string, pk: string, values: Record<string, unknown>): string | null {
+  /**
+   * The other row holding a UNIQUE slot this row's values want (M03), for an
+   * index on columns, on expressions, or with a WHERE: each of the index's
+   * terms, and its WHERE, evaluated by SQLite over this row's values (a
+   * one-row `mine`) and over each row of the table. `cols` are the columns
+   * the terms read.
+   */
+  /** Whether two rows' values take one slot of a UNIQUE index: its terms, and its WHERE, as SQLite evaluates them. */
+  private collides(table: string, index: { terms: string[]; where: string | null }, x: Record<string, unknown>, y: Record<string, unknown>): boolean {
+    const all = (this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]).filter((c) => c in x && c in y);
+    const bx = all.map((c) => bound(x[c]));
+    const by = all.map((c) => bound(y[c]));
+    const same = index.terms.map((t) => `((SELECT ${t} FROM x) IS (SELECT ${t} FROM y))`);
+    if (index.where) same.push(`(SELECT ${index.where} FROM x)`, `(SELECT ${index.where} FROM y)`);
+    return (
+      Number(
+        this.db.selectValue(
+          `WITH x(${all.map(q).join(", ")}) AS (VALUES (${bx.map((v) => v.at).join(", ")})), ` +
+            `y(${all.map(q).join(", ")}) AS (VALUES (${by.map((v) => v.at).join(", ")})) SELECT ${same.join(" AND ")}`,
+          [...bx, ...by].map((v) => v.value),
+        ),
+      ) === 1
+    );
+  }
+
+  private occupantOf(table: string, pk: string, values: Record<string, unknown>): { pk: string; index: { terms: string[]; where: string | null } } | null {
     const keys = this.keysOf(table)!;
-    for (const idx of this.db.selectObjects("SELECT name FROM pragma_index_list(?) WHERE \"unique\" = 1 AND origin <> 'pk'", [table]) as Any[]) {
-      const cols = this.db.selectValues("SELECT name FROM pragma_index_info(?) ORDER BY seqno", [idx.name]) as string[];
-      if (cols.some((c) => !(c in values))) continue;
+    const all = this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[];
+    const row = { ...Object.fromEntries(keys.pk.map((c, i) => [c, keyValues(pk)[i]])), ...values };
+    const mine = all.filter((c) => c in row);
+    const bound_ = mine.map((c) => bound(row[c]));
+    for (const idx of this.db.selectObjects("SELECT name FROM pragma_index_list(?, 'main') WHERE \"unique\" = 1 AND origin <> 'pk'", [table]) as Any[]) {
+      const index = uniqueIndex(
+        this.db.selectValue("SELECT sql FROM main.sqlite_schema WHERE type = 'index' AND name = ?", [idx.name]) as string | null,
+        (this.db.selectValues("SELECT name FROM pragma_index_info(?, 'main') ORDER BY seqno", [idx.name]) as (string | null)[]).map((c) => (c == null ? null : q(c))),
+      );
+      if (!index) continue;
+      const cols = all.filter((c) => index.terms.some((t) => mentions(t, c)));
+      if (cols.some((c) => !(c in row))) continue;
+      const where = index.where ? ` AND (${index.where}) AND (SELECT ${index.where} FROM mine)` : "";
       const hit = this.db.selectObject(
-        `SELECT ${keys.pk.map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ")} FROM main.${q(table)} WHERE ${cols.map((c) => `${q(c)} IS ?`).join(" AND ")}`,
-        cols.map((c) => compared(values[c])),
+        `WITH mine(${mine.map(q).join(", ")}) AS (VALUES (${bound_.map((v) => v.at).join(", ")})) ` +
+          `SELECT ${keys.pk.map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ")} FROM main.${q(table)} ` +
+          `WHERE ${index.terms.map((t) => `(${t}) IS (SELECT ${t} FROM mine)`).join(" AND ")}${where}`,
+        bound_.map((v) => v.value),
       ) as Any;
       if (hit) {
         const other = this.identity(table, keys.pk.map((c) => typed(hit[`_cs_t_${c}`], hit[c])));
-        if (other !== pk) return other;
+        if (other !== pk) return { pk: other, index };
       }
     }
     return null;
@@ -2094,7 +2371,7 @@ export class Changes {
       const orphans = this.db.selectObjects("SELECT * FROM pragma_foreign_key_check") as Any[];
       let revived = 0;
       for (const o of orphans) {
-        const fk = this.db.selectObjects('SELECT "from", "to", "table" FROM pragma_foreign_key_list(?) WHERE id = ? ORDER BY seq', [o.table, o.fkid]) as Any[];
+        const fk = this.db.selectObjects(`SELECT "from", "to", "table" FROM pragma_foreign_key_list(?, 'main') WHERE id = ? ORDER BY seq`, [o.table, o.fkid]) as Any[];
         if (!fk.length || o.rowid == null) continue;
         const child = this.db.selectObject(
           `SELECT ${fk.map((f) => `${q(f.from)}, typeof(${q(f.from)}) AS ${q(`_cs_t_${f.from}`)}`).join(", ")} FROM main.${q(o.table)} WHERE rowid = ?`,
@@ -2177,10 +2454,52 @@ function changesSchema(statement: string): boolean {
   return /^(?:ALTER|DROP)\s+TABLE\b/i.test(head);
 }
 
+/** Whether an index term reads a column: its name as a whole identifier, bare or quoted, in any case. */
+function mentions(term: string, col: string): boolean {
+  const name = col.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\w"])"?${name}"?($|[^\\w"])`, "i").test(term);
+}
+
+/**
+ * A UNIQUE index's terms and WHERE (M03): from its CREATE INDEX text, each
+ * term as written with its COLLATE and without ASC or DESC; for one a UNIQUE
+ * constraint made (no text), its columns. Null when it cannot be read.
+ */
+function uniqueIndex(sql: string | null, columns: (string | null)[]): { terms: string[]; where: string | null } | null {
+  if (!sql) return columns.every((c) => c !== null) ? { terms: columns as string[], where: null } : null;
+  const on = sql.search(/\bON\b/i);
+  const open = on < 0 ? -1 : sql.indexOf("(", on);
+  if (open < 0) return null;
+  const terms: string[] = [];
+  let depth = 0;
+  let quote = "";
+  let start = open + 1;
+  let close = -1;
+  for (let i = open + 1; i < sql.length && close < 0; i++) {
+    const ch = sql[i]!;
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") quote = ch;
+    else if (ch === "[") quote = "]";
+    else if (ch === "(") depth += 1;
+    else if (ch === ")" && depth > 0) depth -= 1;
+    else if ((ch === "," || ch === ")") && depth === 0) {
+      terms.push(sql.slice(start, i).trim().replace(/\s+(ASC|DESC)$/i, ""));
+      start = i + 1;
+      if (ch === ")") close = i;
+    }
+  }
+  if (close < 0) return null;
+  const rest = sql.slice(close + 1).trim();
+  const where = /^WHERE\b/i.test(rest) ? rest.replace(/^WHERE\b/i, "").trim() : null;
+  return { terms, where };
+}
+
 /** A statement's text with its whitespace runs made one space: how a stored trigger is compared with the runtime's. */
 const spaced = (sql: string): string => sql.replace(/\s+/g, " ").trim();
 
-let ownTriggers: Map<string, string> | null = null;
 
 /**
  * The triggers the runtime itself puts on its tables, by name, as SQLite
@@ -2189,17 +2508,26 @@ let ownTriggers: Map<string, string> | null = null;
  * compiler emits it).
  */
 function runtimeTriggers(sqlite3: Any): Map<string, string> {
-  if (ownTriggers) return ownTriggers;
+  return runtimeObjects(sqlite3).triggers;
+}
+
+let ownObjects: { triggers: Map<string, string>; views: Map<string, string> } | null = null;
+
+/** The runtime's own triggers and views, by name, as SQLite stores them (T11, D264). */
+function runtimeObjects(sqlite3: Any): { triggers: Map<string, string>; views: Map<string, string> } {
+  if (ownObjects) return ownObjects;
   const scratch = new sqlite3.oo1.DB(":memory:", "c");
   try {
     scratch.exec(rewriteReplicated(CHANGES_DECLARATION).sql);
-    ownTriggers = new Map(
-      (scratch.selectObjects("SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL") as Any[]).map((r) => [String(r.name), String(r.sql)]),
-    );
+    const of = (type: string): Map<string, string> =>
+      new Map(
+        (scratch.selectObjects("SELECT name, sql FROM sqlite_schema WHERE type = ? AND sql IS NOT NULL", [type]) as Any[]).map((r) => [String(r.name), String(r.sql)]),
+      );
+    ownObjects = { triggers: of("trigger"), views: of("view") };
   } finally {
     scratch.close();
   }
-  return ownTriggers;
+  return ownObjects;
 }
 
 /** The later version first, by (lc, author, ver): the order a column's shown value is chosen in. */
@@ -2224,7 +2552,8 @@ export function changesDump(rows: Rows): Record<string, Record<string, unknown>[
     const order = k?.["pk"] ? String(k["pk"]).split(",").map(q).join(", ") : "rowid";
     // Each value with its storage class where JSON would lose it: a BLOB as <hex>, an integer past 2^53 as its
     // digits, and a REAL with no fraction or an infinity as <real ...>, which an INTEGER never reads as (M15).
-    const cols = rows.all("SELECT name FROM pragma_table_xinfo(?) WHERE hidden <> 1 ORDER BY cid", [table]).map((r) => String(r["name"]));
+    // Columns by name: two copies whose tables hold the same values in another column order agree (S03).
+    const cols = rows.all("SELECT name FROM pragma_table_xinfo(?, 'main') WHERE hidden <> 1 ORDER BY name", [table]).map((r) => String(r["name"]));
     const types = cols.map((c, i) => `typeof(${q(c)}) AS "_cs_t_${i}"`).join(", ");
     out[table] = rows.all(`SELECT *${types ? `, ${types}` : ""} FROM ${q(table)} ORDER BY ${order}`).map((r) =>
       Object.fromEntries(
