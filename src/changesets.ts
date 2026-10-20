@@ -70,8 +70,20 @@ export const INDEX_BITS = 21;
 const SPAN = 2 ** COUNTER_BITS;
 const INDEX_MASK = 2 ** INDEX_BITS - 1;
 
-/** The runtime's own tables, never captured and never adopted. */
-const INTERNAL = /^(_dai|_cs_|sqlite_)/;
+/**
+ * A name as it is compared with the runtime's (1d-H1): Unicode compatibility
+ * forms and case folded. SQLite matches names without regard to ASCII case and
+ * hands the authorizer, and stores in `tbl_name`, the spelling as written, so
+ * `_CS_LOG` is `_cs_log` to the engine; and a name a reader or a host folds to
+ * a runtime name is never the application's either.
+ */
+const folded = (name: string): string => name.normalize("NFKC").toLowerCase();
+
+/** The runtime's own objects: the application reads them, and never writes them or hangs code on them (T11, P01). */
+const runtimeNamed = (name: string): boolean => /^(_dai|_cs_)/.test(folded(name));
+
+/** The runtime's own tables and SQLite's, never captured and never adopted. */
+const internalNamed = (name: string): boolean => runtimeNamed(name) || folded(name).startsWith("sqlite_");
 
 const META = `
 CREATE TABLE IF NOT EXISTS _cs_cell (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, ver TEXT NOT NULL, val, lc INTEGER NOT NULL, author TEXT NOT NULL, PRIMARY KEY (tbl, pk, col, ver)) WITHOUT ROWID;
@@ -130,7 +142,7 @@ export function appTablesOf(rows: Rows): string[] {
   return rows
     .all("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name")
     .map((r) => String(r["name"]))
-    .filter((n) => !INTERNAL.test(n));
+    .filter((n) => !internalNamed(n));
 }
 
 /* --------------------------------------------------------------- key DDL */
@@ -198,7 +210,7 @@ class SessionCapture {
     // on each change until it is attached.
     this.filter ||= wasm.installFunction("ipp", (_ctx: number, zTab: number) => {
       const name = wasm.cstrToJs(zTab) as string;
-      if (INTERNAL.test(name)) return 0;
+      if (internalNamed(name)) return 0;
       return this.db.selectValue("SELECT 1 FROM pragma_table_info(?) WHERE pk > 0", [name]) == null ? 0 : 1;
     });
     capi.sqlite3session_table_filter(this.session, this.filter, 0);
@@ -514,7 +526,7 @@ export class Changes {
     ]);
     this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, _db: unknown, trigger: unknown): number => {
       const target = writes.has(code) || named.has(code) ? a1 : onTable.has(code) ? a2 : null;
-      if (typeof target !== "string" || !RUNTIME.test(target)) return capi.SQLITE_OK;
+      if (typeof target !== "string" || !runtimeNamed(target)) return capi.SQLITE_OK;
       if (typeof trigger === "string" && trigger.length > 0) return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
       return this.depth > 0 ? capi.SQLITE_OK : capi.SQLITE_DENY;
     };
@@ -532,7 +544,7 @@ export class Changes {
     const expected = runtimeTriggers(this.sqlite3);
     for (const schema of ["main", "temp"]) {
       for (const t of this.db.selectObjects(`SELECT name, tbl_name, sql FROM ${schema}.sqlite_schema WHERE type = 'trigger'`) as Any[]) {
-        if (!RUNTIME.test(String(t.tbl_name))) continue;
+        if (!runtimeNamed(String(t.tbl_name))) continue;
         const want = schema === "main" ? expected.get(String(t.name)) : undefined;
         if (want && spaced(String(t.sql)) === spaced(want)) continue;
         this.exec(`DROP TRIGGER ${schema}.${q(String(t.name))}`);
@@ -1403,9 +1415,6 @@ export class Changes {
     this.authorizer = null;
   }
 }
-
-/** The runtime's own objects: the application reads them, and never writes them or hangs code on them (T11, P01). */
-const RUNTIME = /^(_dai|_cs_)/;
 
 /** A statement's text with its whitespace runs made one space: how a stored trigger is compared with the runtime's. */
 const spaced = (sql: string): string => sql.replace(/\s+/g, " ").trim();
