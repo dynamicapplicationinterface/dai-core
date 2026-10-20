@@ -681,6 +681,227 @@ semantics, under which a different definition is silently a success.
 following a schema change at runtime; external review 2026-10-20, RW-01 to
 RW-12.
 
+#### R-X — Authorship records changes and explicit decisions, not touches
+
+**Problem**
+
+An application may name every field in an UPDATE while changing only one. Neither membership in the statement’s SET list nor a pending flag establishes that the application intended to change or resolve the other fields.
+
+SQLite’s UPDATE OF triggers identify columns named in the statement, not columns the person deliberately edited. Consequently, a provenance trigger cannot infer resolution intent from firing alone.
+
+A projected value remains attributable to its recorded source until a local operation actually changes it or explicitly accepts it as a resolution.
+
+**1. The unit is a column or a declared coupled group**
+
+An independent column is one decision unit. A dai:coupled group is one tuple-valued decision unit.
+
+Pending is derived status attached to the affected unit and its retained alternatives. It is not an instruction to author a new version.
+
+For each unit, the runtime must distinguish:
+
+* Echo: writing back the bound projection unchanged.
+* Edit: changing the unit’s value relative to that projection.
+* Resolution: explicitly accepting a value against identified alternatives, whether or not its bytes change.
+
+“Bound projection” means the particular materialized state and provenance against which the operation was made—not whatever projection happens to exist when the save is eventually signed.
+
+**2. An unchanged write is not an edit, even when pending**
+
+The authorship predicate is:
+
+```
+emit an operation for unit U when:
+    its committed value differs from its bound projected value
+    OR
+    an explicit resolution was recorded for U
+```
+
+It is not:
+
+```
+U is pending OR its value changed
+```
+
+An echo produces no new version of that unit, does not clear its pending state, and cannot supersede any alternative.
+
+Equality uses the existing typed-value contract, including storage class. Logical key equality and stored key spelling remain separate.
+
+This rule concerns the echoed unit. It does not suppress ordinary SQL execution or discard real, committed effects of application triggers.
+
+**3. Signed operations must bind their causal basis**
+
+Yes: the signature must bind what the operation is based on, not merely its output value. But one projected version and a set of alternatives being resolved are different things.
+
+The authenticated operation must bind, directly or through authenticated references:
+
+```
+document/entity identity
+schema and decision-unit identity
+operation kind: edit or resolution
+resulting typed value or complete coupled tuple
+basis: source version(s) of the bound projection
+resolves: alternatives explicitly accepted/rejected by this decision
+```
+
+resolves may be absent for an ordinary edit. No particular new wire encoding is required if the existing signed representation already expresses these distinctions unambiguously.
+
+A normal edit may supersede its projected basis. It does not implicitly resolve every competing alternative merely because the host possesses those alternatives. A user action choosing a replacement can submit an edit and an explicit resolution together.
+
+The receiving copy must never reconstruct this basis from its own current projection, arrival order, or pending flags.
+
+*Projection disagreement does not require no-op signatures*
+
+Two copies can show different values while holding different evidence. Once they receive the same admitted evidence, the deterministic projector must produce the same result.
+
+If they hold the same evidence and schema but still project differently, that is a projection defect.
+
+Signing unchanged displayed values is not a convergence mechanism. It would turn differences in delivery timing into new authored decisions.
+
+**4. Resolution requires an explicit, observation-bound operation**
+
+Keeping the displayed value must use a host/kit resolution operation distinct from an ordinary SQL assignment.
+
+The runtime supplies an opaque observation token identifying the unit, the displayed value’s provenance, and the alternatives presented for resolution. The resolution binds that observation and the chosen result.
+
+The token must not silently expand to include alternatives received afterward. A newly arrived alternative remains unresolved unless a subsequent explicit decision includes it.
+
+The resolution and its durable log entry commit together. It must be recorded even when the materialized SQLite bytes remain unchanged. Native session extraction cannot supply that event by itself: when a tracked row retains its original field values, SQLite emits no corresponding change.
+
+This replaces RW-12’s inference that assigning a pending field to its displayed value proves a resolution. RW-12’s desired outcome remains; its implicit-intent mechanism is retired.
+
+**5. Coupling changes the decision’s scope, not its existence**
+
+For dai:coupled qty unit:
+
+| Operation | Result |
+| --- | --- |
+| Write back both qty and unit unchanged | Neither is a resolution. No tuple version is authored. |
+| Change qty, retaining the displayed unit | Author one complete tuple edit, based on the bound tuple. Do not independently resolve unrelated alternatives. |
+| Explicitly choose the displayed (qty, unit) tuple | Author one tuple resolution, even though neither stored value changes. |
+| Resolve only qty while leaving unit’s coupled meaning unspecified | Refuse the incomplete resolution or require selection of a complete tuple. |
+
+An unchanged member travels with a genuine tuple edit to preserve the declared coupling. Its presence does not create an additional independent decision.
+
+**6. Key spelling follows the same rule**
+
+1f-M2 is the same family.
+
+For a logical key whose spelling is a separately versioned value:
+
+* Echoing the displayed spelling does not author a new spelling version.
+* Actually respelling it authors a change.
+* Explicitly keeping the displayed spelling against alternatives authors a resolution, even with no byte change.
+
+The operation addresses the stable logical entity. It must not manufacture a new entity merely to record a spelling decision.
+
+**7. The boundary must survive delayed form saves**
+
+An execution-time baseline is not necessarily the state a form previously read.
+
+If a form read projection P and remote application replaces it with Q before submission, unchanged values from P must not automatically become intentional reversions of Q.
+
+A read-modify-write workflow claiming this protection must carry its observation token or operate against a stable edit snapshot. A stale observation must receive defined rebase/conflict handling; it must not be silently rebound to newer alternatives.
+
+For unannotated raw SQL, the runtime can establish execution-time effects. It cannot infer an earlier UI observation or human resolution intent from bound values alone.
+
+**Rejected**
+
+Row-level or per-column pending as authority to author an unchanged value; SET-list membership as resolution intent; signing no-ops to force convergence; coupling as permission to expand an echo into a decision; and replacing signed causal references with local flags.
+
+**Guarantee**
+
+Writing back a projection does not claim its authorship. A local operation authors only a genuine change or an explicit decision, scoped to its decision unit and bound to the versions that decision concerns. Unrelated writes and unseen alternatives cannot be resolved by implication.
+
+#### R-X red test
+
+**The single red test**
+
+R-X: form echo is not resolution; explicit keep is
+
+Use one three-author scenario with two successive assertions, so an implementation cannot pass merely by dropping all same-value writes.
+
+Declare:
+
+```sql
+CREATE TABLE items (
+    id INTEGER PRIMARY KEY,
+    qty INTEGER NOT NULL,
+    unit TEXT NOT NULL,
+    note TEXT
+    -- dai:coupled qty unit
+);
+```
+
+Start A, B, and C from the same committed row:
+
+```
+id = 7
+(qty, unit) = (1, "kg")
+note = ""
+```
+
+*Arrange the conflict*
+
+A writes and signs (2, "kg"). B concurrently writes and signs (3, "kg").
+
+Exchange A and B’s evidence so their coupled unit is pending. Fix the fixture’s clocks/authors so the displayed tuple is (3, "kg").
+
+Independently, C writes and signs (4, "kg") from the common starting state. Withhold C’s batch.
+
+*First assertion: a full-form save changes only the note*
+
+A reads the displayed row. Its application changes only note, but submits:
+
+```sql
+UPDATE items
+SET qty = 3,
+    unit = 'kg',
+    note = 'packed'
+WHERE id = 7;
+```
+
+Save and inspect the authenticated operation, not merely the visible row.
+
+Required:
+
+```
+A's new operation authors note = "packed".
+It authors no qty/unit version.
+It carries no resolution of qty/unit.
+The original tuple alternatives remain pending.
+```
+
+This is the red that defeats pending OR changed, even with per-column flags. Pending qty is unchanged, so treating pending as authority manufactures a tuple edit.
+
+*Second assertion: explicitly keeping that same tuple does log a decision*
+
+Before C’s batch is delivered, obtain the conflict observation token naming A’s (2, "kg") and B’s (3, "kg").
+
+Invoke the explicit resolution operation to keep (3, "kg").
+
+Required:
+
+```
+A new signed resolution exists despite unchanged qty/unit bytes.
+It binds the observed basis and resolves precisely A's and B's alternatives.
+Its chosen value is the complete tuple (3, "kg").
+```
+
+Now deliver C’s withheld (4, "kg") batch and the other batches to fresh readers in every dependency-respecting delivery order, including C before and after the resolution.
+
+Required:
+
+```
+note = "packed"
+Unresolved tuple alternatives:
+    resolution → (3, "kg")
+    C          → (4, "kg")
+```
+
+All readers must agree on canonical state, pending alternatives, and deterministic display. C’s version must not be superseded by the earlier form echo or by a resolution that did not include it.
+
+The decisive distinction is not finer-grained pending flags. It is an authenticated distinction between “I wrote this field back” and “I chose this value.”
+
 ### The data interface's runtime rules
 
 What the runtime holds for every document under the ordinary data
