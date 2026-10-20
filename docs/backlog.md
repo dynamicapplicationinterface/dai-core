@@ -9990,10 +9990,15 @@ e2e test with an app that cannot be trusted.
 
 #### D257 — The count gate does not cover WebKit
 
-*Status: open, held not fixed. Filed 18 October, from the assessment (C8).*
+*Status: fixed, 19 October (handoff 19 October, "CI shards"). Filed 18
+October, from the assessment (C8).*
 
 **Change:** the count gate covers WebKit, and the floor is raised to what CI
 passes.
+
+Every gating part keeps its count report, and the `count-gate` job sums
+them per project against the floor (`scripts/count-parts.mjs`). The floor
+was taken from run 39343228551: chromium 848, webkit 841, node 703.
 
 #### D258 — WebAuthn `largeBlob` as a single-device freshness witness
 
