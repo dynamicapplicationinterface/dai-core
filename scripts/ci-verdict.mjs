@@ -95,7 +95,8 @@ export const COUNT_JOB = "count-gate";
  * The browser parts of the gate, by the start of the name test.yml gives each
  * job: a name goes on with its matrix values ("…, 1/4)"). Chromium was one job
  * with the node project until 19 October, when it ran past its 25-minute wall
- * twice running; it is four shards and a node job, as WebKit is. Firefox is a
+ * twice running; it is four shards, the mailbox file and a node job, as WebKit
+ * is four shards and the mailbox file. Firefox is a
  * reading and is not here.
  */
 export const BROWSER_PARTS = [
@@ -103,6 +104,7 @@ export const BROWSER_PARTS = [
   "browser (chromium, 2",
   "browser (chromium, 3",
   "browser (chromium, 4",
+  "browser (chromium, mailbox",
   "browser (node, whole",
   "browser (webkit, 1",
   "browser (webkit, 2",

@@ -13,12 +13,12 @@ import { BROWSER_PARTS, EXPECTED_JOBS, COUNT_JOB, countArtifact } from "../scrip
  */
 test.describe("the sum of CI's parts", () => {
   const floor = { chromium: 800, node: 640, webkit: 800, firefox: 790, _from: { run: 1 } };
-  /** A report per part: Chromium 200 a shard, node 640, WebKit 160 a part. */
+  /** A report per part: node 640, every other part 160. */
   const reports = (): Map<string, unknown> =>
     new Map(
       BROWSER_PARTS.map((part: string) => {
         const project = /\((\w+),/.exec(part)![1];
-        const passed = { [project]: project === "chromium" ? 200 : project === "node" ? 640 : 160 };
+        const passed = { [project]: project === "node" ? 640 : 160 };
         return [countArtifact(part), { checked: false, passed, unexplained: [] }];
       }),
     );

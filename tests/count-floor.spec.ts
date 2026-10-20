@@ -97,10 +97,10 @@ test.describe("the run the floor is measured against", () => {
       databaseId: ++id,
       passes,
     });
-    // Chromium's four shards and the node job (19 October), WebKit's five parts.
+    // Five Chromium parts and the node job (19 October), five WebKit parts.
     const jobs = EXPECTED_JOBS.map((name: string) =>
       name.includes("(chromium")
-        ? job(`${name}, x)`, { chromium: 200 })
+        ? job(`${name}, x)`, { chromium: 160 })
         : name.includes("(node")
           ? job(`${name})`, { node: 640 })
           : name.includes("(webkit")

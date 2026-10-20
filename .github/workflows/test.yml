@@ -243,10 +243,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { browser: chromium, part: "1", shard: "1/4" }
-          - { browser: chromium, part: "2", shard: "2/4" }
-          - { browser: chromium, part: "3", shard: "3/4" }
-          - { browser: chromium, part: "4", shard: "4/4" }
+          # The mailbox file is its own job here too: in run 39343228551 the
+          # shard that held it took 17.2 minutes, the other three 4 to 6.
+          - { browser: chromium, part: "1", shard: "1/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: "2", shard: "2/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: "3", shard: "3/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
           # The specs that open no browser are their own project (see
           # playwright.config.ts) and run once, here — not once per engine.
           - { browser: node, part: whole }
