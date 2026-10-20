@@ -128,9 +128,9 @@ To let a person share, put a Share button in the application and call `window.da
 
 **Applies to** every shape. **Enforcement:** refused at run time.
 
-Declare every table, index, trigger and view in one file named schema.sql, each with CREATE ... IF NOT EXISTS. Application code changes no schema: no CREATE, ALTER or DROP in index.html or JavaScript. One that tries is refused with "This change needs a new version of the app; the current version was left unchanged."
+Declare every table, index, trigger and view in schema.sql, with CREATE ... IF NOT EXISTS. No CREATE, ALTER or DROP anywhere else: the app is refused with "This change needs a new version of the app; the current version was left unchanged."
 
-**Why.** The schema belongs to the version: schema.sql runs first on every open and its shape is sealed with the file, so only a new version changes it.
+**Why.** The schema belongs to the version: schema.sql runs first on every open and is sealed with the file.
 
 <small>Depends on [`src/schema.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/schema.ts), [`src/changesets.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/changesets.ts).</small>
 

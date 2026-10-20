@@ -269,9 +269,8 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "Declare every table, index, trigger and view in one file named schema.sql, each with CREATE ... IF NOT EXISTS. Application code changes no schema: no CREATE, ALTER or DROP in index.html or JavaScript. One that tries is refused with \"This change needs a new version of the app; the current version was left unchanged.\"",
-    why:
-      "The schema belongs to the version: schema.sql runs first on every open and its shape is sealed with the file, so only a new version changes it.",
+      "Declare every table, index, trigger and view in schema.sql, with CREATE ... IF NOT EXISTS. No CREATE, ALTER or DROP anywhere else: the app is refused with \"This change needs a new version of the app; the current version was left unchanged.\"",
+    why: "The schema belongs to the version: schema.sql runs first on every open and is sealed with the file.",
     enforced: ["runtime"],
     anchors: [
       { file: "src/schema.ts", contains: 'export const SCHEMA_FILE = "schema.sql"' },
