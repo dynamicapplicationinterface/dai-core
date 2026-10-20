@@ -134,6 +134,83 @@ def sql_text(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
+SAFE = (1 << 53) - 1
+
+
+def js_number(x: float) -> str:
+    """A float as ECMAScript's Number.prototype.toString writes it: the shortest
+    digits that read back, in JavaScript's own layout (1e+21, 1.5e-7, 0.000001)."""
+    if x != x:
+        return "NaN"
+    if x in (float("inf"), float("-inf")):
+        return "Infinity" if x > 0 else "-Infinity"
+    if x == 0:
+        return "0"
+    sign = "-" if x < 0 else ""
+    mantissa, _, exp = repr(abs(x)).partition("e")
+    whole, _, frac = mantissa.partition(".")
+    digits = (whole + frac).lstrip("0")
+    # Where the point falls, counted from the first significant digit.
+    if whole == "0":
+        point = -(len(frac) - len(frac.lstrip("0"))) + (int(exp) if exp else 0)
+    else:
+        point = len(whole) + (int(exp) if exp else 0)
+    digits = digits.rstrip("0") or "0"
+    k, n = len(digits), point
+    if k <= n <= 21:
+        return sign + digits + "0" * (n - k)
+    if 0 < n <= 21:
+        return sign + digits[:n] + "." + digits[n:]
+    if -6 < n <= 0:
+        return sign + "0." + "0" * (-n) + digits
+    e = n - 1
+    return sign + digits[0] + ("." + digits[1:] if k > 1 else "") + "e" + ("+" if e >= 0 else "-") + str(abs(e))
+
+
+def _key_part(v: object, exact: bool, fold) -> str:
+    """One key part as the runtime's keyText (identity) or keySpelling (exact) writes it."""
+    if isinstance(v, (bytes, bytearray)):
+        return json.dumps({"$blob": bytes(v).hex()}, separators=(",", ":"))
+    if isinstance(v, bool):
+        v = int(v)
+    if isinstance(v, int):
+        return str(v) if -SAFE <= v <= SAFE else json.dumps({"$int": str(v)}, separators=(",", ":"))
+    if isinstance(v, float):
+        # A REAL with no fraction, or an infinity, is the one a JS number cannot hold as a REAL (the runtime's Float64).
+        if v.is_integer() or v in (float("inf"), float("-inf")):
+            if not exact and v.is_integer() and -SAFE <= v <= SAFE:
+                return str(int(v))
+            return json.dumps({"$real": js_number(v)}, separators=(",", ":"))
+        return js_number(v)
+    if isinstance(v, str):
+        return json.dumps(fold(v) if fold else v, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(v, separators=(",", ":"))
+
+
+def key_text(k: list, folds=None) -> str:
+    """A key's identity, as the runtime's keyText: exact for every storage class,
+    one text for two keys SQLite takes for one row (M15, 1d-H4; 1d-H5)."""
+    return "[" + ",".join(_key_part(v, False, folds[i] if folds else None) for i, v in enumerate(k)) + "]"
+
+
+def key_spelling(k: list) -> str:
+    """A key exactly as written, class and spelling both: what a row is written back with."""
+    return "[" + ",".join(_key_part(v, True, None) for v in k) + "]"
+
+
+def key_values(text: str) -> list:
+    def hook(o: dict) -> object:
+        if "$int" in o:
+            return int(o["$int"])
+        if "$blob" in o:
+            return bytes.fromhex(o["$blob"])
+        if "$real" in o:
+            return float(o["$real"])
+        return o
+
+    return json.loads(text, object_hook=hook)
+
+
 # ---------------------------------------------------------------- policy
 
 
@@ -151,11 +228,17 @@ def apply_log(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA foreign_keys = OFF")
     tables = app_tables(db)
     keys = {t: keys_of(db, t) for t in tables}
+
+    def folds(table: str):
+        """Each key column's text, as its collation compares it (1d-H5); None where none folds."""
+        return None
     for t in tables:
         db.execute(f"DELETE FROM {q(t)}")
 
     # Grow-only sets, from the log alone.
     cells: dict[tuple[str, str], dict[str, dict[str, tuple[object, int, str]]]] = {}
+    # The key as a version wrote it, where its identity reads otherwise (a REAL key, a folding collation).
+    spell: dict[tuple[str, str, str], str] = {}
     sup: set[tuple[str, str, str, str]] = set()
     seen: dict[tuple[str, str], dict[str, set[str]]] = {}
     rows = db.execute(
@@ -165,7 +248,9 @@ def apply_log(db: sqlite3.Connection) -> None:
         ver = f"{author}:{seq}"
         _, ops = cbor_decode(payload)  # type: ignore[misc]
         for table, k, _code, new, _old, bases, saw in ops:  # type: ignore[union-attr]
-            pk = json.dumps(k, separators=(",", ":"), ensure_ascii=False)
+            pk = key_text(k, folds(table))
+            if new.get("") == 1 and key_spelling(k) != pk:
+                spell.setdefault((table, pk, ver), key_spelling(k))
             row = cells.setdefault((table, pk), {})
             for col, val in new.items():
                 row.setdefault(col, {})[ver] = (val, int(lc), author)
@@ -241,8 +326,13 @@ def apply_log(db: sqlite3.Connection) -> None:
 
     def birth(table: str, pk: str):
         exists = cells.get((table, pk), {}).get("", {})
-        born = sorted((x[1], x[2]) for x in exists.values() if x[0] == 1)
+        born = sorted((x[1], x[2], v) for v, x in exists.items() if x[0] == 1)
         return born[0] if born else None
+
+    def spelling(table: str, pk: str) -> list:
+        """The key a row was born with: its earliest-born version's spelling, else its identity's own."""
+        born = birth(table, pk)
+        return key_values(spell.get((table, pk, born[2]), pk) if born else pk)
 
     def where(table: str) -> str:
         return " AND ".join(f"{q(c)} IS ?" for c in keys[table][1])
@@ -259,7 +349,8 @@ def apply_log(db: sqlite3.Connection) -> None:
             db.execute(f"INSERT INTO {q(table)} ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", k + [values[c] for c in data])
             return
         cols = pk_cols + data
-        update = ", ".join(f"{q(c)} = excluded.{q(c)}" for c in data)
+        respell = key_spelling(k) != key_text(k) or any(folds(table) or [])
+        update = ", ".join(f"{q(c)} = excluded.{q(c)}" for c in (pk_cols if respell else []) + data)
         db.execute(
             f"INSERT INTO {q(table)} ({', '.join(q(c) for c in cols)}) VALUES ({', '.join('?' for _ in cols)}) "
             f"ON CONFLICT ({', '.join(q(c) for c in pk_cols)}) DO {('UPDATE SET ' + update) if update else 'NOTHING'}",
@@ -277,7 +368,7 @@ def apply_log(db: sqlite3.Connection) -> None:
                 [values[c] for c in cols],
             ).fetchone()
             if hit:
-                other = json.dumps(list(hit), separators=(",", ":"))
+                other = key_text(list(hit), folds(table))
                 if other != pk:
                     return other
         return None
@@ -290,9 +381,10 @@ def apply_log(db: sqlite3.Connection) -> None:
         s = state(table, pk)
         if s is None or table not in keys:
             return
-        k = json.loads(pk)
+        k = spelling(table, pk)
+        at = key_values(pk)
         if s["deleted"] and not force:
-            db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", k)
+            db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", at)
             return
         if s["contested"]:
             flags[(table, pk, "delete-conflict")] = None
@@ -308,7 +400,7 @@ def apply_log(db: sqlite3.Connection) -> None:
                     mine, theirs = birth(table, pk), birth(table, other)
                     if mine and (not theirs or mine < theirs):
                         hold(table, other, f"UNIQUE: lost the slot to {pk}", (state(table, other) or {}).get("values", {}))
-                        db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", json.loads(other))
+                        db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", key_values(other))
                         write(table, k, s["values"])
                         return
                     hold(table, pk, f"UNIQUE: {other} holds the slot", s["values"])
@@ -316,7 +408,7 @@ def apply_log(db: sqlite3.Connection) -> None:
             if ("CHECK constraint failed" in message or "NOT NULL constraint failed" in message) and within_constraints(table, pk, k, s):
                 return
             hold(table, pk, message, s["values"])
-            db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", k)
+            db.execute(f"DELETE FROM {q(table)} WHERE {where(table)}", at)
 
     # Rows are placed in order of birth, so a UNIQUE slot goes to the earlier-born row.
     order = sorted(cells, key=lambda tk: (birth(*tk) or (1 << 62, ""), tk))
@@ -334,7 +426,7 @@ def apply_log(db: sqlite3.Connection) -> None:
             to = [f[1] or keys[parent][1][0] for f in fk]
             if child is None or to != keys[parent][1]:
                 continue
-            pk = json.dumps(list(child), separators=(",", ":"))
+            pk = key_text(list(child), folds(parent))
             if state(parent, pk) is None:
                 flags[(child_table, json.dumps([rowid]), "orphan")] = None
                 continue
@@ -398,6 +490,18 @@ def later(kv: tuple) -> tuple:
     return (-kv[1][1], _neg(kv[1][2]), _neg(kv[0]))
 
 
+def shown(v: object) -> object:
+    """A value as the runtime's changesDump writes it: a BLOB as <hex>, an integer past 2^53 as its digits, a REAL
+    with no fraction or an infinity as <real ...>."""
+    if isinstance(v, (bytes, bytearray)):
+        return f"<{bytes(v).hex()}>"
+    if isinstance(v, int) and not isinstance(v, bool) and not -SAFE <= v <= SAFE:
+        return str(v)
+    if isinstance(v, float) and (v.is_integer() or v in (float("inf"), float("-inf"))):
+        return f"<real {js_number(v)}>"
+    return v
+
+
 def dump(db: sqlite3.Connection) -> dict:
     out = {}
     db.row_factory = sqlite3.Row
@@ -406,7 +510,7 @@ def dump(db: sqlite3.Connection) -> dict:
         select = f"SELECT rowid AS rowid, * FROM {q(t)}" if kind == "rowid" else f"SELECT * FROM {q(t)}"
         order = "rowid" if kind == "rowid" else ", ".join(q(c) for c in pk)
         out[t] = [
-            {c: (f"<{bytes(r[c]).hex()}>" if isinstance(r[c], (bytes, bytearray)) else r[c]) for c in r.keys()}
+            {c: shown(r[c]) for c in r.keys()}
             for r in db.execute(f"{select} ORDER BY {order}")
         ]
     db.row_factory = None

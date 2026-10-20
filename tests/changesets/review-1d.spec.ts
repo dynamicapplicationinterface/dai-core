@@ -218,6 +218,60 @@ test("1d-H3: integer-affinity keys take ranged ids; a NULL key is refused as it 
   b.close();
 });
 
+/**
+ * 1d-H4 (catalog M15). SQLite's five storage classes, as values in a column
+ * with no type (which keeps each class as written) and as keys of a table
+ * keyed by such a column, through capture, the signed log and the apply, in
+ * both directions: on the other copy each value has the same class and the
+ * same bytes. A BLOB key used to be logged as a JSON object and stop every
+ * merge on the copy that received it; a REAL 1.0 came back an INTEGER.
+ */
+test("1d-H4: NULL, INTEGER, REAL, TEXT and BLOB travel exactly, as values and as keys", async () => {
+  const VALUES = [
+    "NULL",
+    "0",
+    "1",
+    "-9223372036854775808",
+    "9007199254740993",
+    "1.0",
+    "2.5",
+    "0.1",
+    "-0.0",
+    "1e300",
+    "9e999",
+    "''",
+    "'1'",
+    "'a' || char(0) || 'b'",
+    "'é ✓'",
+    "x''",
+    "x'31'",
+    "x'00ff'",
+  ];
+  const KEYS = ["1", "9007199254740993", "2.5", "'1'", "'one'", "x'31'", "x''", "9e999"];
+  const { a, b } = await base({ extra: ["CREATE TABLE vals (id INTEGER PRIMARY KEY, v); CREATE TABLE keyed (k PRIMARY KEY, v)"] });
+  VALUES.forEach((v, i) => a.db.exec(`INSERT INTO vals (id, v) VALUES (${i + 1}, ${v})`));
+  KEYS.forEach((k, i) => a.db.exec(`INSERT INTO keyed (k, v) VALUES (${k}, ${i})`));
+  const exact = (c: Copy, table: string, by: string): unknown =>
+    c.db.selectArrays(`SELECT typeof(${by}), hex(${by}), typeof(v), hex(v) FROM ${table} ORDER BY typeof(${by}), hex(${by})`);
+  expect(a.save(), "the save").not.toBeNull();
+  await b.mergeFrom(await a.bytes());
+  expect(exact(b, "vals", "id"), "values, A to B").toEqual(exact(a, "vals", "id"));
+  expect(exact(b, "keyed", "k"), "keys, A to B").toEqual(exact(a, "keyed", "k"));
+  expect([b.flags(), b.held()]).toEqual([[], []]);
+
+  // Edited on B, every row, and back to A.
+  b.db.exec("UPDATE vals SET v = CASE typeof(v) WHEN 'real' THEN 3.0 WHEN 'blob' THEN x'' WHEN 'null' THEN 2.0 ELSE v END");
+  b.db.exec("UPDATE keyed SET v = v * 1.0");
+  await a.mergeFrom(await b.bytes());
+  expect(exact(a, "vals", "id"), "values, B to A").toEqual(exact(b, "vals", "id"));
+  expect(exact(a, "keyed", "k"), "keys, B to A").toEqual(exact(b, "keyed", "k"));
+  expect(a.db.selectValue("SELECT typeof(v) FROM keyed WHERE k = 'one'"), "a whole REAL stays a REAL").toBe("real");
+  expect([a.flags(), a.held()]).toEqual([[], []]);
+  expect(a.state()).toBe(b.state());
+  a.close();
+  b.close();
+});
+
 /** 1d-H2, the key half (catalog K10). A key above 2^53 is carried exactly, as a save, a merge and a later edit. */
 test("1d-H2: an integer key above 2^53 is saved, merged and edited exactly", async () => {
   const { a, b } = await base();

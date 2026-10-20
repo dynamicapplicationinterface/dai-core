@@ -53,7 +53,7 @@
  * while merged rows are applied (`dai_projecting()`), and `PRAGMA foreign_keys`
  * is on from open.
  */
-import { CborError, decode as cborDecode, encode as cborEncode, type CborValue } from "./cbor.js";
+import { CborError, decode as cborDecode, encode as cborEncode, Float64, type CborValue } from "./cbor.js";
 import { createEntity, type Rows } from "./replicated-rows.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS _cs_flag (tbl TEXT NOT NULL, pk TEXT NOT NULL, kind T
 CREATE TABLE IF NOT EXISTS _cs_held (tbl TEXT NOT NULL, pk TEXT NOT NULL, reason TEXT NOT NULL, row TEXT NOT NULL, PRIMARY KEY (tbl, pk)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_keys (tbl TEXT PRIMARY KEY, kind TEXT NOT NULL, pk TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_settle (tbl TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS _cs_spell (tbl TEXT NOT NULL, pk TEXT NOT NULL, ver TEXT NOT NULL, k TEXT NOT NULL, PRIMARY KEY (tbl, pk, ver)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_shape (kind TEXT NOT NULL, tbl TEXT NOT NULL, col TEXT NOT NULL, now TEXT, PRIMARY KEY (kind, tbl, col)) WITHOUT ROWID;
 `;
 
@@ -119,31 +120,76 @@ const plain = (v: unknown): unknown =>
   typeof v === "bigint" && v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(v) : v;
 const shown = (v: unknown): unknown => {
   const p = plain(v);
+  if (p instanceof Float64) return Number.isFinite(p.value) ? p.value : String(p.value);
+  if (typeof p === "number" && !Number.isFinite(p)) return String(p);
   return p instanceof Uint8Array ? `<${p.length} bytes>` : typeof p === "bigint" ? p.toString() : p;
 };
 
 /**
  * A key as the runtime's tables hold it (`_cs_cell.pk` and every table keyed
- * like it): a JSON array, exact for every storage class (K10, M15). An integer
- * past 2^53 is `{"$int": "<digits>"}` and a BLOB `{"$blob": "<hex>"}`, so no
- * key is rounded or turned into an object it was not. Integers and text read
- * as plain JSON, as they always have.
+ * like it): a JSON array, exact for every storage class (K10, M15), and equal
+ * for two keys exactly when SQLite takes them for one row. An integer past
+ * 2^53 is `{"$int": "<digits>"}` and a BLOB `{"$blob": "<hex>"}`, so no key is
+ * rounded or turned into an object it was not. A REAL with no fraction is the
+ * integer it equals, as SQLite compares them; an infinity or a REAL past 2^53
+ * is `{"$real": "<value>"}`. Integers and text read as plain JSON, as they
+ * always have. `fold` gives each text part as its column's collation compares
+ * it (1d-H5).
  */
-export function keyText(k: unknown[]): string {
-  return JSON.stringify(
-    k.map((v) => {
-      const p = plain(v);
-      return typeof p === "bigint" ? { $int: p.toString() } : p instanceof Uint8Array ? { $blob: hex(p) } : p;
-    }),
-  );
+export function keyText(k: unknown[], fold: ((s: string, i: number) => string) | null = null): string {
+  return JSON.stringify(k.map((v, i) => keyPart(v, false, fold ? (s) => fold(s, i) : null)));
 }
 
-/** The key values `keyText` wrote, each in its own storage class. */
-export function keyValues(text: string): unknown[] {
-  return JSON.parse(text, (_k, v) =>
-    v && typeof v === "object" && !Array.isArray(v) ? ("$int" in v ? BigInt(v.$int) : "$blob" in v ? unhex(String(v.$blob)) : v) : v,
-  ) as unknown[];
+/** A key exactly as written, storage class and spelling both (`_cs_spell`): what a row is written back with. */
+export function keySpelling(k: unknown[]): string {
+  return JSON.stringify(k.map((v) => keyPart(v, true, null)));
 }
+
+function keyPart(v: unknown, exact: boolean, fold: ((s: string) => string) | null): unknown {
+  const p = plain(v);
+  if (typeof p === "bigint") return { $int: p.toString() };
+  if (p instanceof Uint8Array) return { $blob: hex(p) };
+  if (p instanceof Float64) {
+    return !exact && Number.isSafeInteger(p.value) ? p.value : { $real: String(p.value) };
+  }
+  if (typeof p === "number" && !Number.isFinite(p)) return { $real: String(p) };
+  if (typeof p === "string" && fold) return fold(p);
+  return p;
+}
+
+/** The key values `keyText` or `keySpelling` wrote, each in its own storage class. */
+export function keyValues(text: string): unknown[] {
+  return JSON.parse(text, (_k, v) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+    if ("$int" in v) return BigInt(v.$int);
+    if ("$blob" in v) return unhex(String(v.$blob));
+    if ("$real" in v) return new Float64(Number(v.$real));
+    return v;
+  }) as unknown[];
+}
+
+/**
+ * A value read from SQLite with the storage class it had. sqlite-wasm reads a
+ * REAL with no fraction as a JS integer, and binds one as an INTEGER, so such
+ * a REAL (and an infinity) is held as a Float64 from capture to apply (M15).
+ */
+const typed = (type: unknown, v: unknown): unknown =>
+  type === "real" && typeof v === "number" && (Number.isInteger(v) || !Number.isFinite(v)) ? new Float64(v) : plain(v);
+
+/**
+ * A value as SQLite binds it, stored in the class it had: a Float64 through
+ * CAST(? AS REAL). sqlite-wasm binds a whole JS number as an integer, and one
+ * past 2^53 wrongly (1e300 was bound as 0), so such a REAL goes as its text;
+ * an infinity is no whole number, and binds as the double it is.
+ */
+const bound = (v: unknown): { at: string; value: unknown } => {
+  if (!(v instanceof Float64)) return { at: "?", value: v ?? null };
+  if (!Number.isFinite(v.value)) return { at: "?", value: v.value };
+  return { at: "CAST(? AS REAL)", value: Number.isSafeInteger(v.value) ? v.value : String(v.value) };
+};
+
+/** A value to compare with in SQL, where SQLite's own comparison decides (a REAL 1.0 IS 1). */
+const compared = (v: unknown): unknown => (v instanceof Float64 ? v.value : v);
 
 /** Two values SQLite would store alike: the same storage class and the same value. */
 function sameValue(a: unknown, b: unknown): boolean {
@@ -152,9 +198,9 @@ function sameValue(a: unknown, b: unknown): boolean {
   if (x instanceof Uint8Array || y instanceof Uint8Array) {
     return x instanceof Uint8Array && y instanceof Uint8Array && x.length === y.length && x.every((v, i) => v === y[i]);
   }
+  if (x instanceof Float64 || y instanceof Float64) return x instanceof Float64 && y instanceof Float64 && x.value === y.value;
   return x === y || (x == null && y == null);
 }
-
 
 /** What a schema change the data interface cannot follow is refused with (R-V), by case. */
 export const SCHEMA_REFUSED = {
@@ -356,9 +402,14 @@ class SessionCapture {
        * the save fails, and no retry cures it (P3).
        */
       const exact = (read: (it: number, i: number, out: number) => number, i: number, v: unknown): unknown => {
-        if (typeof v !== "string") return v;
+        if (v === undefined || v instanceof Uint8Array || typeof v === "bigint") return v;
         if (read(it, i, pVal)) return v;
         const p = wasm.peekPtr(pVal);
+        // An empty BLOB, which sqlite-wasm reads as NULL here.
+        if (v === null) return p && capi.sqlite3_value_type(p) === capi.SQLITE_BLOB ? new Uint8Array(0) : v;
+        // A REAL sqlite-wasm reads as a JS integer (1.0), or an infinity: held as the REAL it is (M15).
+        if (typeof v === "number") return capi.sqlite3_value_type(p) === capi.SQLITE_FLOAT ? typed("real", v) : v;
+        if (typeof v !== "string") return v;
         const n = capi.sqlite3_value_bytes(p) as number;
         const at = Number(capi.sqlite3_value_blob(p));
         const held = wasm.heap8u().subarray(at, at + n);
@@ -804,7 +855,7 @@ export class Changes {
       throw new Error(`CHANGES_REFUSED: ${SCHEMA_REFUSED.renamedOnto}`);
     }
 
-    const meta = ["_cs_cell", "_cs_sup", "_cs_seen", "_cs_flag", "_cs_held"];
+    const meta = ["_cs_cell", "_cs_sup", "_cs_seen", "_cs_flag", "_cs_held", "_cs_spell"];
     if (renamed && this.uncaptured.has(renamed.from)) {
       // Made since the last save: nothing of it is in the history, and both names are settled at the save.
       this.uncaptured.delete(renamed.from);
@@ -1347,7 +1398,10 @@ export class Changes {
       const current = new Map<string, Record<string, unknown>>();
       const all = [...keys.pk, ...cols];
       // Each text value with the bytes SQLite holds for it, so text that is not UTF-8 is refused here as at capture.
-      const raw = all.map((c, i) => `CASE WHEN typeof(${q(c)}) = 'text' THEN CAST(${q(c)} AS BLOB) END AS "_cs_raw_${i}"`);
+      const raw = all.flatMap((c, i) => [
+        `CASE WHEN typeof(${q(c)}) = 'text' THEN CAST(${q(c)} AS BLOB) END AS "_cs_raw_${i}"`,
+        `typeof(${q(c)}) AS "_cs_t_${i}"`,
+      ]);
       for (const r of this.db.selectObjects(`SELECT ${[...all.map(q), ...raw].join(", ")} FROM main.${q(table)}`) as Any[]) {
         all.forEach((c, i) => {
           const held = r[`_cs_raw_${i}`] as Uint8Array | null;
@@ -1356,8 +1410,8 @@ export class Changes {
             throw new Error("CHANGES_CAPTURE (sqlite3changeset_value: text that is not UTF-8)");
           }
         });
-        const row = Object.fromEntries(all.map((c) => [c, plain(r[c])]));
-        current.set(keyText(keys.pk.map((c) => row[c])), row);
+        const row = Object.fromEntries(all.map((c, i) => [c, typed(r[`_cs_t_${i}`], r[c])]));
+        current.set(this.identity(table, keys.pk.map((c) => row[c])), row);
       }
       for (const [pk, row] of [...current].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
         const pkCols = Object.fromEntries(keys.pk.map((c) => [c, row[c]]));
@@ -1422,7 +1476,7 @@ export class Changes {
     const keys = this.keysOf(op.table);
     const keyCols = keys?.pk?.length ? keys.pk : Object.keys(op.pk);
     const k = keyCols.map((c) => op.pk[c]);
-    const pk = keyText(k);
+    const pk = this.identity(op.table, k);
     const n = new Map<string, unknown>();
     const p = new Map<string, unknown>();
     const b = new Map<string, string[]>();
@@ -1440,8 +1494,11 @@ export class Changes {
       const missing = [...new Set(groups.flat())].filter((c) => !n.has(c));
       if (missing.length) {
         const where = this.whereKey(op.table);
-        const now = this.db.selectObject(`SELECT ${missing.map(q).join(", ")} FROM ${q(op.table)} WHERE ${where}`, k) as Any;
-        if (now) for (const c of missing) n.set(c, plain(now[c]));
+        const now = this.db.selectObject(
+          `SELECT ${missing.map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ")} FROM main.${q(op.table)} WHERE ${where}`,
+          k.map(compared),
+        ) as Any;
+        if (now) for (const c of missing) n.set(c, typed(now[`_cs_t_${c}`], now[c]));
       }
     }
     const heads = this.rowHeads(op.table, pk);
@@ -1464,16 +1521,23 @@ export class Changes {
       // Under the names this copy uses: a table or column it renamed since the change was made (1d-M2).
       const table = this.here(named);
       const col = (c: string): string => (c === "" ? c : this.here(table, c));
-      const pk = keyText(k);
+      const pk = this.identity(table, k);
       // Any author's id in this author's range raises the counter, not only its own (K06, K07).
       this.counterAbove(table, k);
+      // The key as this version wrote it, where its identity reads otherwise: a REAL key, a key in a collation
+      // that folds (1d-H4, 1d-H5). A row is written back with the spelling it was born with.
+      const spelled = keySpelling(k);
+      if (n.get("") === 1 && spelled !== pk) {
+        this.runCached("INSERT OR IGNORE INTO _cs_spell (tbl, pk, ver, k) VALUES (?, ?, ?, ?)", [table, pk, ver, spelled]);
+      }
       for (const [c, val] of n) {
-        this.runCached("INSERT OR IGNORE INTO _cs_cell (tbl, pk, col, ver, val, lc, author) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+        const v = bound(val);
+        this.runCached(`INSERT OR IGNORE INTO _cs_cell (tbl, pk, col, ver, val, lc, author) VALUES (?, ?, ?, ?, ${v.at}, ?, ?)`, [
           table,
           pk,
           col(c),
           ver,
-          val ?? null,
+          v.value,
           lc,
           author,
         ]);
@@ -1538,7 +1602,7 @@ export class Changes {
     if (fresh.length === 0 && again.length === 0) return { changesets: 0, rows: 0 };
     this.withoutCapture(() => {
       for (const row of fresh) {
-        const decoded = cborDecode(row["payload"] as Uint8Array) as unknown as [number, Op[]];
+        const decoded = cborDecode(row["payload"] as Uint8Array, { floats: true }) as unknown as [number, Op[]];
         touched.push(...this.ingest(decoded[1], `${row["author"]}:${row["seq"]}`, Number(row["lc"]), String(row["author"])));
       }
       this.project(touched);
@@ -1604,7 +1668,7 @@ export class Changes {
     pk: string,
   ): { deleted: boolean; contested: boolean; values: Record<string, unknown>; pending: Any[]; shownBy: Record<string, Any>; cells: Any[] } | null {
     const heads = this.db.selectObjects(
-      "SELECT col, ver, val, lc, author FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver)",
+      "SELECT col, ver, val, typeof(val) AS t, lc, author FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver)",
       [table, pk],
     ) as Any[];
     if (heads.length === 0) return null;
@@ -1629,14 +1693,14 @@ export class Changes {
     for (const h of data) byCol.set(h.col, [...(byCol.get(h.col) ?? []), h]);
     for (const [col, hs] of byCol) {
       hs.sort(later);
-      values[col] = plain(hs[0].val);
+      values[col] = typed(hs[0].t, hs[0].val);
       shownBy[col] = hs[0];
       // Two concurrent versions are a conflict even when their values are equal: `qty = qty + 1` on both
       // sides writes the same value and means two increments (the spike's S5b).
       if (hs.length > 1) pending.push({ col, values: hs.map((h) => ({ ver: h.ver, val: shown(h.val) })) });
     }
     const cells = () =>
-      this.db.selectObjects("SELECT col, ver, val, lc, author FROM _cs_cell WHERE tbl = ? AND pk = ? AND col <> ''", [table, pk]) as Any[];
+      this.db.selectObjects("SELECT col, ver, val, typeof(val) AS t, lc, author FROM _cs_cell WHERE tbl = ? AND pk = ? AND col <> ''", [table, pk]) as Any[];
     return { deleted, contested: !deleted && dels.length > 0, values, pending, shownBy, get cells() { return cells(); } };
   }
 
@@ -1663,7 +1727,7 @@ export class Changes {
         if (!aside.has(h.ver)) continue;
         const before = cells.filter((c) => c.col === col && !aside.has(c.ver)).sort(later)[0];
         if (!before) continue;
-        values[col] = plain(before.val);
+        values[col] = typed(before.t, before.val);
         entries.push({ col, constraint: reason, values: [{ ver: h.ver, val: shown(h.val) }, { ver: before.ver, val: shown(before.val) }] });
       }
       if (entries.length === 0) continue;
@@ -1678,11 +1742,25 @@ export class Changes {
     return false;
   }
 
-  private birthOf(table: string, pk: string): { lc: number; author: string } | null {
+  private birthOf(table: string, pk: string): { lc: number; author: string; ver: string } | null {
     return (this.db.selectObject(
-      "SELECT lc, author FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = '' AND val = 1 ORDER BY lc, author LIMIT 1",
+      "SELECT lc, author, ver FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = '' AND val = 1 ORDER BY lc, author, ver LIMIT 1",
       [table, pk],
     ) ?? null) as Any;
+  }
+
+  /**
+   * A row's identity in this table: its key as `keyText` reads it, each text
+   * part as its column's collation compares it (1d-H5). Two keys SQLite takes
+   * for one row have one identity, and every copy reads it the same.
+   */
+  private identity(table: string, k: unknown[]): string {
+    return keyText(k);
+  }
+
+  /** Whether a key column of the table compares text in a collation that folds it (NOCASE, RTRIM). */
+  private folds(_table: string): boolean {
+    return false;
   }
 
   private flag(table: string, pk: string, kind: FlagKind, detail: unknown): void {
@@ -1771,16 +1849,31 @@ export class Changes {
     }
   }
 
+  /**
+   * One row written as merged: its key as it was born (`spellingOf`) and each
+   * value in its own storage class (M15). Where that spelling is not the one
+   * the identity reads (a REAL key, a key in a folding collation), the key is
+   * rewritten too, so a row another copy wrote first under another spelling
+   * shows the same on every copy (1d-H5).
+   */
   private write(table: string, keys: Keys, k: unknown[], values: Record<string, unknown>): void {
     // A column this copy dropped keeps its merged values in the cells, and is not written (R-S).
     const data = Object.keys(values).filter((c) => !keys.pk.includes(c) && !this.droppedHere(table, c));
     const cols = [...keys.pk, ...data];
-    const vals = [...k, ...data.map((c) => values[c] ?? null)];
-    const update = data.map((c) => `${q(c)} = excluded.${q(c)}`).join(", ");
+    const vals = [...k, ...data.map((c) => values[c] ?? null)].map(bound);
+    const respell = keySpelling(k) !== keyText(k) || this.folds(table);
+    const update = [...(respell ? keys.pk : []), ...data].map((c) => `${q(c)} = excluded.${q(c)}`).join(", ");
     this.rows.run(
-      `INSERT INTO ${q(table)} (${cols.map(q).join(", ")}) VALUES (${cols.map(() => "?").join(", ")}) ON CONFLICT (${keys.pk.map(q).join(", ")}) DO ${update ? `UPDATE SET ${update}` : "NOTHING"}`,
-      vals,
+      `INSERT INTO main.${q(table)} (${cols.map(q).join(", ")}) VALUES (${vals.map((v) => v.at).join(", ")}) ON CONFLICT (${keys.pk.map(q).join(", ")}) DO ${update ? `UPDATE SET ${update}` : "NOTHING"}`,
+      vals.map((v) => v.value),
     );
+  }
+
+  /** The key a row was born with: the spelling its earliest-born version wrote, else its identity's own. */
+  private spellingOf(table: string, pk: string): unknown[] {
+    const born = this.birthOf(table, pk);
+    const spelled = born ? this.db.selectValue("SELECT k FROM main._cs_spell WHERE tbl = ? AND pk = ? AND ver = ?", [table, pk, born.ver]) : null;
+    return keyValues(typeof spelled === "string" ? spelled : pk);
   }
 
   private place(table: string, pk: string, force = false): void {
@@ -1795,9 +1888,10 @@ export class Changes {
     }
     const keys = this.keysOf(table);
     if (!keys) return;
-    const k = keyValues(pk);
+    const k = this.spellingOf(table, pk);
+    const at = keyValues(pk).map(compared);
     if (state.deleted && !force) {
-      this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, k);
+      this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, at);
       return;
     }
     if (state.contested) this.flag(table, pk, "delete-conflict", null);
@@ -1814,7 +1908,7 @@ export class Changes {
           const earlier = (x: Any, y: Any): boolean => (x && y ? x.lc < y.lc || (x.lc === y.lc && x.author < y.author) : !!x);
           if (earlier(mine, theirs)) {
             this.hold(table, occupant, `UNIQUE: lost the slot to ${pk}`, this.stateOf(table, occupant)?.values ?? {});
-            this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, keyValues(occupant));
+            this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(occupant).map(compared));
             this.write(table, keys, k, state.values);
             return;
           }
@@ -1824,7 +1918,7 @@ export class Changes {
       }
       if (/(CHECK|NOT NULL) constraint failed/.test(message) && this.withinConstraints(table, pk, keys, k, state, message.replace(/^.*?: /, ""))) return;
       this.hold(table, pk, message.replace(/^.*?: /, ""), state.values);
-      this.rows.run(`DELETE FROM ${q(table)} WHERE ${this.whereKey(table)}`, k);
+      this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, at);
     }
   }
 
@@ -1833,7 +1927,7 @@ export class Changes {
       table,
       pk,
       reason,
-      JSON.stringify(values, (_k, v) => (v instanceof Uint8Array ? `<${v.length} bytes>` : typeof v === "bigint" ? v.toString() : v)),
+      JSON.stringify(values, (_k, v) => (v instanceof Uint8Array || v instanceof Float64 || typeof v === "bigint" ? shown(v) : v)),
     ]);
     this.flag(table, pk, "held", reason);
   }
@@ -1845,11 +1939,11 @@ export class Changes {
       const cols = this.db.selectValues("SELECT name FROM pragma_index_info(?) ORDER BY seqno", [idx.name]) as string[];
       if (cols.some((c) => !(c in values))) continue;
       const hit = this.db.selectObject(
-        `SELECT ${keys.pk.map(q).join(", ")} FROM ${q(table)} WHERE ${cols.map((c) => `${q(c)} IS ?`).join(" AND ")}`,
-        cols.map((c) => values[c]),
+        `SELECT ${keys.pk.map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ")} FROM main.${q(table)} WHERE ${cols.map((c) => `${q(c)} IS ?`).join(" AND ")}`,
+        cols.map((c) => compared(values[c])),
       ) as Any;
       if (hit) {
-        const other = keyText(keys.pk.map((c) => hit[c]));
+        const other = this.identity(table, keys.pk.map((c) => typed(hit[`_cs_t_${c}`], hit[c])));
         if (other !== pk) return other;
       }
     }
@@ -1864,12 +1958,15 @@ export class Changes {
       for (const o of orphans) {
         const fk = this.db.selectObjects('SELECT "from", "to", "table" FROM pragma_foreign_key_list(?) WHERE id = ? ORDER BY seq', [o.table, o.fkid]) as Any[];
         if (!fk.length || o.rowid == null) continue;
-        const child = this.db.selectObject(`SELECT ${fk.map((f) => q(f.from)).join(", ")} FROM ${q(o.table)} WHERE rowid = ?`, [o.rowid]) as Any;
+        const child = this.db.selectObject(
+          `SELECT ${fk.map((f) => `${q(f.from)}, typeof(${q(f.from)}) AS ${q(`_cs_t_${f.from}`)}`).join(", ")} FROM main.${q(o.table)} WHERE rowid = ?`,
+          [o.rowid],
+        ) as Any;
         const parentKeys = this.keysOf(o.parent);
         if (!child || !parentKeys) continue;
         const to = fk.map((f) => f.to ?? parentKeys.pk[0]);
         if (to.join(",") !== parentKeys.pk.join(",")) continue;
-        const pk = keyText(fk.map((f) => child[f.from]));
+        const pk = this.identity(o.parent, fk.map((f) => typed(child[`_cs_t_${f.from}`], child[f.from])));
         const state = this.stateOf(o.parent, pk);
         if (!state) {
           this.flag(o.table, keyText([o.rowid]), "orphan", { parent: o.parent, key: pk });
@@ -1987,9 +2084,21 @@ export function changesDump(rows: Rows): Record<string, Record<string, unknown>[
   for (const table of appTablesOf(rows)) {
     const k = keys.get(table);
     const order = k?.["pk"] ? String(k["pk"]).split(",").map(q).join(", ") : "rowid";
-    out[table] = rows
-      .all(`SELECT * FROM ${q(table)} ORDER BY ${order}`)
-      .map((r) => Object.fromEntries(Object.entries(r).map(([c, v]) => [c, v instanceof Uint8Array ? `<${hex(v)}>` : typeof v === "bigint" ? v.toString() : v])));
+    // Each value with its storage class where JSON would lose it: a BLOB as <hex>, an integer past 2^53 as its
+    // digits, and a REAL with no fraction or an infinity as <real ...>, which an INTEGER never reads as (M15).
+    const cols = rows.all("SELECT name FROM pragma_table_xinfo(?) WHERE hidden <> 1 ORDER BY cid", [table]).map((r) => String(r["name"]));
+    const types = cols.map((c, i) => `typeof(${q(c)}) AS "_cs_t_${i}"`).join(", ");
+    out[table] = rows.all(`SELECT *${types ? `, ${types}` : ""} FROM ${q(table)} ORDER BY ${order}`).map((r) =>
+      Object.fromEntries(
+        cols.map((c, i) => {
+          const v = r[c];
+          if (v instanceof Uint8Array) return [c, `<${hex(v)}>`];
+          if (typeof v === "bigint") return [c, v.toString()];
+          if (r[`_cs_t_${i}`] === "real" && typeof v === "number" && (Number.isInteger(v) || !Number.isFinite(v))) return [c, `<real ${String(v)}>`];
+          return [c, v];
+        }),
+      ),
+    );
   }
   return out;
 }

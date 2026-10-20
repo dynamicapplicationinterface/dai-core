@@ -220,6 +220,15 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("UPDATE spans SET finish = 5 WHERE id = 1");
     },
   },
+  // The catalog's M15 (1d-H4): SQLite's five storage classes, as values in a column with no type and as keys.
+  "M15 storage classes": {
+    extra: ["CREATE TABLE vals (id INTEGER PRIMARY KEY, v); CREATE TABLE keyed (k PRIMARY KEY, v)", "INSERT INTO vals (id, v) VALUES (1, 1), (2, 'x')"],
+    write: (a, b) => {
+      a.db.exec(`INSERT INTO vals (id, v) VALUES (101, 1.0), (102, x''), (103, 'a' || char(0) || 'b'), (104, 9007199254740993), (105, 9e999), (106, 0.1), (107, NULL);
+        INSERT INTO keyed (k, v) VALUES (x'31', 'blob'), (2.5, 'real'), (9007199254740993, 'big'), ('1', 'text'), (1, 'int'), (x'', 'empty');`);
+      b.db.exec("UPDATE vals SET v = 2.0 WHERE id = 1; INSERT INTO keyed (k, v) VALUES (x'00', 'b-blob'), (1e300, 'b-real'), (1.5e-7, 'b-small');");
+    },
+  },
   // The catalog's M06: one transaction over two rows, one of which becomes pending.
   "M06 effect group": {
     extra: [
