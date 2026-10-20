@@ -10117,8 +10117,10 @@ closed here"), the next to take red-first. The row ids are the catalog's.
 
 #### D263 — A crash between the export and the log stores an unlogged row (Q09)
 
-*Status: open, held not fixed. Filed 19 October, from the catalog (Q09) and
-Build 1d's residue.*
+*Status: fixed 19 October (Build 1e): the frame logs what was written while
+the signature was out before it takes the bytes; test 10 of
+`tests/changesets/runtime.spec.ts`. Filed 19 October, from the catalog (Q09)
+and Build 1d's residue.*
 
 Build 1d narrowed Q07's window and did not close it. The save in flight
 exports bytes that already hold an edit made during the signature, before
@@ -10131,8 +10133,10 @@ that crashes inside the window, then reopens with no row outside the log.
 
 #### D264 — Imported views over runtime tables are not compared (T11-views)
 
-*Status: open, held not fixed. Filed 19 October, from the catalog (T11) and
-Build 1d's residue.*
+*Status: fixed 19 October (Build 1e): runtime views are compared at open and
+put back as the runtime writes them; `tests/changesets/sweep.spec.ts`,
+"T11, its views". Filed 19 October, from the catalog (T11) and Build 1d's
+residue.*
 
 `refuseForeignTriggers` compares an imported schema's triggers with the
 runtime's. It does not compare views. An imported document's own text for a
@@ -10147,7 +10151,12 @@ refused at open, by name.
 
 #### D265 — Dangerous pragmas are not refused (P03)
 
-*Status: open, held not fixed. Filed 19 October, from the catalog (P03).*
+*Status: fixed 19 October (Build 1e): the authorizer refuses setting
+`writable_schema`, `schema_version`, `ignore_check_constraints`,
+`legacy_alter_table` and `trusted_schema`; `foreign_keys` stays the
+application's, since SQLite's own procedure for changing a table turns it off
+(D259). `tests/changesets/sweep.spec.ts`, "P03". Filed 19 October, from the
+catalog (P03).*
 
 `PRAGMA writable_schema`, `foreign_keys = OFF`, `ignore_check_constraints`,
 `recursive_triggers` and the like reach the engine from application code.
@@ -10161,7 +10170,9 @@ refused pragma, and one harmless pragma that still runs.
 
 #### D266 — A TEMP table can shadow an application table (S07)
 
-*Status: open, held not tested. Filed 19 October, from the catalog (S07).*
+*Status: fixed 19 October (Build 1e): every runtime statement names `main.`;
+`tests/changesets/sweep.spec.ts`, "S07". Filed 19 October, from the catalog
+(S07).*
 
 A TEMP table named like an application table takes the apply's unqualified
 writes, so a remote change lands in ephemeral state and is lost at close,
@@ -10182,6 +10193,52 @@ value was shown, and the alternatives it never read are gone.
 which writes acknowledge the alternatives they saw. **Acceptance:** a vector
 where a trigger-kept counter over a pending aggregate stays pending, or is
 refused, per the ruling.
+
+#### D268 — Counters are register conflicts, not sums (M07)
+
+*Status: open, needs design. Filed 19 October, from the catalog (M07) and
+Build 1e's sweep.*
+
+`count = count + 1` on two copies captures two versions of one value. R-T
+rules that intent is not inferred, so the row is pending (the spike's S5b),
+never summed, and the model file teaches COUNTERS-ARE-FLAGGED. No value is
+lost: both versions are in the cells.
+
+**Change:** a declared counter column (`-- dai:counter c`) whose merge is the
+sum of each version's delta from the version it saw, or a ruling that
+counters stay conflicts. **Acceptance:** a vector where two increments from 0
+show 2 under the declaration, and stay pending without it.
+
+#### D269 — Read dependencies and cross-row validation are not checked at merge (M08, T09)
+
+*Status: open, needs design. Filed 19 October, from the catalog (M08, T09)
+and Build 1e's sweep.*
+
+A write that relied on another row's absence (`WHERE NOT EXISTS`, "one active
+item"), and a trigger that validates across rows with RAISE, hold on the copy
+that wrote, and are not checked against the merged state: the merge applies
+merged rows with the application's triggers stood down. CHECK, NOT NULL,
+UNIQUE and foreign keys are checked (R-T). Nothing is lost; the merged state
+can break an invariant only a trigger or the application's own logic held.
+
+**Change:** a declared validation (a query whose rows are violations), run
+over the merged candidate, whose violations are pending. **Acceptance:** two
+copies each set "the active item" offline; after the merge both rows are
+pending under the declaration.
+
+#### D270 — Derived values beyond pending (T08)
+
+*Status: open, needs design. Filed 19 October, from the catalog (T08) and
+Build 1e's sweep.*
+
+A total a trigger keeps is pending after a merge when two copies each wrote
+it (Build 1d, T08), never settled at the stale value. It is not recomputed:
+the changeset carries values, not the rule that made them. The model file
+teaches totals in queries (TOTALS-IN-QUERIES).
+
+**Change:** a declared derived column (`-- dai:derived c AS (query)`)
+recomputed over the merged candidate. **Acceptance:** T08's two workouts give
+2 under the declaration, with no flag.
 
 ### Branch review residue (filed 8 October)
 
