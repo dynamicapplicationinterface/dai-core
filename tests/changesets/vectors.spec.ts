@@ -42,12 +42,15 @@ interface Applied {
   tables: unknown;
   flags: [string, string, string][];
   held: [string, string][];
+  /** The admitted changesets refused for their basis (R-X §3): [version, reason]. A vector written before R-X has none. */
+  rejected: [string, string][];
 }
 
 const applied = (c: Copy): Applied => ({
   tables: c.dump(),
   flags: c.flags().map((f: { tbl: string; pk: string; kind: string }) => [f.tbl, f.pk, f.kind] as [string, string, string]).sort(),
   held: c.held().map((h: { tbl: string; pk: string }) => [h.tbl, h.pk] as [string, string]).sort(),
+  rejected: c.changes.refusedChanges().map((r: { ver: string; reason: string }) => [r.ver, r.reason] as [string, string]).sort(),
 });
 
 /** The author a stored copy names as its own, opened as that author, as its host would. */
@@ -88,7 +91,7 @@ test("write the changeset vectors (only when asked)", async () => {
     const ab = await runtimeApplies(aBytes, bBytes);
     const ba = await runtimeApplies(bBytes, aBytes);
     expect([...ab.refused, ...ba.refused], name).toEqual([]);
-    const strip = ({ tables, flags, held }: Applied): Applied => ({ tables, flags, held });
+    const strip = ({ tables, flags, held, rejected }: Applied): Applied => ({ tables, flags, held, rejected });
     writeFileSync(join(dir, "expected.json"), JSON.stringify({ scenario, ab: strip(ab), ba: strip(ba) }, null, 2) + "\n");
   }
 });
@@ -113,7 +116,7 @@ test("the runtime applies every committed vector as expected, both directions", 
     for (const [direction, mine, theirs] of [["ab", a, b], ["ba", b, a]] as const) {
       const got = await runtimeApplies(mine, theirs);
       expect(got.refused, `${name} ${direction}`).toEqual([]);
-      expect({ tables: got.tables, flags: got.flags, held: got.held }, `${name} ${direction}`).toEqual(expected[direction]);
+      expect({ tables: got.tables, flags: got.flags, held: got.held, rejected: got.rejected }, `${name} ${direction}`).toEqual({ rejected: [], ...expected[direction] });
     }
   }
 });

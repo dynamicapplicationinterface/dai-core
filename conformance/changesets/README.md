@@ -21,7 +21,7 @@ One directory per scenario, from the merge scenarios in
 | `trigger-suppressed` | S8 app trigger | an application trigger does not fire again on merged rows |
 | `key-moved` | K12 key moved | a key moved on one copy while the other edits the old key: both rows kept, the old key flagged `delete-conflict` |
 | `returning` | D07 returning | a RETURNING statement stepped once and reset is logged whole, and applied once |
-| `resolution` | RW-12 resolution | a write of the value a pending row shows, though no byte changed, is a new version superseding what its copy saw: resolved on both |
+| `resolution` | RW-12 resolution | written by Build 1f, whose mechanism R-X retired: a write of the shown title, logged as an edit whose basis named both alternatives. Its outcome stands, resolved on both; a log of that shape still reads so |
 | `respelled-key` | 1e-H3 respelled key | a key respelled under its NOCASE collation travels as a value change, beside the other copy's edit of another column |
 
 Each holds:
@@ -42,18 +42,52 @@ Each holds:
 
 A `_cs_log` row's `payload` is CBOR:
 `[1, [op, …]]`, and each op is
-`[table, key, code, new, old, bases, seen]`:
+`[table, key, code, new, old, bases, seen]`, or
+`[table, key, code, new, old, bases, seen, resolves]` for a resolution:
 
 - `key`: the row's key values, in key order (a keyless table: `[rowid]`); as
   JSON text, the row's id in `_cs_flag` and `_cs_held`;
 - `code`: `"I"`, `"U"` or `"D"`;
 - `new`: a map, column to value, of what this save wrote. Column `""` is the
-  row's existence: 1 written, 0 deleted;
+  row's existence: 1 written, 0 deleted. A save writes a unit (a column, or
+  a coupled group whole) only where its value changed from what it showed,
+  or where it resolves it (R-X); writing a shown value back writes nothing;
 - `old`: a map of the previous values the session recorded;
-- `bases`: a map, column to the versions this save saw and so supersedes;
-- `seen`: for a delete, every data version it saw.
+- `bases`: the operation's **basis**, a map from every column in `new` to
+  the versions it was based on, which it supersedes. For an edit (`"U"`),
+  the version the column's shown value came from, and no other: the other
+  alternatives the copy held stay pending (R-X §3). For a birth or a delete,
+  every current version of the column;
+- `seen`: for a delete, every data version it saw;
+- `resolves`: present only on a **resolution** (R-X §4), made by the kit's
+  explicit call. A map from each column of the unit resolved to the
+  alternatives it explicitly accepted or rejected: exactly those the
+  observation presented, never one that arrived after. It supersedes them
+  too. Its `bases` is the version the resolved unit showed; its `new`, the
+  chosen value, whole, though no byte changed. A resolution of `""` keeps a
+  row a delete contested (1) or deletes it (0, with `seen`).
 
 A version is `<author hex>:<seq>`, the log row that carried it.
+
+## The basis, checked
+
+A reader takes `bases` and `resolves` from the signed payload, never from
+its own projection, arrival order or flags, and refuses an admitted
+changeset, unapplied, when an operation in it:
+
+- **`basis-missing`**: has no `bases` map, or no list in it for a column in
+  `new`;
+- **`basis-forged`**: names, in `bases` or `resolves`, a version that is not
+  a version of that cell (that table, row and column) from before it: one
+  whose clock (`_r_lc`) is not lower than the changeset's own, one the reader
+  already judged that wrote no such cell, or one the reader refused.
+
+A version named that the reader has not admitted yet, with a lower clock,
+is waited for: the changeset is applied, or refused, once it arrives. So
+every reader judges a changeset alike whatever order batches came in. The
+refused changesets are `_cs_refused` (version, reason), and in a vector's
+`expected.json` they are `rejected`, `[version, reason]`; a vector written
+before R-X has none.
 
 ## Applying it
 
@@ -62,7 +96,8 @@ the reference reader states it in Python
 ([`../reference/dai_changes.py`](../reference/dai_changes.py)), applying the
 admitted log to emptied tables from the log alone:
 
-- A cell's current versions are those no other version names in its bases.
+- A cell's current versions are those no applied version names in its
+  `bases` or `resolves`.
 - A column with one current version shows it. With more than one, it shows
   the later by (lc, author), with the higher author id first on a clock tie,
   and the row is `pending`.

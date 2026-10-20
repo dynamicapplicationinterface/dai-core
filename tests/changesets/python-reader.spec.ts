@@ -24,6 +24,7 @@ const judged = (c: Copy): unknown => ({
   tables: c.dump(),
   flags: c.flags().map((f) => [f.tbl, f.pk, f.kind]).sort(),
   held: c.held().map((h) => [h.tbl, h.pk]).sort(),
+  rejected: c.changes.refusedChanges().map((r: { ver: string; reason: string }) => [r.ver, r.reason]).sort(),
 });
 
 test("the Python reader agrees with the runtime in every scenario, both directions", async () => {
@@ -54,6 +55,6 @@ test("the Python reader agrees with the runtime in every scenario, both directio
   for (const line of lines) {
     const key = `${line.name} ${line.direction}`;
     expect(line.refused, key).toEqual([]);
-    expect({ tables: line.tables, flags: line.flags, held: line.held }, key).toEqual(runtime.get(key));
+    expect({ tables: line.tables, flags: line.flags, held: line.held, rejected: line.rejected }, key).toEqual(runtime.get(key));
   }
 });

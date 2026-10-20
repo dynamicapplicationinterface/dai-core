@@ -253,8 +253,16 @@ test("M02: two valid edits whose combination fails a CHECK are a pending constra
     expect(named.has("start=8") && named.has("finish=5"), `both proposals are shown or named: ${[...named]}`).toBe(true);
   }
 
-  // Writing the row again resolves it, on both copies.
+  // Writing the row again is an edit based on what it showed (R-X §3): the proposal set aside is not resolved by it.
   o.a.db.exec("UPDATE spans SET start = 8, finish = 12 WHERE id = 1");
+  o.a.save();
+  expect(o.a.db.selectObject("SELECT start, finish FROM spans WHERE id = 1")).toEqual({ start: 8, finish: 12 });
+  expect(o.a.flags().map((f: Any) => f.kind), "still pending").toEqual(["pending"]);
+  // Each pending column, kept as shown by the explicit call, resolves it on both copies.
+  for (const e of JSON.parse(o.a.flags()[0]!.detail) as Any[]) {
+    const seen = o.a.changes.observe("spans", [1], [e.col]);
+    if (seen) o.a.changes.resolve(seen.token, seen.shown);
+  }
   await o.b.mergeFrom(await o.a.bytes());
   await o.a.mergeFrom(await o.b.bytes());
   for (const c of [o.a, o.b]) {
@@ -294,12 +302,14 @@ test("M06: a transaction one of whose rows becomes pending leaves no other row o
     ]);
   }
 
-  // Resolving account 1 settles the transfer on both copies.
-  o.a.db.exec("UPDATE accounts SET balance = 40 WHERE id = 1");
+  // Resolving account 1 (the explicit call, R-X §4: an edit would not) settles the transfer on both copies.
+  const seen = o.a.changes.observe("accounts", [1], ["balance"]);
+  const kept = seen.alternatives.find((x: Any) => x.values.balance === 90).ver;
+  o.a.changes.resolve(seen.token, kept);
   await o.b.mergeFrom(await o.a.bytes());
   await o.a.mergeFrom(await o.b.bytes());
   for (const c of [o.a, o.b]) {
-    expect(c.db.selectValues("SELECT balance FROM accounts ORDER BY id")).toEqual([40, 10]);
+    expect(c.db.selectValues("SELECT balance FROM accounts ORDER BY id")).toEqual([90, 10]);
     expect(c.flags().filter((f: Any) => f.tbl === "accounts")).toEqual([]);
   }
   o.a.close();

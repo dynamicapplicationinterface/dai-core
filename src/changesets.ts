@@ -45,9 +45,15 @@
  *     for UNIQUE the earlier-born row keeps the slot.
  *   - a save is one effect group: where a row it wrote is pending or held,
  *     every other row where its change is still current is pending too.
- * A save over a flagged row supersedes every version it saw, so editing is
- * resolving: a new signed change that acknowledges both parents (R-F). The
- * flags are rows of `_cs_flag`, which the host reads from the stored document.
+ * Authorship records changes and explicit decisions, not touches (R-X). A
+ * save authors a unit (a column, or a coupled group whole) only where its
+ * value changed from what it showed, and an edit supersedes only the version
+ * it was based on; writing a shown value back is an echo, which authors
+ * nothing. A conflict is resolved by the kit's explicit call (`observe`,
+ * `resolve`): a signed resolution naming exactly the alternatives it was
+ * shown. A changeset whose basis is missing or names a version it could not
+ * have seen is refused, unapplied. The flags are rows of `_cs_flag`, which
+ * the host reads from the stored document.
  *
  * Runtime rules that come with it: the application's own triggers stand down
  * while merged rows are applied (`dai_projecting()`), and `PRAGMA foreign_keys`
@@ -103,7 +109,16 @@ CREATE TABLE IF NOT EXISTS _cs_keys (tbl TEXT PRIMARY KEY, kind TEXT NOT NULL, p
 CREATE TABLE IF NOT EXISTS _cs_settle (tbl TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_spell (tbl TEXT NOT NULL, pk TEXT NOT NULL, ver TEXT NOT NULL, k TEXT NOT NULL, PRIMARY KEY (tbl, pk, ver)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_shown (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, ver TEXT NOT NULL, PRIMARY KEY (tbl, pk, col)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS _cs_refused (ver TEXT PRIMARY KEY, reason TEXT NOT NULL) WITHOUT ROWID;
 `;
+
+/**
+ * Why an admitted changeset is refused, unapplied (R-X §3): an operation
+ * whose `bases` does not name, for every unit it writes, the versions it was
+ * based on; or one whose `bases` or `resolves` names a version it could not
+ * have seen (not a version of that cell, or one no earlier than itself).
+ */
+export type BasisRefusal = "basis-missing" | "basis-forged";
 
 /**
  * What a resolution is refused with (R-X §4, §5), as the application reads it:
@@ -1700,9 +1715,21 @@ export class Changes {
       }
     }
     const heads = this.rowHeads(op.table, pk);
-    // A change to a row a delete contested also re-asserts it: editing it is keeping it.
-    if (code === "U" && (heads.get("") ?? []).some((h) => Number(h.val) === 0)) n.set("", 1);
-    for (const c of n.keys()) b.set(c, (heads.get(c) ?? []).map((h) => h.ver));
+    /*
+     * An edit is based on what it was made against (R-X §3): each unit's
+     * basis is the version its displayed value came from, and an edit
+     * supersedes that alone. The alternatives this copy also holds stay
+     * pending until an explicit resolution names them, and an edit of a
+     * column leaves the row's existence, and a delete that contests it, as
+     * they were. A birth and a delete are based on every current version.
+     */
+    for (const c of n.keys()) {
+      if (code !== "U") b.set(c, (heads.get(c) ?? []).map((h) => h.ver));
+      else {
+        const v = this.shownVersion(op.table, pk, c);
+        b.set(c, v ? [v] : []);
+      }
+    }
     if (code === "D") {
       seen = [...heads]
         .filter(([c]) => c !== "")
@@ -1792,14 +1819,68 @@ export class Changes {
     );
     const touched: [string, string][] = [];
     if (fresh.length === 0) return { changesets: 0, rows: 0 };
+    const known = new Map(
+      (this.db.selectObjects(`SELECT lower(hex(_r_replica)) || ':' || _r_seq AS ver, _r_lc AS lc FROM ${q(`${CHANGES_LOG}_current`)}`) as Any[]).map((r) => [String(r.ver), Number(r.lc)]),
+    );
+    let applied = 0;
     this.withoutCapture(() => {
       for (const row of fresh) {
+        const ver = `${row["author"]}:${row["seq"]}`;
         const decoded = cborDecode(row["payload"] as Uint8Array, { floats: true }) as unknown as [number, Op[]];
-        touched.push(...this.ingest(decoded[1], `${row["author"]}:${row["seq"]}`, Number(row["lc"]), String(row["author"])));
+        const verdict = this.basisVerdict(decoded[1], Number(row["lc"]), known);
+        // A basis naming a version not yet here waits for it, unapplied, and is judged when it arrives.
+        if (verdict === "wait") continue;
+        if (verdict) {
+          this.runCached("INSERT OR IGNORE INTO _cs_refused (ver, reason) VALUES (?, ?)", [ver, verdict]);
+          this.runCached("INSERT OR IGNORE INTO _cs_ingested (ver) VALUES (?)", [ver]);
+          continue;
+        }
+        touched.push(...this.ingest(decoded[1], ver, Number(row["lc"]), String(row["author"])));
+        applied += 1;
       }
       this.project(touched);
     });
-    return { changesets: fresh.length, rows: new Set(touched.map((t) => t.join("|"))).size };
+    return { changesets: applied, rows: new Set(touched.map((t) => t.join("|"))).size };
+  }
+
+  /**
+   * Whether an admitted changeset's operations bind their causal basis
+   * (R-X §3), read from the signed payload alone: never reconstructed from
+   * this copy's projection, arrival order or flags. Every unit an operation
+   * writes names its basis; every version its `bases` or `resolves` names is
+   * a version of that cell from before it (a lower clock). One naming a
+   * version this copy has not yet applied, from before it, waits for it; one
+   * naming a version already judged that is not that cell's (refused, or
+   * another cell's), or one from no earlier than itself, is refused. So every
+   * copy decides alike, whatever order the batches came in.
+   */
+  private basisVerdict(ops: Op[], lc: number, known: Map<string, number>): BasisRefusal | "wait" | null {
+    let wait = false;
+    for (const op of ops) {
+      const [table, k, , n, , b] = op;
+      const r = op[7];
+      if (!(b instanceof Map) || !(n instanceof Map)) return "basis-missing";
+      for (const c of n.keys()) if (!Array.isArray(b.get(c))) return "basis-missing";
+      if (r !== undefined && !(r instanceof Map)) return "basis-forged";
+      const pk = this.identity(table, k);
+      for (const [c, vers] of [...b, ...(r ?? new Map<string, string[]>())]) {
+        if (!Array.isArray(vers)) return "basis-forged";
+        for (const v of vers) {
+          const at = this.db.selectValue("SELECT lc FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, String(v)]);
+          if (at != null) {
+            if (Number(at) >= lc) return "basis-forged";
+          } else if (this.db.selectValue("SELECT 1 FROM _cs_ingested WHERE ver = ?", [String(v)]) != null) return "basis-forged";
+          else if ((known.get(String(v)) ?? -Infinity) >= lc) return "basis-forged";
+          else wait = true;
+        }
+      }
+    }
+    return wait ? "wait" : null;
+  }
+
+  /** The admitted changesets refused for their basis (R-X §3), by version. */
+  refusedChanges(): { ver: string; reason: BasisRefusal }[] {
+    return this.db.selectObjects("SELECT ver, reason FROM _cs_refused ORDER BY ver") as Any[];
   }
 
   private paused<T>(f: () => T): T {

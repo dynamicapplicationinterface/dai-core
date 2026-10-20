@@ -504,8 +504,9 @@ test("M11: a resolution names the alternatives it saw; a third writer's, unseen,
   const cBytes = await c.bytes();
   await a.mergeFrom(await b.bytes());
   expect(a.flags().map((f) => f.kind)).toContain("pending");
-  a.db.exec("UPDATE items SET note = 'A+B' WHERE title = 'Stove'");
-  a.save();
+  // The resolution is the explicit call (R-X §4): it names the alternatives it was shown.
+  const seen = a.changes.observe("items", [a.db.selectValue("SELECT id FROM items WHERE title = 'Stove'")], ["note"]);
+  a.changes.resolve(seen.token, seen.shown);
   expect(a.flags(), "resolved").toEqual([]);
   await a.mergeFrom(cBytes);
   expect(a.flags().map((f) => f.kind), "C's unseen value is still a conflict").toEqual(["pending"]);

@@ -265,9 +265,51 @@ def apply_log(db: sqlite3.Connection) -> None:
     rows = db.execute(
         f"SELECT lower(hex(_r_replica)), _r_seq, _r_lc, payload FROM {q(LOG)} ORDER BY _r_lc, lower(hex(_r_replica)), _r_seq"
     ).fetchall()
+    # Every admitted version, with its clock; and the versions already judged, applied or refused (R-X §3).
+    known = {f"{author}:{seq}": int(lc) for author, seq, lc, _ in rows}
+    judged_vers: set[str] = set()
+    refused: dict[str, str] = {}
+
+    def basis_verdict(ops: list, lc: int):
+        """Whether a changeset's operations bind their basis, read from the payload alone: every unit written
+        names its basis, and every version its bases or resolves names is a version of that cell with a lower
+        clock. A version not yet applied, from before it, is waited for; one already judged that is not that
+        cell's, or one no earlier than itself, is a forgery."""
+        wait = False
+        for op in ops:
+            if not isinstance(op, list) or len(op) < 7 or not isinstance(op[3], dict) or not isinstance(op[5], dict):
+                return "basis-missing"
+            table, k, _code, new, _old, bases = op[:6]
+            if any(not isinstance(bases.get(c), list) for c in new):
+                return "basis-missing"
+            res = op[7] if len(op) > 7 else {}
+            if not isinstance(res, dict):
+                return "basis-forged"
+            pk = key_text(k, folds(table))
+            for col, vers in list(bases.items()) + list(res.items()):
+                if not isinstance(vers, list):
+                    return "basis-forged"
+                for v in vers:
+                    cell = cells.get((table, pk), {}).get(col, {}).get(v)
+                    if cell is not None:
+                        if cell[1] >= lc:
+                            return "basis-forged"
+                    elif v in judged_vers or known.get(v, float("-inf")) >= lc:
+                        return "basis-forged"
+                    else:
+                        wait = True
+        return "wait" if wait else None
+
     for author, seq, lc, payload in rows:
         ver = f"{author}:{seq}"
         _, ops = cbor_decode(payload)  # type: ignore[misc]
+        verdict = basis_verdict(ops, int(lc))  # type: ignore[arg-type]
+        if verdict == "wait":
+            continue
+        judged_vers.add(ver)
+        if verdict:
+            refused[ver] = verdict
+            continue
         for op in ops:  # type: ignore[union-attr]
             table, k, _code, new, _old, bases, saw = op[:7]
             # A resolution (R-X) names the alternatives it accepted or rejected; it supersedes exactly those.
@@ -608,6 +650,10 @@ def apply_log(db: sqlite3.Connection) -> None:
         db.execute("INSERT INTO _cs_flag (tbl, pk, kind, detail) VALUES (?, ?, ?, NULL)", [t, pk, kind])
     for (t, pk), (reason, _values) in held.items():
         db.execute("INSERT INTO _cs_held (tbl, pk, reason, row) VALUES (?, ?, ?, '{}')", [t, pk, reason])
+    db.execute("CREATE TABLE IF NOT EXISTS _cs_refused (ver TEXT PRIMARY KEY, reason TEXT NOT NULL) WITHOUT ROWID")
+    db.execute("DELETE FROM _cs_refused")
+    for ver, reason in refused.items():
+        db.execute("INSERT INTO _cs_refused (ver, reason) VALUES (?, ?)", [ver, reason])
 
 
 def _neg(s: str) -> tuple:
@@ -652,6 +698,8 @@ def judged(db: sqlite3.Connection) -> dict:
         "tables": dump(db),
         "flags": sorted([list(r) for r in db.execute("SELECT tbl, pk, kind FROM _cs_flag")]),
         "held": sorted([list(r) for r in db.execute("SELECT tbl, pk FROM _cs_held")]),
+        # The admitted changesets refused for their basis (R-X §3): [version, reason].
+        "rejected": sorted([list(r) for r in db.execute("SELECT ver, reason FROM _cs_refused")]),
     }
 
 
@@ -702,9 +750,9 @@ def vectors(root: Path) -> int:
                 problems.append(f"refused batches {got['refused']}")
             if got["tables"] != want["tables"]:
                 problems.append(f"tables differ: got {json.dumps(got['tables'])}, want {json.dumps(want['tables'])}")
-            for part in ("flags", "held"):
-                if sorted(got[part]) != sorted(want[part]):
-                    problems.append(f"{part} differ: got {got[part]}, want {want[part]}")
+            for part in ("flags", "held", "rejected"):
+                if sorted(got[part]) != sorted(want.get(part, [])):
+                    problems.append(f"{part} differ: got {got[part]}, want {want.get(part, [])}")
             if problems:
                 failed += 1
                 print(f"FAIL {folder.name} {direction}: " + "; ".join(problems))

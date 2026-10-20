@@ -4,6 +4,7 @@ import { Copy, DOC, openBytes, person } from "./copy.js";
 import * as merge from "../../src/replicated-frame.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+type Any = any;
 const m = merge as any;
 
 /**
@@ -170,10 +171,17 @@ test("coupled: concurrent changes to different columns of a coupled group are on
   b.close();
 });
 
-test("S3 resolved: a later local edit to the pending row clears the flag on every copy", async () => {
+test("S3 resolved: a later edit supersedes only the value it was shown; the explicit resolution clears the flag on every copy", async () => {
   const o = await exchange(SCENARIOS["S3 same column"]!.write);
+  const tent = o.a.db.selectValue("SELECT id FROM items WHERE title LIKE 'Tent%'");
   o.a.db.exec("UPDATE items SET title = 'Tent (3p)' WHERE title LIKE 'Tent%'");
   o.a.save();
+  // R-X §3: the edit is based on the title it was shown, and the other copy's is not resolved by implication.
+  const pending = o.a.flags().find((f: Any) => f.kind === "pending");
+  expect(JSON.parse(pending.detail)[0].values.map((v: Any) => v.val).sort(), "the edit, against the alternative it was not shown").toHaveLength(2);
+  expect(JSON.parse(pending.detail)[0].values.map((v: Any) => v.val)).toContain("Tent (3p)");
+  const seen = o.a.changes.observe("items", [tent], ["title"]);
+  o.a.changes.resolve(seen.token, seen.shown);
   expect(o.a.flags(), "cleared on the copy that resolved it").toEqual([]);
   await o.b.mergeFrom(await o.a.bytes());
   await o.a.mergeFrom(await o.b.bytes());
@@ -183,7 +191,8 @@ test("S3 resolved: a later local edit to the pending row clears the flag on ever
   }
   expect(o.a.state()).toBe(o.b.state());
   const kept = [...o.a.everyValue()].map((v) => JSON.parse(v)).filter((v) => v[2] === "title" && String(v[4]).startsWith("Tent ("));
-  expect(kept.map((v) => v[4]).sort()).toEqual(["Tent (2p)", "Tent (3p)", "Tent (4p)"]);
+  // The resolution is a version too, of the value it kept.
+  expect(kept.map((v) => v[4]).sort()).toEqual(["Tent (2p)", "Tent (3p)", "Tent (3p)", "Tent (4p)"]);
   close(o);
 });
 

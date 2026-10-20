@@ -104,8 +104,11 @@ test("RW-11: a save that fails after extraction, after logging, or after the bas
   clean.a.save();
   // The batch by shape: table, code and columns (each run's authors draw their own key range).
   const shape = (c: Copy, seq: number): unknown => opsAt(c, seq).map(([t, , code, cols]) => [t, code, cols]);
-  const want = { flags: clean.a.flags(), ops: shape(clean.a, lastSeq(clean.a)) };
-  expect(want.flags, "the resolution clears the flag").toEqual([]);
+  // The flags by table, kind and the columns they name: each run has its own authors and versions.
+  const flagsOf = (c: Copy): unknown => c.flags().map((f: Any) => [f.tbl, f.kind, (f.detail ? JSON.parse(f.detail) : []).map((e: Any) => e.col)]);
+  const want = { flags: flagsOf(clean.a), ops: shape(clean.a, lastSeq(clean.a)) };
+  // The edit supersedes the title it was shown; the other copy's, which it was not based on, stays pending (R-X §3).
+  expect(want.flags, "the alternative it was not based on stays pending").toEqual([["items", "pending", ["title"]]]);
 
   for (const at of ["extraction", "logging", "baseline"] as const) {
     const { a, b } = await pendingTitle();
@@ -137,7 +140,7 @@ test("RW-11: a save that fails after extraction, after logging, or after the bas
     expect(lastSeq(a), `${at}: one batch, once`).toBe(seq + 1);
     expect(shape(a, seq + 1), `${at}: the batch the clean run logged`).toEqual(want.ops);
     expect(a.save(), `${at}: nothing left to log`).toBeNull();
-    expect(a.flags(), `${at}: the flags the clean run left`).toEqual(want.flags);
+    expect(flagsOf(a), `${at}: the flags the clean run left`).toEqual(want.flags);
     a.close();
     b.close();
   }

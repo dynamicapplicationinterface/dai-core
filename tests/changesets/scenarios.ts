@@ -73,6 +73,26 @@ export async function base(opts: { trigger?: boolean; extra?: string[] } = {}): 
 
 export const item = (c: Copy, title: string): number => c.db.selectValue("SELECT id FROM items WHERE title = ?", [title]);
 
+/**
+ * One save of `c` whose operations `change` alters after the runtime built
+ * them and before they are logged and signed: a copy that signs what it
+ * likes (R-X §3). The signature is good; the basis is what a reader judges.
+ */
+export function forging(c: Copy, change: (op: Any[]) => void): void {
+  const changes = c.changes as Any;
+  const built = changes.withBases;
+  changes.withBases = (op: Any): Any => {
+    const out = built.call(changes, op);
+    change(out);
+    return out;
+  };
+  try {
+    c.save();
+  } finally {
+    changes.withBases = built;
+  }
+}
+
 export interface Outcome {
   a: Copy;
   b: Copy;
@@ -297,6 +317,31 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       const seen = a.changes.observe("items", [a.db.selectValue("SELECT id FROM items WHERE title LIKE 'Tent%'")], ["title"]);
       a.changes.resolve(seen.token, seen.shown);
       b.db.exec("UPDATE items SET qty = 2 WHERE title LIKE 'Tent%'");
+    },
+  },
+  // R-X §3: a third copy signs an edit whose basis names A's concurrent title, which it never saw; B carries it on.
+  "R-X forged basis": {
+    write: async (a, b) => {
+      const f = await Copy.open(await person(), await a.bytes(), a.schema);
+      a.db.exec("UPDATE items SET title = 'Tent (2p)' WHERE title = 'Tent'");
+      a.save();
+      const seen = `${a.changes.authorHex}:${a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author])}`;
+      f.db.exec("UPDATE items SET title = 'Tent (9p)' WHERE title = 'Tent'");
+      forging(f, (op) => op[5].set("title", [seen]));
+      await b.mergeFrom(await f.bytes());
+      b.db.exec("UPDATE items SET note = 'from B' WHERE title = 'Map'");
+      f.close();
+    },
+  },
+  // R-X §3: a third copy signs an edit that names no basis for the column it writes; B carries it on.
+  "R-X missing basis": {
+    write: async (a, b) => {
+      const f = await Copy.open(await person(), await a.bytes(), a.schema);
+      f.db.exec("UPDATE items SET qty = 9 WHERE title = 'Rope'");
+      forging(f, (op) => op[5].delete("qty"));
+      await b.mergeFrom(await f.bytes());
+      a.db.exec("UPDATE items SET note = 'from A' WHERE title = 'Map'");
+      f.close();
     },
   },
   // 1e-H3: a key respelled under its collation on one copy while the other edits another column of the row.
