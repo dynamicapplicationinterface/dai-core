@@ -316,6 +316,35 @@ test("T11, its views (D264): an imported runtime view with other text is put bac
   c.close();
 });
 
+test("T12: an apply that throws leaves the connection as it found it: TEMP triggers back, foreign keys on, no transaction, triggers not standing down", async () => {
+  const { a, b } = await base();
+  a.db.exec(`CREATE TEMP TABLE seen (what TEXT);
+    CREATE TEMP TRIGGER "seen it" AFTER INSERT ON main.items BEGIN INSERT INTO seen (what) VALUES (NEW.title); END;`);
+  b.db.exec("INSERT INTO items (title) VALUES ('from B')");
+  const bBytes = await b.bytes();
+  const changes = a.changes as Any;
+  const project = changes.project.bind(changes);
+  changes.project = () => {
+    throw new Error("forced in the apply");
+  };
+  try {
+    await expect(a.mergeFrom(bBytes)).rejects.toThrow(/forced in the apply/);
+  } finally {
+    changes.project = project;
+  }
+  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE type = 'trigger'"), "the TEMP trigger is back").toEqual(["seen it"]);
+  expect(a.db.selectValue("PRAGMA foreign_keys")).toBe(1);
+  expect(a.changes.inTransaction).toBe(false);
+  expect(a.db.selectValue("SELECT dai_projecting()")).toBe(0);
+  expect(a.db.selectValue("SELECT count(*) FROM items WHERE title = 'from B'"), "nothing of the failed apply").toBe(0);
+  a.db.exec("INSERT INTO items (title) VALUES ('mine')");
+  expect(a.db.selectValues("SELECT what FROM temp.seen"), "and the TEMP trigger runs for the application").toEqual(["mine"]);
+  await a.mergeFrom(bBytes);
+  expect(a.db.selectValue("SELECT count(*) FROM items WHERE title = 'from B'"), "the next merge applies it").toBe(1);
+  a.close();
+  b.close();
+});
+
 test("S03: a rebuild that puts the columns in another order merges by name", async () => {
   const { a, b } = await base();
   a.db.exec(`BEGIN;

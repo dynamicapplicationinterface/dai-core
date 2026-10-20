@@ -1025,5 +1025,13 @@ Each keeps every value in the cells, and flags what it cannot settle:
 - the table's name is its identity: a table dropped and made again is the
   same table to a change made before (S02);
 - `user_version` and the other database settings are each copy's own (S08);
+- what this engine does with a BEFORE trigger that changes its own row is
+  what is captured; SQLite promises nothing there (T07);
+- an edit not yet saved when a page closes is lost as any unsaved edit is;
+  the store holds the last save (Q14);
+- by construction, the application holds one handle to an in-memory database
+  and no engine API: no second connection (C09), no incremental BLOB write
+  (C08), no hook (C10), no deserialize or backup (S11, P05), and the frame has
+  no network (T10);
 - history is kept whole: deleted values stay in `_cs_cell` and travel with
   every copy (P07), and nothing is compacted yet (P08).
