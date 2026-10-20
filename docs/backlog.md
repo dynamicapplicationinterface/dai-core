@@ -614,11 +614,18 @@ and causal baseline.
 - The local epoch is logged and the session rotated BEFORE any remote apply
   or runtime bookkeeping touches the database.
 - Remote apply runs on a connection carrying no app TEMP triggers.
-- DDL closes the capture epoch (added 19 October): the epoch is logged,
-  the DDL executes, and a new epoch begins with the new schema.
+- The local delta is frozen before any reprojection; the baseline advances
+  only after the batch is durable; a resolution to the displayed value is
+  recorded though no byte changed (added 20 October).
 
 Nothing arriving remotely, written by the runtime, or occurring after
-extraction can become part of the person's authorship.
+extraction can become part of the person's authorship. The provenance
+invariant, as the catalog states it: "Remote application and runtime
+bookkeeping cannot become newly authored local changes."
+
+*Retired 20 October:* "DDL closes the capture epoch" (added 19 October), and
+its machinery. Under R-W the application makes no schema change, so there is
+no epoch for a DDL to close.
 *Rejected:* disabling the session during apply as the isolation mechanism
 (C07, reproduced). *Evidence:* the data-interface catalog
 (`handoff-2026-10-19.md`), C07, Q01, Q02, Q07, Q08, T01, and section 10.
@@ -650,6 +657,29 @@ is accepted under it. No input is accepted and then mishandled.
 *Rejected:* accepting a write and losing, misattributing or diverging it
 later, at the save or on another copy. *Evidence:* the review of Builds
 1c and 1d (`handoff-2026-10-19.md`), 1d-H1 to 1d-H5.
+
+**R-W. The schema belongs to the release.** Ruled 20 October. A document's
+schema is declared in `schema.sql`, signed in `schema.json`, and changed
+only through a release (R-I). The application's DDL is refused at prepare,
+through every entry point (exec, prepare, the select helpers), with one
+sentence: "This change needs a new version of the app; the current version
+was left unchanged."
+- **The one admission:** `CREATE TABLE`, `INDEX`, `TRIGGER` or `VIEW ... IF
+  NOT EXISTS` whose object already exists with the release's canonical
+  definition. It is a verified no-op. A mismatch, in definition or in type,
+  is refused.
+- **A missing declared object** is a damaged mount: the host repairs it or
+  refuses the document. The application never recreates it.
+- **TEMP DDL** on the application's connection is refused.
+- **Prepared statements are bound to the mount.**
+- "DDL closes the epoch" (R-S) is retired and its machinery removed.
+
+*Rejected:* runtime schema change; SQLite's native `IF NOT EXISTS`
+semantics, under which a different definition is silently a success.
+*Evidence:* the review of Build 1e (`handoff-2026-10-19.md`), 1e-H1, 1e-H2,
+1e-H4, 1e-H5, 1e-M1, 1e-M2, 1e-L1, 1e-L2 and 1e-L3, each a consequence of
+following a schema change at runtime; external review 2026-10-20, RW-01 to
+RW-12.
 
 ### The data interface's runtime rules
 
@@ -10239,6 +10269,153 @@ teaches totals in queries (TOTALS-IN-QUERIES).
 **Change:** a declared derived column (`-- dai:derived c AS (query)`)
 recomputed over the merged candidate. **Acceptance:** T08's two workouts give
 2 under the declaration, with no flag.
+
+### Release-transition residue (filed 20 October)
+
+Under R-W the schema changes only through a release. These are what a
+release transition must hold, held for Build 2 (successor authority, R-I).
+Each cites external review 2026-10-20 by its id. Contract E is RW-07 and
+contract F is RW-08, so each is filed with its RW entry.
+
+#### D271 — A prepared statement survives release activation (RW-04)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-04).*
+
+A statement the application prepared under one release is still held when
+the next release activates. It must not execute under the stale schema, or
+with the migration's privileges.
+
+**Change:** activation ends the mount the statement is bound to (R-W).
+**Acceptance:** a statement prepared before activation and stepped after it
+is refused, with nothing written.
+
+#### D272 — An addition activates a dormant `UPDATE OF` trigger (RW-05)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-05).*
+
+SQLite accepts a column that does not exist in a trigger's `UPDATE OF` list.
+A release that adds that column gives an unchanged trigger new behavior.
+
+**Change:** release validation rejects a trigger naming a column the table
+does not have. **Acceptance:** such a release is refused at validation, never
+activated.
+
+#### D273 — Adding a field while another has pending alternatives (RW-06)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-06).*
+
+A release adds a field while an existing field holds pending alternatives.
+Every alternative and every signature survives. The migration makes no
+synthetic edit and resolves nothing implicitly.
+
+**Acceptance:** a pending row across an additive release keeps both
+alternatives, both signatures and its flag, and the log gains no op.
+
+#### D274 — Old-schema DELETE against an edit to a new column (RW-07, contract E)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-07; contract E).*
+
+The changeset applier ignores trailing columns in a before-image. A DELETE
+written under the old schema can therefore land without having seen a
+concurrent edit to a column the new schema added.
+
+**Change:** the causal delete/update policy holds across schemas: the delete's
+`seen` does not cover the new column's version. **Acceptance:** the row is
+kept and flagged `delete-conflict` in both delivery orders.
+
+#### D275 — Two successors append different columns at one ordinal (RW-08, contract F)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-08; contract F).*
+
+Two additive successors each append a different column at the same position.
+- Changes are never mapped by position. Each is bound to its source schema's
+  identity.
+- Incompatible evidence stays recoverable: received is not materialized.
+- Batches from a skewed version are kept as received. The frontier does not
+  advance for an effect that was not materialized.
+
+**Acceptance:** both successors' batches, crossed, keep every value under its
+own column name, or hold it as received; nothing lands in the wrong column.
+
+#### D276 — One authoritative declaration chain (contract A)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract A).*
+
+`schema.sql` → the compiler's descriptor → the signed `schema.json` → the
+verified physical schema. It is checked before the connection reaches
+application code, after a restore, and after an activation. It covers
+indexes, collations, CHECKs, triggers and generated expressions. Connection
+settings (`foreign_keys` and the like) are the host's.
+
+**Acceptance:** a stored database differing from its signed declaration in
+any of those is repaired by the host or refused, before the application runs.
+
+#### D277 — "Additive", narrowly (contract B)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract B).*
+
+Additive means typed fields appended with fixed defaults, and new tables.
+Nothing else is additive: not a new UNIQUE, CHECK or trigger, and not a
+changed default or collation. "Same schema" means the same objects and the
+same behavior, not the same column list.
+
+**Acceptance:** release validation classifies each of those changes as not
+additive.
+
+#### D278 — An unchanged object gains behavior from an addition (contract C)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract C).*
+
+The `UPDATE OF` case (D272) is one instance. Activation revalidates
+dependencies.
+
+**Acceptance:** tests over a widened table for a positional INSERT, `SELECT *`,
+a view's shape and a trigger's inserts.
+
+#### D279 — Pending conflicts migrate as evidence (contract D)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract D).*
+
+A migration carries the evidence, never only the displayed row: both
+alternatives, their provenance, the pending relation, tombstones and blocked
+dependencies. Old signed batches are never rewritten. Absent, NULL, a default
+and an authored value stay distinct.
+
+**Acceptance:** each kind of flag crosses a release with its evidence equal
+before and after.
+
+#### D280 — Activation switches one coherent state (contract G)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract G).*
+
+Activation switches the release, the schema, the materialized database, the
+evidence, the pending set, the baseline and the frontiers atomically, with
+the application's writes quiesced. A crash leaves the old state or the new,
+never a mix. The application never runs with migration privileges. A rollback
+keeps the successor's branch and never drops fields silently.
+
+**Acceptance:** a crash at each step of activation reopens as wholly old or
+wholly new.
+
+#### D281 — Schema installation is not seeding (contract H)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract H).*
+
+Installing a schema is separate from seeding. A new column's default is not
+a person's edit.
+
+**Acceptance:** an additive release logs no op for the default it fills.
 
 ### Branch review residue (filed 8 October)
 
