@@ -1,43 +1,7 @@
 {
  "name": "07-chores",
- "steps": {
-  "openA": true,
-  "openB": true,
-  "wroteBoth": true,
-  "converged": true,
-  "reopened": true,
-  "recovered": true
- },
- "shape": "replicated: chores, completions, members",
- "update": {
-  "a": "A-0-1 bravo: tap when done",
-  "b": "B-0-1 bravo: tap when done"
- },
- "delete": {
-  "a": "Delete"
- },
- "ops": {
-  "a": null,
-  "b": null
- },
- "typed": {
-  "a": 4,
-  "b": 4
- },
- "flags": [],
- "shows": {
-  "aShowsB": true,
-  "bShowsA": true
- },
- "recovery": {
-  "equalsA": true,
-  "startedC": true,
-  "aHoldsC": true
- },
- "errors": {
-  "A": [],
-  "B": [],
-  "C": []
- },
- "pass": true
+ "steps": {},
+ "exception": "CompileError: DAI: Its schema marks a table as shared (-- dai:replicated) or declares a session (-- dai:profile session). Remove every -- dai:replicated and -- dai:profile line from schema.sql, keep the tables as ordinary tables with an INTEGER PRIMARY KEY each, and read and write them with plain SQL. |     at compileDirectory (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/compile.ts:343:22) |     at file:///C:/Users/cwhit/Documents/DAI_Protocol/eval/changesets-ten/ten-apps.spec.ts:255:21",
+ "errors": {},
+ "pass": false
 }

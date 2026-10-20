@@ -126,13 +126,13 @@ To let a person share, put a Share button in the application and call `window.da
 
 ### SCHEMA-FILE · Every table is in schema.sql {#SCHEMA-FILE}
 
-**Applies to** every shape. **Enforcement:** not checked by anything.
+**Applies to** every shape. **Enforcement:** refused at run time.
 
-Declare every table in one file named schema.sql, each with CREATE TABLE IF NOT EXISTS. Create no table anywhere else — not in index.html, not in JavaScript.
+Declare every table, index, trigger and view in one file named schema.sql, each with CREATE ... IF NOT EXISTS. Application code changes no schema: no CREATE, ALTER or DROP in index.html or JavaScript. One that tries is refused with "This change needs a new version of the app; the current version was left unchanged."
 
-**Why.** schema.sql runs first on every open and its shape is sealed with the file; that record is what protects a person's data when a later version changes the application.
+**Why.** The schema belongs to the version: schema.sql runs first on every open and its shape is sealed with the file, so only a new version changes it.
 
-<small>Depends on [`src/schema.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/schema.ts).</small>
+<small>Depends on [`src/schema.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/schema.ts), [`src/changesets.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/changesets.ts).</small>
 
 ### SEED-IDEMPOTENT · Seed rows go in a block that runs once {#SEED-IDEMPOTENT}
 

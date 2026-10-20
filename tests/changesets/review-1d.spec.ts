@@ -5,8 +5,8 @@ import { Copy, openBytes } from "./copy.js";
 /**
  * The review of Builds 1c and 1d (`handoff-2026-10-19.md`, "Code review —
  * PR #9, Builds 1c–1d"), each finding from the review's own run, named by
- * its id. The rulings they hold the runtime to are R-S (with its DDL
- * boundary), R-V (refuse before accepting) and P3 in docs/backlog.md.
+ * its id. The rulings they hold the runtime to are R-S, R-V (refuse before
+ * accepting), R-W (the schema is the release's) and P3 in docs/backlog.md.
  */
 
 /**
@@ -35,7 +35,7 @@ test("1d-H1: a runtime name in any case or Unicode spelling is the runtime's, at
   expect.soft(() => c.db.exec(`INSERT INTO "_CS_Imported" (v) VALUES ('x')`), "nor written by the application").toThrow(/not authorized/);
   c.close();
 
-  // Made by the application at runtime, in any spelling SQLite or a reader folds to a runtime name.
+  // Made by the application at runtime, in any spelling SQLite or a reader folds to a runtime name: refused, as any schema statement is (R-W).
   for (const sql of [
     `CREATE TEMP TABLE "_CS_LOG_X" (x)`,
     `CREATE TEMP VIEW "_CS_LOG_CURRENT" AS SELECT 1`,
@@ -46,7 +46,7 @@ test("1d-H1: a runtime name in any case or Unicode spelling is the runtime's, at
     `CREATE TABLE "_DAI_meta2" (x)`,
     `CREATE INDEX on_flag ON "_CS_FLAG" (tbl)`,
   ]) {
-    expect.soft(() => a.db.exec(sql), sql).toThrow(/not authorized/);
+    expect.soft(() => a.db.exec(sql), sql).toThrow(/^CHANGES_REFUSED: /);
   }
 
   // So the runtime's own tables take its writes: A's save is in main's log, and B gets it.
@@ -59,119 +59,12 @@ test("1d-H1: a runtime name in any case or Unicode spelling is the runtime's, at
   b.close();
 });
 
-/** Every value A's own log carries, as [table, column, value]: what A was recorded as writing. */
-const wrote = (c: Copy): [string, string, unknown][] =>
-  c.written().map((w) => {
-    const [t, , col, , val] = JSON.parse(w) as [string, string, string, string, unknown];
-    return [t, col, val];
-  });
-
-/**
- * 1d-H2, the schema half. Each of the review's runs: an edit, then a schema
- * change, then an unrelated insert. The save after it used to fail with
- * SQLITE_SCHEMA (rc=17) from the session, every later save and merge with
- * it. A schema change now closes the capture epoch (R-S): the epoch is
- * logged, the change runs, and a new epoch begins with the new schema. So
- * each run's saves succeed and every edit is in the log.
+/*
+ * 1d-H2, the schema half (DROP TABLE, a rebuild, DROP COLUMN, RENAME TABLE
+ * closing the capture epoch) and 1d-M2 (a renamed column's history) are
+ * retired with R-W: the application changes no schema, and each of those
+ * forms is refused before any effect (`release-schema.spec.ts`, RW-03).
  */
-test("1d-H2: DROP TABLE, a table rebuild, DROP COLUMN and RENAME TABLE close the epoch; every edit is logged and the next save succeeds", async () => {
-  // DROP TABLE: the edit before it is logged, and the table's rows go with it on every copy.
-  {
-    const { a, b } = await base();
-    a.db.exec("UPDATE audit SET what = 'checked'");
-    a.db.exec("DROP TABLE audit");
-    a.db.exec("INSERT INTO items (title) VALUES ('after the drop')");
-    expect(a.save(), "DROP TABLE: the save").not.toBeNull();
-    expect(wrote(a), "DROP TABLE: the edit before it").toContainEqual(["audit", "what", "checked"]);
-    await b.mergeFrom(await a.bytes());
-    expect(b.db.selectValues("SELECT title FROM items WHERE title = 'after the drop'")).toEqual(["after the drop"]);
-    expect(b.db.selectValue("SELECT count(*) FROM audit"), "DROP TABLE: its rows are deleted on the other copy").toBe(0);
-    a.db.exec("INSERT INTO items (title) VALUES ('later')");
-    await b.mergeFrom(await a.bytes());
-    expect(b.db.selectValues("SELECT title FROM items WHERE title = 'later'"), "DROP TABLE: a later save").toEqual(["later"]);
-    expect([b.flags(), b.held()]).toEqual([[], []]);
-    a.close();
-    b.close();
-  }
-
-  // SQLite's own procedure for changing a table, in one transaction. The copy is the rebuild's, not an edit;
-  // only what the rebuild changed (Map becomes Atlas) is logged, and the next edit lands.
-  {
-    const { a, b } = await base();
-    a.db.exec("UPDATE audit SET what = 'checked'");
-    a.db.exec(`PRAGMA foreign_keys = OFF;
-      BEGIN;
-      CREATE TABLE items_new (id INTEGER PRIMARY KEY, category_id INTEGER REFERENCES categories(id), title TEXT NOT NULL CHECK (length(title) > 0),
-        qty INTEGER NOT NULL DEFAULT 1, note TEXT, done INTEGER NOT NULL DEFAULT 0);
-      INSERT INTO items_new (id, category_id, title, qty, note, done)
-        SELECT id, category_id, CASE title WHEN 'Map' THEN 'Atlas' ELSE title END, qty, note, done FROM items;
-      DROP TABLE items;
-      ALTER TABLE items_new RENAME TO items;
-      COMMIT;
-      PRAGMA foreign_keys = ON;`);
-    a.db.exec("INSERT INTO items (title) VALUES ('after the rebuild')");
-    const from = Number(a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author])) + 1;
-    expect(a.save(), "rebuild: the save").not.toBeNull();
-    expect(wrote(a), "rebuild: the edit before it").toContainEqual(["audit", "what", "checked"]);
-    const ops = [...a.opsSince(from - 1)].filter(([k]) => k.startsWith("items")).map(([k, s]) => [k.split("|")[0], [...s].join("")]);
-    expect(ops.sort(), "rebuild: one change (Map), one insert, and no copied row").toEqual([
-      ["items", "I"],
-      ["items", "U"],
-    ]);
-    await b.mergeFrom(await a.bytes());
-    expect(b.db.selectValues("SELECT title FROM items ORDER BY title")).toEqual(["Atlas", "Bread", "Rope", "Stove", "Tent", "after the rebuild"]);
-    expect(b.db.selectValue("SELECT what FROM audit")).toBe("checked");
-    a.db.exec("UPDATE items SET qty = 3 WHERE title = 'Bread'");
-    await b.mergeFrom(await a.bytes());
-    expect(b.db.selectValue("SELECT qty FROM items WHERE title = 'Bread'"), "rebuild: a later edit").toBe(3);
-    expect([b.flags(), b.held()], "rebuild: nothing flagged or held").toEqual([[], []]);
-    await a.mergeFrom(await b.bytes());
-    expect(a.state(), "rebuild: the copies converge").toBe(b.state());
-    a.close();
-    b.close();
-  }
-
-  // DROP COLUMN: the edit before it reaches a copy that still has the column, and a merged change to that
-  // copy's column is kept in the cells here, not held.
-  {
-    const { a, b } = await base();
-    a.db.exec("UPDATE items SET note = 'n5' WHERE title = 'Bread'");
-    a.db.exec("ALTER TABLE items DROP COLUMN note");
-    a.db.exec("INSERT INTO items (title) VALUES ('after drop column')");
-    expect(a.save(), "DROP COLUMN: the save").not.toBeNull();
-    expect(wrote(a)).toContainEqual(["items", "note", "n5"]);
-    await b.mergeFrom(await a.bytes());
-    expect(b.db.selectObject("SELECT qty, note FROM items WHERE title = 'Bread'")).toEqual({ qty: 1, note: "n5" });
-    expect(b.db.selectValues("SELECT title FROM items WHERE title = 'after drop column'")).toEqual(["after drop column"]);
-    b.db.exec("UPDATE items SET qty = 2, note = 'from B' WHERE title = 'Bread'");
-    await a.mergeFrom(await b.bytes());
-    expect(a.db.selectValue("SELECT qty FROM items WHERE title = 'Bread'"), "DROP COLUMN: B's change lands").toBe(2);
-    expect([a.flags(), a.held()], "DROP COLUMN: nothing held for the column A dropped").toEqual([[], []]);
-    a.close();
-    b.close();
-  }
-
-  // RENAME TABLE: the history goes with the table; a copy that has not renamed holds the row, flagged, until it does.
-  {
-    const { a, b } = await base();
-    a.db.exec("UPDATE audit SET what = 'checked'");
-    a.db.exec("ALTER TABLE audit RENAME TO audit2");
-    a.db.exec("UPDATE audit2 SET what = 'after'");
-    expect(a.save(), "RENAME TABLE: the save").not.toBeNull();
-    expect(wrote(a)).toContainEqual(["audit", "what", "checked"]);
-    expect(wrote(a)).toContainEqual(["audit2", "what", "after"]);
-    await b.mergeFrom(await a.bytes());
-    expect(b.db.selectValue("SELECT what FROM audit"), "RENAME TABLE: the edit before it").toBe("checked");
-    expect(b.held().map((h) => h.tbl), "RENAME TABLE: held where the table is not, flagged").toEqual(["audit2"]);
-    b.db.exec("ALTER TABLE audit RENAME TO audit2");
-    expect(b.db.selectValue("SELECT what FROM audit2"), "RENAME TABLE: once this copy renames too").toBe("after");
-    expect([b.flags(), b.held()]).toEqual([[], []]);
-    await a.mergeFrom(await b.bytes());
-    expect(a.state(), "RENAME TABLE: the copies converge").toBe(b.state());
-    a.close();
-    b.close();
-  }
-});
 
 /**
  * 1d-H3 (catalog C02, K01). The session skips a row with a NULL in its
@@ -386,18 +279,12 @@ test("1d-H2: a save that cannot succeed refuses the document once, holds later w
 
   // The same refusal from a real shape: text that is not UTF-8 (made from a BLOB) would be carried with its
   // bytes replaced, so its save is refused rather than signed changed.
-  const c = await Copy.open((await base()).a.author);
-  c.db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
+  const c = (await base({ extra: ["CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)"] })).a;
   c.save();
   c.db.exec("INSERT INTO notes (body) VALUES (CAST(x'ff41' AS TEXT))");
   expect(() => c.save(), "text that is not UTF-8").toThrow(/^CHANGES_SAVE_REFUSED: /);
   expect(() => c.db.exec("INSERT INTO notes (body) VALUES ('later')")).toThrow(/not authorized/);
   c.close();
-  // And from a table made since the last save, which the save logs by what it holds.
-  const d = await Copy.open((await base()).a.author);
-  d.db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT); INSERT INTO notes (body) VALUES (CAST(x'c3' AS TEXT));");
-  expect(() => d.save(), "text that is not UTF-8, in a new table").toThrow(/^CHANGES_SAVE_REFUSED: /);
-  d.close();
 });
 
 /** An imported copy of A: A's stored bytes with `sql` run on them outside any runtime, reopened as A. */
@@ -419,11 +306,13 @@ async function imported(a: Copy, sql: string): Promise<Copy> {
  * trigger under a runtime name is refused as the application makes it.
  */
 test("1d-M1: a trigger named like the runtime's, or naming dai_projecting(), stands down on merged rows like any other", async () => {
-  const { a, b } = await base();
+  // The release declares the trigger naming dai_projecting(); one under a runtime name the application makes is refused (R-W).
+  const { a, b } = await base({
+    extra: ["CREATE TRIGGER replay_only AFTER INSERT ON items WHEN dai_projecting() = 1 BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'replay'); END"],
+  });
   expect(() => a.db.exec("CREATE TRIGGER _cs_dup AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'dup'); END"), "made now").toThrow(
-    /not authorized/,
+    /^CHANGES_REFUSED: /,
   );
-  a.db.exec("CREATE TRIGGER replay_only AFTER INSERT ON items WHEN dai_projecting() = 1 BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'replay'); END");
   const c = await imported(a, "CREATE TRIGGER _cs_dup AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'dup'); END");
   b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
   const bBytes = await b.bytes();
@@ -441,36 +330,6 @@ test("1d-M1: a trigger named like the runtime's, or naming dai_projecting(), sta
 });
 
 /**
- * 1d-M2. A renamed column travels: the runtime's history goes with the
- * rename and records it, so a copy that has not renamed holds the row,
- * flagged, until it does, and then shows it; and an edit made under the old
- * name, arriving after the rename, lands under the new one. A column a
- * declaration names keeps its name, refused as the rename runs.
- */
-test("1d-M2: a renamed column's edits reach a copy that renames too, from before the rename and after", async () => {
-  const { a, b } = await base({ extra: ["CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL -- dai:coupled lat lng\n)"] });
-  a.db.exec("ALTER TABLE items RENAME COLUMN note TO memo");
-  a.db.exec("UPDATE items SET memo = 'A memo' WHERE title = 'Bread'");
-  b.db.exec("UPDATE items SET note = 'B note' WHERE title = 'Tent'");
-  await b.mergeFrom(await a.bytes());
-  expect(b.held().map((h) => h.tbl), "B, not renamed yet, holds A's row, flagged").toEqual(["items"]);
-  await a.mergeFrom(await b.bytes());
-  expect(a.db.selectValue("SELECT memo FROM items WHERE title = 'Tent'"), "an edit from before the rename lands under the new name").toBe("B note");
-  b.db.exec("ALTER TABLE items RENAME COLUMN note TO memo");
-  expect(b.db.selectObjects("SELECT title, memo FROM items WHERE memo IS NOT NULL ORDER BY title")).toEqual([
-    { title: "Bread", memo: "A memo" },
-    { title: "Tent", memo: "B note" },
-  ]);
-  expect([b.flags(), b.held()], "nothing held once B renames").toEqual([[], []]);
-  await a.mergeFrom(await b.bytes());
-  expect(a.state()).toBe(b.state());
-  expect(() => a.db.exec("ALTER TABLE places RENAME COLUMN lat TO latitude"), "a declared column keeps its name").toThrow(/CHANGES_REFUSED: .*declaration/);
-  expect(a.db.selectValues("SELECT name FROM pragma_table_info('places')"), "and the rename is undone").toContain("lat");
-  a.close();
-  b.close();
-});
-
-/**
  * 1d-L1. A trigger whose body writes a runtime table is refused by the
  * authorizer when it would run, and a merged row's write fires it: every
  * merged row of its table was held. Now it is found when it is made, by
@@ -480,7 +339,7 @@ test("1d-M2: a renamed column's edits reach a copy that renames too, from before
  */
 test("1d-L1: a trigger that writes a runtime table is refused when made and dropped at open, and merged rows land", async () => {
   const { a, b } = await base();
-  expect(() => a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END"), "made now").toThrow(/CHANGES_REFUSED: .*runtime/);
+  expect(() => a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END"), "made now").toThrow(/^CHANGES_REFUSED: /);
   expect(a.db.selectValue("SELECT count(*) FROM sqlite_schema WHERE name = 'items_forge'"), "and not kept").toBe(0);
   const c = await imported(a, "CREATE TRIGGER items_forge AFTER UPDATE OF qty ON items BEGIN INSERT INTO _cs_flag (tbl, pk, kind) VALUES ('items', '[0]', 'held'); END");
   expect(c.changes.refused, "dropped at open").toContain("items_forge");

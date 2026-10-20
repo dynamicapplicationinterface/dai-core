@@ -48,8 +48,7 @@ test("R-U: the engine that runs is the one the conformance baseline records", as
  * key tuple, in the key's order.
  */
 test("R-U: this build captures generated columns and WITHOUT ROWID tables", async () => {
-  const a = await Copy.open(await person());
-  a.db.exec(`CREATE TABLE sized (id INTEGER PRIMARY KEY, w INTEGER NOT NULL, area INTEGER GENERATED ALWAYS AS (w * h) STORED, h INTEGER NOT NULL, half INTEGER GENERATED ALWAYS AS (w / 2) VIRTUAL);
+  const a = await Copy.open(await person(), undefined, `CREATE TABLE sized (id INTEGER PRIMARY KEY, w INTEGER NOT NULL, area INTEGER GENERATED ALWAYS AS (w * h) STORED, h INTEGER NOT NULL, half INTEGER GENERATED ALWAYS AS (w / 2) VIRTUAL);
     CREATE TABLE pairs (b TEXT NOT NULL, a TEXT NOT NULL, v TEXT, PRIMARY KEY (a, b)) WITHOUT ROWID;`);
   a.db.exec("INSERT INTO sized (w, h) VALUES (4, 5); INSERT INTO pairs (b, a, v) VALUES ('second', 'first', 'x');");
   const saved = a.save();

@@ -99,21 +99,17 @@ test("C07/Q08: a remote edit to another column of a locally edited row is never 
  */
 test("T01: neither a TEMP trigger nor an attached schema's trigger fires while merged rows are applied", async () => {
   const { a, b } = await base({ trigger: true });
-  a.db.exec(`CREATE TEMP TABLE fired_temp (what TEXT);
-    CREATE TEMP TRIGGER items_temp AFTER INSERT ON main.items BEGIN INSERT INTO fired_temp (what) VALUES (NEW.title); END;`);
+  // A TEMP trigger is refused as the application makes it (R-W), so the apply's connection never carries one.
+  expect(() => a.db.exec("CREATE TEMP TRIGGER items_temp AFTER INSERT ON main.items BEGIN SELECT 1; END"), "a TEMP trigger").toThrow(/^CHANGES_REFUSED: /);
   // An attached schema is refused before it can carry a trigger (S06).
   expect(() => a.db.exec("ATTACH ':memory:' AS aux"), "an attached schema").toThrow(/CHANGES_REFUSED: .*ATTACH/);
   b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
   await a.mergeFrom(await b.bytes());
 
   expect(a.db.selectValue("SELECT title FROM main.items WHERE title = 'Soap'"), "the merged row is applied").toBe("Soap");
-  expect.soft(a.db.selectValues("SELECT what FROM temp.fired_temp"), "the TEMP trigger").toEqual([]);
   // The main schema's trigger ran once, on B, and its row came in B's changeset.
   expect(a.db.selectValue("SELECT count(*) FROM audit x JOIN items i ON i.id = x.item_id WHERE i.title = 'Soap' AND x.what = 'created'")).toBe(1);
-  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE type = 'trigger'"), "the TEMP trigger is back").toEqual(["items_temp"]);
-
-  a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
-  expect(a.db.selectValues("SELECT what FROM temp.fired_temp"), "the TEMP trigger runs for the application's own write").toEqual(["Lamp"]);
+  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema"), "nothing in temp").toEqual([]);
   a.close();
   b.close();
 });
@@ -330,8 +326,7 @@ CREATE TRIGGER child_gone AFTER DELETE ON child BEGIN INSERT INTO gone (what) VA
  */
 test("D02: INSERT OR REPLACE deleting a parent with a cascading child is captured whole and applied once", async () => {
   for (const replacer of ["b", "a"] as const) {
-    const a = await Copy.open(await person());
-    a.db.exec(FAMILY);
+    const a = await Copy.open(await person(), undefined, FAMILY);
     const b = await Copy.open(await person(), await a.bytes());
     const [owner, other] = replacer === "b" ? [a, b] : [b, a];
     owner.db.exec("INSERT INTO parent (name) VALUES ('x'); INSERT INTO child (parent_id, what) VALUES (last_insert_rowid(), 'c1');");
@@ -376,8 +371,7 @@ test("D02: INSERT OR REPLACE deleting a parent with a cascading child is capture
  * row was deleted: the high-water mark is the log's, not the live rows'.
  */
 test("K06/K07: after high remote ids and their deletion, a local id is never reused, live or after a restore", async () => {
-  const a = await Copy.open(await person());
-  a.db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL)");
+  const a = await Copy.open(await person(), undefined, "CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL)");
   a.db.exec("INSERT INTO notes (body) VALUES ('one'), ('two'), ('three')");
   const range = a.changes.index * 2 ** 32;
   const b = await Copy.open(await person(), await a.bytes());
@@ -442,7 +436,8 @@ async function compiledBytes(): Promise<Uint8Array> {
  * compiler does, and a copy the runtime made, have nothing dropped.
  */
 test("T11/P02: no trigger an imported schema hangs on a runtime table runs under the runtime's writes, and application writes to runtime tables are refused at execution", async () => {
-  const { a, b } = await base();
+  // The release declares a view whose INSTEAD OF trigger writes a runtime table: refused when it would run.
+  const { a, b } = await base({ extra: ["CREATE VIEW forge AS SELECT 1 AS x; CREATE TRIGGER forge_in INSTEAD OF INSERT ON forge BEGIN DELETE FROM _cs_cell; END;"] });
   expect(a.changes.refused, "a copy the runtime made: nothing dropped").toEqual([]);
   const compiled = await Copy.open(await person(), await compiledBytes());
   expect(compiled.changes.refused, "a document assembled as the compiler does: nothing dropped").toEqual([]);
@@ -473,7 +468,7 @@ test("T11/P02: no trigger an imported schema hangs on a runtime table runs under
   // The application's writes to runtime tables, refused when they execute.
   const cells = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_cell"));
   const before = cells();
-  const refused = (sql: string): void => expect(() => a.db.exec(sql), sql).toThrow(/not authorized/);
+  const refused = (sql: string): void => expect(() => a.db.exec(sql), sql).toThrow(/^CHANGES_REFUSED: /);
   for (const sql of [
     "INSERT INTO _cs_flag (tbl, pk, kind) VALUES ('items', '[1]', 'pending')",
     `UPDATE "_cs_log" SET payload = x'00'`,
@@ -493,9 +488,7 @@ test("T11/P02: no trigger an imported schema hangs on a runtime table runs under
   // A trigger on the application's own table: refused as it is made (1d-L1). A view's INSTEAD OF trigger: when it would run.
   expect(() => a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END")).toThrow(/CHANGES_REFUSED/);
   a.db.exec("INSERT INTO items (title) VALUES ('not forged')");
-  a.db.exec("CREATE VIEW forge AS SELECT 1 AS x; CREATE TRIGGER forge_in INSTEAD OF INSERT ON forge BEGIN DELETE FROM _cs_cell; END;");
   refused("INSERT INTO forge VALUES (1)");
-  a.db.exec("DROP VIEW forge");
   expect(cells(), "the runtime's tables are as they were").toBe(before);
 
   // And the runtime's own writes go on: a save, a seal, a merge.

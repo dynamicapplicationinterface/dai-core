@@ -13,7 +13,7 @@
  *               (read from the signed payloads, not the policy's own state);
  *   flagged   — the scenario's conflict carries its flag.
  */
-import { Copy, person, openBytes, DOC } from "./copy.js";
+import { Copy, person, openBytes, DOC, boot, statementsOf, isSchema } from "./copy.js";
 import * as merge from "../../src/replicated-frame.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -41,20 +41,33 @@ CREATE TABLE IF NOT EXISTS audit (
 
 const TRIGGER = "CREATE TRIGGER IF NOT EXISTS items_audit AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'created'); END;";
 
+/**
+ * The release's schema for a scenario: the base tables, its trigger, and the
+ * schema statements of its `extra` (R-W: a schema is the release's, run by the
+ * host before the application has the handle). The rest of `extra` is data.
+ */
+export async function releaseOf(opts: { trigger?: boolean; extra?: string[] } = {}): Promise<{ schema: string; data: string[] }> {
+  const sqlite3 = await boot();
+  const parts = (opts.extra ?? []).flatMap((sql) => statementsOf(sqlite3, sql));
+  // The host runs the schema at every open, so each statement in it makes its object only if it is missing.
+  const idempotent = (s: string): string =>
+    s.replace(/^(\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\s+)(?!IF\s)/i, "$1IF NOT EXISTS ").trim().replace(/;?$/, ";");
+  const schema = [SCHEMA, opts.trigger ? TRIGGER : "", ...parts.filter(isSchema).map(idempotent)].join("\n");
+  return { schema, data: parts.filter((s) => !isSchema(s)) };
+}
+
 export async function base(opts: { trigger?: boolean; extra?: string[] } = {}): Promise<{ a: Copy; b: Copy }> {
-  const a = await Copy.open(await person());
-  a.db.exec(SCHEMA);
-  if (opts.trigger) a.db.exec(TRIGGER);
+  const release = await releaseOf(opts);
+  const a = await Copy.open(await person(), undefined, release.schema);
   a.db.exec(`
     INSERT INTO categories (name) VALUES ('Food'), ('Gear');
     INSERT INTO items (category_id, title) SELECT id, 'Bread' FROM categories WHERE name = 'Food';
     INSERT INTO items (category_id, title) SELECT id, 'Tent' FROM categories WHERE name = 'Gear';
     INSERT INTO items (title) VALUES ('Map'), ('Rope'), ('Stove');
     INSERT INTO audit (item_id, what) SELECT id, 'packed' FROM items WHERE title = 'Rope';`);
-  // A scenario's own tables and rows, each statement group in its own exec: a table is adopted (its key
-  // rewritten) when the exec that made it returns.
-  for (const sql of opts.extra ?? []) a.db.exec(sql);
-  const b = await Copy.open(await person(), await a.bytes());
+  // A scenario's own rows; its tables are in the release's schema.
+  for (const sql of release.data) a.db.exec(sql);
+  const b = await Copy.open(await person(), await a.bytes(), release.schema);
   return { a, b };
 }
 

@@ -108,8 +108,7 @@ test("1b-H2(b): the runtime ignores a declaration it cannot read exactly, and a 
     ["-- dai:coupled LAT LNG", "UPDATE places SET lat = 1"],
     ["-- dai:coupled rowid lat lng", "UPDATE places SET lat = 1"],
   ] as const) {
-    const c = await Copy.open(await person());
-    c.db.exec(`CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL ${decl}\n); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);`);
+    const c = await Copy.open(await person(), undefined, `CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL ${decl}\n); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);`);
     c.db.exec("INSERT INTO places (lat, lng) VALUES (0, 0)");
     c.save();
     expect(c.changes.declaredOf("places"), decl).toEqual({ coupled: [], consequential: [] });
@@ -204,8 +203,7 @@ test("positional-insert: an INSERT naming no columns into a table that gained _d
   expect(seed?.fix).toMatch(/Name the columns/);
 
   // What it guards against, on the runtime: the positional INSERT fails, the column list does not.
-  const a = await Copy.open(await person());
-  a.db.exec("CREATE TABLE marks (_dai_id INT NOT NULL ON CONFLICT REPLACE DEFAULT (dai_id('marks')) PRIMARY KEY, body TEXT, at TEXT)");
+  const a = await Copy.open(await person(), undefined, "CREATE TABLE marks (body TEXT, at TEXT)");
   expect(() => a.db.exec("INSERT INTO marks VALUES ('a', 'b')")).toThrow(/2 values|3 columns/);
   a.db.exec("INSERT INTO marks (body, at) VALUES ('a', 'b')");
   expect(a.db.selectValue("SELECT count(*) FROM marks")).toBe(1);

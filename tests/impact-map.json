@@ -392,6 +392,23 @@
       "tests/changesets/scenarios.ts",
       "tests/signed-people.ts"
     ],
+    "tests/changesets/release-schema.spec.ts": [
+      "src/cbor.ts",
+      "src/changes-log.ts",
+      "src/changesets.ts",
+      "src/declarations.ts",
+      "src/identity.ts",
+      "src/refusals.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/session-id.ts",
+      "tests/changesets/copy.ts",
+      "tests/changesets/release-schema.spec.ts",
+      "tests/changesets/scenarios.ts",
+      "tests/signed-people.ts"
+    ],
     "tests/changesets/review-1d.spec.ts": [
       "src/cbor.ts",
       "src/changes-log.ts",

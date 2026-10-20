@@ -14,6 +14,7 @@
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import * as merge from "../../src/replicated-frame.js";
 import { rewriteReplicated } from "../../src/replicated.js";
+import { withHiddenKeys } from "../../src/changes-log.js";
 import { decode as cborDecode } from "../../src/cbor.js";
 import { person, type Person } from "../signed-people.js";
 import type { Rows } from "../../src/replicated-rows.js";
@@ -63,6 +64,23 @@ export async function openBytes(bytes: Uint8Array): Promise<{ sqlite3: Any; db: 
   return { sqlite3, db, rows: rowsOf(db) };
 }
 
+/** A script cut into its statements where SQLite would end each one, trigger bodies whole. */
+export function statementsOf(sqlite3: Any, text: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  for (let i = text.indexOf(";"); i >= 0; i = text.indexOf(";", i + 1)) {
+    if (sqlite3.capi.sqlite3_complete(text.slice(start, i + 1))) {
+      out.push(text.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  if (text.slice(start).trim()) out.push(text.slice(start));
+  return out;
+}
+
+/** Whether a statement is a schema statement: what goes in a release's schema.sql, never in application code (R-W). */
+export const isSchema = (s: string): boolean => /^\s*(CREATE|ALTER|DROP)\b/i.test(s.replace(/^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*/, ""));
+
 export class Copy {
   readonly rows: Rows;
   readonly changes: Any;
@@ -71,22 +89,39 @@ export class Copy {
     readonly sqlite3: Any,
     readonly db: Any,
     readonly author: Person,
+    /** The release's schema, as the compiler declares it: what the host ran before the application had the handle. */
+    readonly schema?: string,
   ) {
     this.rows = rowsOf(db);
     // The host's id wins over the file's, as the frame settles it at mount.
     m.adoptReplica(this.rows, author.author);
-    this.changes = new m.Changes(sqlite3, db, { author: author.author });
+    this.changes = new m.Changes(sqlite3, db, { author: author.author, schema });
     this.changes.watch(db);
     this.changes.projectAdmitted();
   }
 
-  /** A new document (no bytes), or a copy of one opened in this context (bytes). */
-  static async open(author: Person, bytes?: Uint8Array): Promise<Copy> {
+  /**
+   * A new document (no bytes), or a copy of one opened in this context
+   * (bytes). `schema` is the release's `schema.sql`: the host runs it, as the
+   * compiler declares it, at every open and before the application has the
+   * handle (R-W), so a table is never made by the application.
+   */
+  static async open(author: Person, bytes?: Uint8Array, schema?: string): Promise<Copy> {
     const sqlite3 = await boot();
     const db = new sqlite3.oo1.DB(":memory:", "c");
     if (bytes) deserialize(sqlite3, db, bytes);
     else db.exec(rewriteReplicated(String(m.CHANGES_DECLARATION)).sql);
-    return new Copy(sqlite3, db, author);
+    const declared = schema === undefined ? undefined : withHiddenKeys(schema);
+    if (declared !== undefined) {
+      m.stageChangeFunctions(db);
+      db.exec(declared);
+    }
+    return new Copy(sqlite3, db, author, declared);
+  }
+
+  /** This copy's bytes opened again as another copy, under the same release. */
+  static async reopen(author: Person, bytes: Uint8Array, from: Copy): Promise<Copy> {
+    return Copy.open(author, bytes, from.schema === undefined ? undefined : from.schema);
   }
 
   /** One save: what changed since the last, into the log. */

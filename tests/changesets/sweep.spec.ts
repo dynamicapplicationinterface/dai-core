@@ -48,7 +48,7 @@ test("C03: a WITHOUT ROWID table keyed in another order than its columns merges 
 
 test("C04: a virtual table is refused as it is made and as it is written; its shadow tables are never adopted", async () => {
   const { a, b } = await base();
-  refusedWith(a, "CREATE VIRTUAL TABLE docs USING fts5(body)", /CHANGES_REFUSED: .*virtual table/);
+  refusedWith(a, "CREATE VIRTUAL TABLE docs USING fts5(body)", /^CHANGES_REFUSED: /);
   const c = await imported(a, "CREATE VIRTUAL TABLE docs USING fts5(body); INSERT INTO docs (body) VALUES ('kept here');");
   expect(c.rows.all("SELECT tbl FROM _cs_keys WHERE tbl LIKE 'docs%'"), "no shadow table is adopted").toEqual([]);
   refusedWith(c, "INSERT INTO docs (body) VALUES ('more')", /CHANGES_REFUSED: .*virtual table/);
@@ -72,15 +72,13 @@ test("C05: STORED and VIRTUAL generated columns among ordinary ones merge by the
   b.close();
 });
 
-test("C06: a table made in a transaction that rolls back leaves nothing; one made and filled at once is logged", async () => {
+test("C06 (R-W): a table the release does not declare is refused as the application makes it, in a transaction or not; nothing is kept", async () => {
   const { a, b } = await base();
-  a.db.exec("BEGIN; CREATE TABLE gone (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO gone (v) VALUES ('x'); ROLLBACK;");
-  a.db.exec("CREATE TABLE kept (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO kept (v) VALUES ('made and filled');");
-  await b.mergeFrom(await a.bytes());
-  expect(a.rows.all("SELECT tbl FROM _cs_cell WHERE tbl = 'gone'")).toEqual([]);
-  b.db.exec("CREATE TABLE IF NOT EXISTS kept (id INTEGER PRIMARY KEY, v TEXT)");
-  await b.mergeFrom(await a.bytes());
-  expect(b.db.selectValues("SELECT v FROM kept"), "the rows of a table made at runtime travel").toEqual(["made and filled"]);
+  refusedWith(a, "BEGIN; CREATE TABLE gone (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO gone (v) VALUES ('x'); ROLLBACK;", /^CHANGES_REFUSED: This change needs a new version of the app/);
+  expect(a.changes.inTransaction, "the script is refused whole, its BEGIN included").toBe(false);
+  refusedWith(a, "CREATE TABLE kept (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO kept (v) VALUES ('made and filled');", /^CHANGES_REFUSED: This change needs a new version of the app/);
+  expect(a.db.selectValue("SELECT count(*) FROM sqlite_schema WHERE name IN ('gone', 'kept')")).toBe(0);
+  expect(a.save(), "nothing to log").toBeNull();
   a.close();
   b.close();
 });
@@ -240,11 +238,15 @@ test("D08: changes() and total_changes() answer for the application's statements
 });
 
 test("D09/D10: a script with quoted semicolons, a trigger body and a recursive CTE; random() and the clock travel as stored", async () => {
-  const { a, b } = await base({ extra: ["CREATE TABLE stamped (id INTEGER PRIMARY KEY, r INTEGER DEFAULT (random()), at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), n INTEGER)"] });
+  const { a, b } = await base({
+    extra: [
+      "CREATE TABLE stamped (id INTEGER PRIMARY KEY, r INTEGER DEFAULT (random()), at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), n INTEGER)",
+      "CREATE TRIGGER t_semi AFTER INSERT ON stamped BEGIN UPDATE items SET note = 'a; b' WHERE title = 'semi; colon'; END;",
+    ],
+  });
   a.db.exec(`INSERT INTO items (title) VALUES ('semi; colon'); -- a comment; with one
-    CREATE TRIGGER t_semi AFTER INSERT ON stamped BEGIN UPDATE items SET note = 'a; b' WHERE title = 'semi; colon'; END;
     WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 5) INSERT INTO stamped (n) SELECT n FROM c;
-    ALTER TABLE items ADD COLUMN extra TEXT; UPDATE items SET extra = 'after; the alter' WHERE title = 'Map';`);
+    UPDATE items SET qty = 2 WHERE title = 'Map';`);
   await b.mergeFrom(await a.bytes());
   expect(b.db.selectArrays("SELECT n, r, at FROM stamped ORDER BY n"), "the stored values, never rerolled").toEqual(a.db.selectArrays("SELECT n, r, at FROM stamped ORDER BY n"));
   expect(b.db.selectValue("SELECT note FROM items WHERE title = 'semi; colon'")).toBe("a; b");
@@ -316,10 +318,10 @@ test("T11, its views (D264): an imported runtime view with other text is put bac
   c.close();
 });
 
-test("T12: an apply that throws leaves the connection as it found it: TEMP triggers back, foreign keys on, no transaction, triggers not standing down", async () => {
-  const { a, b } = await base();
-  a.db.exec(`CREATE TEMP TABLE seen (what TEXT);
-    CREATE TEMP TRIGGER "seen it" AFTER INSERT ON main.items BEGIN INSERT INTO seen (what) VALUES (NEW.title); END;`);
+test("T12: an apply that throws leaves the connection as it found it: foreign keys on, no transaction, triggers not standing down", async () => {
+  const { a, b } = await base({
+    extra: ["CREATE TABLE seen (what TEXT); CREATE TRIGGER seen_it AFTER INSERT ON items BEGIN INSERT INTO seen (what) VALUES (NEW.title); END;"],
+  });
   b.db.exec("INSERT INTO items (title) VALUES ('from B')");
   const bBytes = await b.bytes();
   const changes = a.changes as Any;
@@ -332,44 +334,24 @@ test("T12: an apply that throws leaves the connection as it found it: TEMP trigg
   } finally {
     changes.project = project;
   }
-  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE type = 'trigger'"), "the TEMP trigger is back").toEqual(["seen it"]);
   expect(a.db.selectValue("PRAGMA foreign_keys")).toBe(1);
   expect(a.changes.inTransaction).toBe(false);
   expect(a.db.selectValue("SELECT dai_projecting()")).toBe(0);
   expect(a.db.selectValue("SELECT count(*) FROM items WHERE title = 'from B'"), "nothing of the failed apply").toBe(0);
   a.db.exec("INSERT INTO items (title) VALUES ('mine')");
-  expect(a.db.selectValues("SELECT what FROM temp.seen"), "and the TEMP trigger runs for the application").toEqual(["mine"]);
+  expect(a.db.selectValues("SELECT what FROM seen WHERE what IN ('mine', 'from B')"), "the application's trigger runs for the application, never for the failed apply").toEqual(["mine"]);
   await a.mergeFrom(bBytes);
   expect(a.db.selectValue("SELECT count(*) FROM items WHERE title = 'from B'"), "the next merge applies it").toBe(1);
   a.close();
   b.close();
 });
 
-test("S03: a rebuild that puts the columns in another order merges by name", async () => {
-  const { a, b } = await base();
-  a.db.exec(`BEGIN;
-    CREATE TABLE items_new (note TEXT, done INTEGER NOT NULL DEFAULT 0, qty INTEGER NOT NULL DEFAULT 1, title TEXT NOT NULL, category_id INTEGER REFERENCES categories(id), id INTEGER PRIMARY KEY);
-    INSERT INTO items_new (id, category_id, title, qty, note, done) SELECT id, category_id, title, qty, note, done FROM items;
-    DROP TABLE items; ALTER TABLE items_new RENAME TO items; COMMIT;`);
-  a.db.exec("UPDATE items SET qty = 6 WHERE title = 'Tent'");
-  b.db.exec("UPDATE items SET note = 'b' WHERE title = 'Tent'");
-  expect(await both(a, b)).toBe(true);
-  expect(b.db.selectObject("SELECT qty, note FROM items WHERE title = 'Tent'")).toEqual({ qty: 6, note: "b" });
-  a.close();
-  b.close();
-});
-
-test("S04: a UNIQUE index added on one copy holds the other copy's row it refuses, flagged, both values kept", async () => {
-  const { a, b } = await base();
-  a.db.exec("UPDATE items SET note = 'same' WHERE title = 'Map'");
-  a.db.exec("CREATE UNIQUE INDEX one_note ON items (note)");
-  b.db.exec("UPDATE items SET note = 'same' WHERE title = 'Rope'");
-  await a.mergeFrom(await b.bytes());
-  expect(a.held().map((h) => h.tbl), "held, flagged").toEqual(["items"]);
-  expect(a.rows.all("SELECT count(*) AS n FROM _cs_cell WHERE tbl = 'items' AND col = 'note' AND val = 'same'")[0]!["n"], "both values kept").toBe(2);
-  a.close();
-  b.close();
-});
+/*
+ * S03 (a rebuild reordering columns) and S04 (a UNIQUE index added on one
+ * copy) are release changes under R-W: the application's schema statements
+ * are refused (`release-schema.spec.ts`), and what a release may change is
+ * Build 2's (D277, D278).
+ */
 
 test("S06: ATTACH is refused", async () => {
   const { a, b } = await base();
@@ -378,17 +360,15 @@ test("S06: ATTACH is refused", async () => {
   b.close();
 });
 
-test("S07 (D266): a TEMP table named like an application table takes none of the apply's writes", async () => {
+test("S07 (D266, R-W): a TEMP table named like an application table is refused as it is made; the apply writes main", async () => {
   const { a, b } = await base();
   b.db.exec("INSERT INTO items (title) VALUES ('from B'); UPDATE items SET qty = 3 WHERE title = 'Map';");
   const bBytes = await b.bytes();
-  a.db.exec("CREATE TEMP TABLE items (id INTEGER PRIMARY KEY, title TEXT, qty INTEGER, note TEXT, category_id INTEGER, done INTEGER)");
-  a.db.exec("INSERT INTO temp.items (title) VALUES ('scratch')");
+  refusedWith(a, "CREATE TEMP TABLE items (id INTEGER PRIMARY KEY, title TEXT, qty INTEGER, note TEXT, category_id INTEGER, done INTEGER)", /^CHANGES_REFUSED: /);
+  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema")).toEqual([]);
   await a.mergeFrom(bBytes);
-  expect(a.db.selectValues("SELECT title FROM temp.items"), "the TEMP table holds only its own").toEqual(["scratch"]);
   expect(a.db.selectValue("SELECT count(*) FROM main.items WHERE title = 'from B'")).toBe(1);
   expect(a.db.selectValue("SELECT qty FROM main.items WHERE title = 'Map'")).toBe(3);
-  expect(a.written().some((w) => w.includes("scratch")), "and none of it is logged").toBe(false);
   a.close();
   b.close();
 });
@@ -406,8 +386,8 @@ test("S09: a statement prepared before a P3 refusal is refused when it steps", a
 });
 
 test("S10/S12: VACUUM and ANALYZE log nothing and move no key; sqlite_stat1 is never captured", async () => {
-  const { a, b } = await base();
-  a.db.exec("CREATE INDEX by_title ON items (title); ANALYZE; VACUUM;");
+  const { a, b } = await base({ extra: ["CREATE INDEX by_title ON items (title)"] });
+  a.db.exec("ANALYZE; VACUUM;");
   expect(a.save(), "nothing to log").toBeNull();
   a.db.exec("UPDATE items SET qty = 8 WHERE title = 'Tent'");
   await b.mergeFrom(await a.bytes());

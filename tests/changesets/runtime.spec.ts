@@ -502,6 +502,52 @@ test.describe("the ordinary data interface, through the real runtime", () => {
       .toMatch(/^CHANGES_SAVE_REFUSED/);
     await expect(pageA.locator("#doc-note"), "the person reads the refusal's sentence").toHaveText(SAVE_REFUSED, { timeout: 30_000 });
   });
+
+  test("11. R-W: the release's own CREATE IF NOT EXISTS is a no-op; every other schema statement is refused, through exec and prepare", async ({ page }) => {
+    const app = await firstOpen(page, await build(mkdtempSync(join(tmpdir(), "dai-cs-release-"))));
+    const attempt = (text: string, how: "exec" | "prepare"): Promise<string> =>
+      app.locator("#app").evaluate(
+        (_el, [t, h]) => {
+          const db = (window as any).__db;
+          try {
+            if (h === "exec") db.exec(t);
+            else {
+              const s = db.prepare(t);
+              try {
+                s.step();
+              } finally {
+                s.finalize();
+              }
+            }
+            return "ran";
+          } catch (e) {
+            return String((e as Error).message);
+          }
+        },
+        [text, how] as const,
+      );
+    const before = await value(app, "PRAGMA schema_version");
+    for (const how of ["exec", "prepare"] as const) {
+      // As schema.sql declares them, a keyless table (given its hidden key at compile) and a trigger among them.
+      for (const text of [
+        "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)",
+        "create table if not exists events (what text);",
+        "CREATE TRIGGER IF NOT EXISTS notes_log AFTER INSERT ON notes BEGIN INSERT INTO log (note_id, what) VALUES (NEW.id, 'added'); END",
+      ]) {
+        expect(await attempt(text, how), `${how}: ${text}`).toBe("ran");
+      }
+      for (const text of [
+        "ALTER TABLE notes ADD COLUMN extra TEXT",
+        "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE scratch (x)",
+        "DROP TABLE events",
+        "CREATE TEMP TABLE scratch (x)",
+      ]) {
+        expect(await attempt(text, how), `${how}: ${text}`).toBe("CHANGES_REFUSED: This change needs a new version of the app; the current version was left unchanged.");
+      }
+    }
+    expect(await value(app, "PRAGMA schema_version"), "the schema did not move").toBe(before);
+  });
 });
 
 /** A budget written with the kit, and one listener: its amount is declared consequential. */

@@ -127,8 +127,7 @@ test("S3 other column: an edit to a different column of the pending row leaves t
 
 /** Two copies of one document whose schema is `schema`, with one row in `table` both hold. */
 async function pair(schema: string, seed: string): Promise<{ a: Copy; b: Copy }> {
-  const a = await Copy.open(await person());
-  a.db.exec(schema);
+  const a = await Copy.open(await person(), undefined, schema);
   a.db.exec(seed);
   const b = await Copy.open(await person(), await a.bytes());
   return { a, b };
@@ -348,8 +347,7 @@ test("PR9-H1: a local write during the merge's verify wait survives, as the pers
  * table's ranged id for the text-keyed table's row inserted after it.
  */
 test("PR9-H3: last_insert_rowid() after inserts into an integer-keyed then a text-keyed table returns the second row's key", async () => {
-  const c = await Copy.open(await person());
-  c.db.exec("CREATE TABLE lists (id INTEGER PRIMARY KEY, name TEXT); CREATE TABLE tags (k TEXT PRIMARY KEY, label TEXT);");
+  const c = await Copy.open(await person(), undefined, "CREATE TABLE lists (id INTEGER PRIMARY KEY, name TEXT); CREATE TABLE tags (k TEXT PRIMARY KEY, label TEXT);");
   c.db.exec("BEGIN; INSERT INTO lists (name) VALUES ('one');");
   const listId = c.db.selectValue("SELECT last_insert_rowid()");
   c.db.exec("INSERT INTO tags (k, label) VALUES ('red', 'Red')");
@@ -363,8 +361,9 @@ test("PR9-H3: last_insert_rowid() after inserts into an integer-keyed then a tex
 });
 
 test("PR9-H3: an app trigger inserting into another table leaves last_insert_rowid() on the row the statement inserted", async () => {
-  const c = await Copy.open(await person());
-  c.db.exec(
+  const c = await Copy.open(
+    await person(),
+    undefined,
     "CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT); CREATE TABLE notes (k TEXT PRIMARY KEY, what TEXT);" +
       "CREATE TRIGGER items_note AFTER INSERT ON items BEGIN INSERT INTO notes (what) VALUES ('added ' || NEW.title); END;",
   );
@@ -376,14 +375,16 @@ test("PR9-H3: an app trigger inserting into another table leaves last_insert_row
 });
 
 test("PR9-H3: a merged row does not become the application's last insert", async () => {
-  const o = await exchange((a) => {
-    a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
-  });
+  const o = await exchange(
+    (a) => {
+      a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
+    },
+    { extra: ["CREATE TABLE tags (k TEXT PRIMARY KEY)"] },
+  );
   // B's merge was its last write: it projected A's Lamp. B's next insert, into a text-keyed table, lands
   // on the hidden rowid Lamp holds in items, and must answer its own rowid, not Lamp's id.
   // Read as the runtime: the application is refused rowid on a ranged-key table (K11).
   const lampRowid = o.b.changes.trusted(() => o.b.db.selectValue("SELECT rowid FROM items WHERE title = 'Lamp'"));
-  o.b.db.exec("CREATE TABLE IF NOT EXISTS tags (k TEXT PRIMARY KEY)");
   o.b.db.exec({ sql: "INSERT INTO tags (rowid, k) VALUES (?, 'seen')", bind: [lampRowid] });
   expect(o.b.db.selectValue("SELECT last_insert_rowid()")).toBe(lampRowid);
   close(o);
@@ -406,8 +407,7 @@ async function rebuilt(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 test("PR9-H4: after a rebuild from an arrival, the author's counter starts above its own highest logged id, and a deleted id is never reused", async () => {
-  const a = await Copy.open(await person());
-  a.db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
+  const a = await Copy.open(await person(), undefined, "CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
   a.db.exec("INSERT INTO items (title) VALUES ('one'); INSERT INTO items (title) VALUES ('two'); INSERT INTO items (title) VALUES ('three');");
   const ids = a.db.selectValues("SELECT id FROM items ORDER BY id").map(Number);
   // Saved before the delete, as the frame saves after each write: the third id is logged, then deleted.
@@ -433,8 +433,7 @@ test("PR9-H4: after a rebuild from an arrival, the author's counter starts above
  * other copy and no rebuild. Such a table now carries an explicit ranged key.
  */
 test("X1: an insert into a table with no primary key reaches the log, the other copy by merge, a rebuild from the log, and the author's counter", async () => {
-  const a = await Copy.open(await person());
-  a.db.exec("CREATE TABLE marks (body TEXT)");
+  const a = await Copy.open(await person(), undefined, "CREATE TABLE marks (body TEXT); CREATE TABLE pins (at TEXT);");
   const b = await Copy.open(await person(), await a.bytes());
   a.db.exec("INSERT INTO marks (body) VALUES ('m1'); INSERT INTO marks (body) VALUES ('m2');");
   expect(a.save()?.ops, "both inserts are in the log").toBe(2);
@@ -451,8 +450,8 @@ test("X1: an insert into a table with no primary key reaches the log, the other 
   const m3 = Number(again.db.selectValue("SELECT _dai_id FROM marks WHERE body = 'm3'"));
   expect(m3, "the counter counts the keyless table's ids, the deleted one included").toBeGreaterThan(m2!);
 
-  // A table made and written in one exec has its row before the runtime gives it a key: it is logged too.
-  again.db.exec("CREATE TABLE pins (at TEXT); INSERT INTO pins (at) VALUES ('first');");
+  // A second keyless table of the release, written after the rebuild: logged too.
+  again.db.exec("INSERT INTO pins (at) VALUES ('first')");
   expect(again.save()?.ops, "the m3 insert and the pin").toBe(2);
   const later = await Copy.open(again.author, await rebuilt(await again.bytes()));
   expect(later.db.selectValues("SELECT at FROM pins"), "a rebuild from the log has the pin").toEqual(["first"]);
@@ -468,8 +467,7 @@ test("X1: an insert into a table with no primary key reaches the log, the other 
  * then by an error in the log write itself.
  */
 test("1b-H2(a): a save that fails leaves the capture intact, and the next save logs everything since the last one that succeeded", async () => {
-  const a = await Copy.open(await person());
-  a.db.exec("CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);");
+  const a = await Copy.open(await person(), undefined, "CREATE TABLE places (id INTEGER PRIMARY KEY, lat REAL, lng REAL); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);");
   a.db.exec("INSERT INTO places (lat, lng) VALUES (0, 0)");
   a.save();
   const b = await Copy.open(await person(), await a.bytes());
@@ -555,8 +553,7 @@ test("1b-H1: last_insert_rowid() equals native SQLite's at every step, but for t
     return { c, native, step };
   };
 
-  const a = await Copy.open(await person());
-  a.db.exec(SCHEMA_H1);
+  const a = await Copy.open(await person(), undefined, SCHEMA_H1);
   const b = await Copy.open(await person(), await a.bytes());
   const A = await pair(a);
   A.step("INSERT INTO settings (label) VALUES ('S1')", "settings", "insert");

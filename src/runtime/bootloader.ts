@@ -1233,7 +1233,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     settleReplica(rows);
     const author = mountReplica ?? (db.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0]?.id as Uint8Array | undefined);
     if (!(author instanceof Uint8Array)) return;
-    const started: Any = new merge.Changes(sqlite3, db, { author, rawExec });
+    // The release's schema, as this document declares it and as runDocumentSql ran it (R-W).
+    const schema = (Array.from(document.querySelectorAll('script[type="application/sql"]')) as HTMLScriptElement[])
+      .filter((b) => b.getAttribute("data-dai") === "schema")
+      .map((b) => b.textContent || "")
+      .join(";\n");
+    const started: Any = new merge.Changes(sqlite3, db, { author, rawExec, schema });
     changes = started;
     started.watch(db);
     // A copy that arrived, or one rebuilt from another's log, is filled from what was admitted.
