@@ -229,9 +229,28 @@ def apply_log(db: sqlite3.Connection) -> None:
     tables = app_tables(db)
     keys = {t: keys_of(db, t) for t in tables}
 
+    fold_cache: dict[str, object] = {}
+
     def folds(table: str):
-        """Each key column's text, as its collation compares it (1d-H5); None where none folds."""
-        return None
+        """Each key column's text, as its collation compares it (1d-H5): NOCASE folds
+        ASCII letters, RTRIM drops trailing spaces. None where no key column folds."""
+        if table not in fold_cache:
+            index = db.execute(f"SELECT name FROM pragma_index_list({sql_text(table)}) WHERE origin = 'pk'").fetchone()
+            colls = {}
+            if index:
+                colls = {r[0]: str(r[1]).upper() for r in db.execute(f"SELECT name, coll FROM pragma_index_xinfo({sql_text(index[0])}) WHERE key = 1")}
+            pk_cols = keys[table][1] if table in keys else []
+
+            def fold_of(coll: str):
+                if coll == "NOCASE":
+                    return lambda s: "".join(ch.lower() if "A" <= ch <= "Z" else ch for ch in s)
+                if coll == "RTRIM":
+                    return lambda s: s.rstrip(" ")
+                return None
+
+            found = [fold_of(colls.get(c, "BINARY")) for c in pk_cols]
+            fold_cache[table] = found if any(found) else None
+        return fold_cache[table]
     for t in tables:
         db.execute(f"DELETE FROM {q(t)}")
 
@@ -334,6 +353,16 @@ def apply_log(db: sqlite3.Connection) -> None:
         born = birth(table, pk)
         return key_values(spell.get((table, pk, born[2]), pk) if born else pk)
 
+    def respells(table: str) -> bool:
+        """Whether one key can be held under two spellings: a folding collation, or a key column with no type."""
+        pk_cols = keys[table][1]
+        types = {r[0]: str(r[1]).upper() for r in db.execute(f"SELECT name, type FROM pragma_table_info({sql_text(table)})")}
+
+        def untyped(t: str) -> bool:
+            return not any(w in t for w in ("INT", "CHAR", "CLOB", "TEXT", "REAL", "FLOA", "DOUB")) and (t == "" or "BLOB" in t)
+
+        return any(untyped(types.get(c, "")) for c in pk_cols) or any(folds(table) or [])
+
     def where(table: str) -> str:
         return " AND ".join(f"{q(c)} IS ?" for c in keys[table][1])
 
@@ -349,7 +378,7 @@ def apply_log(db: sqlite3.Connection) -> None:
             db.execute(f"INSERT INTO {q(table)} ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", k + [values[c] for c in data])
             return
         cols = pk_cols + data
-        respell = key_spelling(k) != key_text(k) or any(folds(table) or [])
+        respell = respells(table)
         update = ", ".join(f"{q(c)} = excluded.{q(c)}" for c in (pk_cols if respell else []) + data)
         db.execute(
             f"INSERT INTO {q(table)} ({', '.join(q(c) for c in cols)}) VALUES ({', '.join('?' for _ in cols)}) "

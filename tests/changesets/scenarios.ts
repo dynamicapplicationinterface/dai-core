@@ -229,6 +229,18 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("UPDATE vals SET v = 2.0 WHERE id = 1; INSERT INTO keyed (k, v) VALUES (x'00', 'b-blob'), (1e300, 'b-real'), (1.5e-7, 'b-small');");
     },
   },
+  // The catalog's M16 (1d-H5): keys equal under their collation, or across storage classes, are one row.
+  "M16 key collations": {
+    extra: [
+      `CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT);
+       CREATE TABLE tags (code TEXT PRIMARY KEY COLLATE RTRIM, label TEXT);
+       CREATE TABLE nums (k PRIMARY KEY, v TEXT);`,
+    ],
+    write: (a, b) => {
+      a.db.exec("INSERT INTO people (email, name) VALUES ('Bob@x', 'from A'), ('Ann@x', 'A only'); INSERT INTO tags (code, label) VALUES ('red', 'A'); INSERT INTO nums (k, v) VALUES (1, 'A');");
+      b.db.exec("INSERT INTO people (email, name) VALUES ('bob@x', 'from B'); INSERT INTO tags (code, label) VALUES ('red  ', 'B'); INSERT INTO nums (k, v) VALUES (1.0, 'B');");
+    },
+  },
   // The catalog's M06: one transaction over two rows, one of which becomes pending.
   "M06 effect group": {
     extra: [

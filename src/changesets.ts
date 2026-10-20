@@ -157,6 +157,17 @@ function keyPart(v: unknown, exact: boolean, fold: ((s: string) => string) | nul
   return p;
 }
 
+/**
+ * Text as a collation compares it, for a key's identity (1d-H5): NOCASE folds
+ * ASCII letters only, as SQLite's own does, and RTRIM drops trailing spaces.
+ * Any other collation compares the text as written.
+ */
+function folding(coll: string, s: string): string {
+  if (coll === "NOCASE") return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+  if (coll === "RTRIM") return s.replace(/ +$/, "");
+  return s;
+}
+
 /** The key values `keyText` or `keySpelling` wrote, each in its own storage class. */
 export function keyValues(text: string): unknown[] {
   return JSON.parse(text, (_k, v) => {
@@ -488,6 +499,7 @@ export function stageChangeFunctions(db: Any): void {
     { arity: 1, deterministic: false },
   );
   db.createFunction("dai_uuid", () => crypto.randomUUID(), { arity: 0, deterministic: false });
+  db.createFunction("dai_key", (_c: unknown, _t: unknown, ...k: unknown[]) => keyText(k), { arity: -1, deterministic: false });
   db.createFunction("dai_projecting", () => 0, { arity: 0, deterministic: false });
   db.createFunction("dai_inserted", () => null, { arity: 2, deterministic: false });
   db.createFunction("dai_enter", () => null, { arity: 0, deterministic: false });
@@ -547,6 +559,8 @@ export class Changes {
   private readonly unsettled = new Set<string>();
   /** Tables whose flagged and held rows are decided again at the next apply: a rename here may place them now. */
   private readonly redecide = new Set<string>();
+  /** Each table's key collations (`keyCollations`). */
+  private readonly collCache = new Map<string, string[]>();
   /** The renames this copy made, as `here` reads them. */
   private readonly shapeCache = new Map<string, string>();
   private readonly exec: (sql: Any) => unknown;
@@ -572,6 +586,8 @@ export class Changes {
     const capi = sqlite3.capi;
     db.createFunction("dai_id", () => this.nextId(), { arity: 1, deterministic: false });
     db.createFunction("dai_uuid", () => crypto.randomUUID(), { arity: 0, deterministic: false });
+    // A row's identity, as the runtime's tables key it: what the kit's query views compare a row with its flags by (1d-H5).
+    db.createFunction("dai_key", (_c: unknown, t: unknown, ...k: unknown[]) => this.identity(String(t), k), { arity: -1, deterministic: false });
     // 1 while the runtime applies merged rows: the application's own triggers stand down.
     db.createFunction("dai_projecting", () => (this.projecting ? 1 : 0), { arity: 0, deterministic: false });
     db.createFunction(
@@ -899,6 +915,7 @@ export class Changes {
     }
     this.shapeCache.clear();
     this.keysCache.clear();
+    this.collCache.clear();
     this.declaredCache.clear();
     this.capture.schemaChanged();
   }
@@ -1070,6 +1087,7 @@ export class Changes {
     this.refuseNullKeys();
     this.guardTriggers();
     this.keysCache.clear();
+    this.collCache.clear();
     this.declaredCache.clear();
     this.settleViews();
     this.capture?.schemaChanged();
@@ -1228,7 +1246,7 @@ export class Changes {
       const key = keys.pk.map(q).join(", ");
       want.set(
         table,
-        `SELECT * FROM main.${q(table)} WHERE json_array(${key}) NOT IN (SELECT f.pk FROM main._cs_flag f, json_each(f.detail) j ` +
+        `SELECT * FROM main.${q(table)} WHERE dai_key(${sqlText(table)}, ${key}) NOT IN (SELECT f.pk FROM main._cs_flag f, json_each(f.detail) j ` +
           `WHERE f.tbl = ${sqlText(table)} AND f.kind = 'pending' AND json_extract(j.value, '$.col') IN (${cols.map(sqlText).join(", ")}))`,
       );
     }
@@ -1755,12 +1773,44 @@ export class Changes {
    * for one row have one identity, and every copy reads it the same.
    */
   private identity(table: string, k: unknown[]): string {
-    return keyText(k);
+    const colls = this.keyCollations(table);
+    return keyText(k, colls.some((c) => c !== "BINARY") ? (s, i) => folding(colls[i] ?? "BINARY", s) : null);
   }
 
-  /** Whether a key column of the table compares text in a collation that folds it (NOCASE, RTRIM). */
-  private folds(_table: string): boolean {
-    return false;
+  /**
+   * Whether one key of this table can be held under two spellings: a key
+   * column whose collation folds text (NOCASE, RTRIM), or one with no type,
+   * where a REAL 1.0 and an INTEGER 1 are one key (every other affinity
+   * converts one to the other as it stores). A row written there takes the
+   * spelling it was born with, key and all.
+   */
+  private respells(table: string): boolean {
+    const keys = this.keysOf(table)?.pk ?? [];
+    const untyped = keys.some((c) => {
+      const type = String(this.db.selectValue("SELECT type FROM pragma_table_info(?) WHERE name = ?", [table, c]) ?? "").toUpperCase();
+      return !/INT|CHAR|CLOB|TEXT|REAL|FLOA|DOUB/.test(type) && (type === "" || type.includes("BLOB"));
+    });
+    return untyped || this.keyCollations(table).some((c) => c !== "BINARY");
+  }
+
+  /**
+   * Each key column's collation, as SQLite reports it for the table's key
+   * index (`pragma_index_xinfo`): BINARY where there is none (a rowid key).
+   */
+  private keyCollations(table: string): string[] {
+    let colls = this.collCache.get(table);
+    if (!colls) {
+      const keys = this.keysOf(table)?.pk ?? [];
+      const index = this.db.selectValue("SELECT name FROM pragma_index_list(?) WHERE origin = 'pk'", [table]) as string | undefined;
+      const by = new Map<string, string>(
+        index
+          ? (this.db.selectObjects("SELECT name, coll FROM pragma_index_xinfo(?) WHERE key = 1", [index]) as Any[]).map((r) => [String(r.name), String(r.coll).toUpperCase()])
+          : [],
+      );
+      colls = keys.map((c) => by.get(c) ?? "BINARY");
+      this.collCache.set(table, colls);
+    }
+    return colls;
   }
 
   private flag(table: string, pk: string, kind: FlagKind, detail: unknown): void {
@@ -1861,7 +1911,7 @@ export class Changes {
     const data = Object.keys(values).filter((c) => !keys.pk.includes(c) && !this.droppedHere(table, c));
     const cols = [...keys.pk, ...data];
     const vals = [...k, ...data.map((c) => values[c] ?? null)].map(bound);
-    const respell = keySpelling(k) !== keyText(k) || this.folds(table);
+    const respell = this.respells(table);
     const update = [...(respell ? keys.pk : []), ...data].map((c) => `${q(c)} = excluded.${q(c)}`).join(", ");
     this.rows.run(
       `INSERT INTO main.${q(table)} (${cols.map(q).join(", ")}) VALUES (${vals.map((v) => v.at).join(", ")}) ON CONFLICT (${keys.pk.map(q).join(", ")}) DO ${update ? `UPDATE SET ${update}` : "NOTHING"}`,

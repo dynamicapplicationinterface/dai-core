@@ -272,6 +272,61 @@ test("1d-H4: NULL, INTEGER, REAL, TEXT and BLOB travel exactly, as values and as
   b.close();
 });
 
+/**
+ * 1d-H5 (catalog M16). Two keys SQLite takes for one row are one row on
+ * every copy: under the key column's collation (NOCASE, RTRIM), and across
+ * storage classes (a REAL 1.0 is the INTEGER 1). Each copy wrote its own
+ * spelling concurrently; after the exchange both show one row, under the
+ * spelling the earlier-born version wrote, with the two values of the other
+ * column a pending conflict, never each copy showing the other's.
+ */
+test("1d-H5: keys equal under the key's collation are one row, under one spelling, on every copy", async () => {
+  const { a, b } = await base({
+    extra: [
+      `CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT);
+       CREATE TABLE tags (code TEXT PRIMARY KEY COLLATE RTRIM, label TEXT);
+       CREATE TABLE pairs (x TEXT COLLATE NOCASE, y INTEGER, v TEXT, PRIMARY KEY (x, y));
+       CREATE TABLE nums (k PRIMARY KEY, v TEXT);`,
+    ],
+  });
+  a.db.exec("INSERT INTO people (email, name) VALUES ('Bob@x', 'from A'); INSERT INTO tags (code, label) VALUES ('red', 'A');");
+  a.db.exec("INSERT INTO pairs (x, y, v) VALUES ('Key', 1, 'A'); INSERT INTO nums (k, v) VALUES (1, 'A');");
+  b.db.exec("INSERT INTO people (email, name) VALUES ('bob@x', 'from B'); INSERT INTO tags (code, label) VALUES ('red  ', 'B');");
+  b.db.exec("INSERT INTO pairs (x, y, v) VALUES ('KEY', 1, 'B'); INSERT INTO nums (k, v) VALUES (1.0, 'B');");
+  const aBytes = await a.bytes();
+  const bBytes = await b.bytes();
+  await a.mergeFrom(bBytes);
+  await b.mergeFrom(aBytes);
+  for (const [table, key] of [["people", "email"], ["tags", "code"], ["pairs", "x"], ["nums", "k"]] as const) {
+    const rows = (c: Copy): unknown => c.db.selectArrays(`SELECT hex(${key}), typeof(${key}) FROM ${table}`);
+    expect((rows(a) as unknown[]).length, `${table}: one row on A`).toBe(1);
+    expect(rows(b), `${table}: the same row, the same spelling, on B`).toEqual(rows(a));
+    expect(a.flags().filter((f) => f.tbl === table).map((f) => f.kind), `${table}: the two values are a pending conflict`).toEqual(["pending"]);
+  }
+  expect(a.state(), "the copies converge").toBe(b.state());
+  a.close();
+  b.close();
+
+  // Which spelling is born first follows the authors' order, which is random. Each case is run until it
+  // has been seen: the INTEGER born first, a copy holding the REAL, and the other way round.
+  const seen = new Set<string>();
+  for (let run = 0; run < 24 && seen.size < 2; run++) {
+    const { a, b } = await base({ extra: ["CREATE TABLE nums (k PRIMARY KEY, v TEXT)"] });
+    a.db.exec("INSERT INTO nums (k, v) VALUES (1, 'A')");
+    b.db.exec("INSERT INTO nums (k, v) VALUES (1.0, 'B')");
+    const [ab, bb] = [await a.bytes(), await b.bytes()];
+    await a.mergeFrom(bb);
+    await b.mergeFrom(ab);
+    const born = a.db.selectValue("SELECT author FROM _cs_cell WHERE tbl = 'nums' AND col = '' AND val = 1 ORDER BY lc, author, ver LIMIT 1");
+    const want = born === a.changes.authorHex ? "integer" : "real";
+    seen.add(want);
+    expect([a.db.selectValue("SELECT typeof(k) FROM nums"), b.db.selectValue("SELECT typeof(k) FROM nums")], `born ${want}: both copies`).toEqual([want, want]);
+    a.close();
+    b.close();
+  }
+  expect([...seen].sort(), "both birth orders were run").toEqual(["integer", "real"]);
+});
+
 /** 1d-H2, the key half (catalog K10). A key above 2^53 is carried exactly, as a save, a merge and a later edit. */
 test("1d-H2: an integer key above 2^53 is saved, merged and edited exactly", async () => {
   const { a, b } = await base();
