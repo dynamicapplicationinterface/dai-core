@@ -102,7 +102,30 @@ CREATE TABLE IF NOT EXISTS _cs_held (tbl TEXT NOT NULL, pk TEXT NOT NULL, reason
 CREATE TABLE IF NOT EXISTS _cs_keys (tbl TEXT PRIMARY KEY, kind TEXT NOT NULL, pk TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_settle (tbl TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS _cs_spell (tbl TEXT NOT NULL, pk TEXT NOT NULL, ver TEXT NOT NULL, k TEXT NOT NULL, PRIMARY KEY (tbl, pk, ver)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS _cs_shown (tbl TEXT NOT NULL, pk TEXT NOT NULL, col TEXT NOT NULL, ver TEXT NOT NULL, PRIMARY KEY (tbl, pk, col)) WITHOUT ROWID;
 `;
+
+/**
+ * What a resolution is refused with (R-X §4, §5), as the application reads it:
+ * `CHANGES_REFUSED: <sentence>`.
+ */
+export const RESOLVE_REFUSED = {
+  unit: "A resolution names one whole unit: a column, or every column of its coupled group.",
+  token: "This conflict is no longer the one shown: show it again, and choose from what it shows.",
+  choice: "Choose one of the values the conflict showed.",
+  transaction: "Resolve a conflict outside a transaction: a resolution is saved as it is made.",
+} as const;
+
+/** An observation the runtime issued (R-X §4): one unit as it showed, and the alternatives presented. Never expanded. */
+interface Observation {
+  table: string;
+  pk: string;
+  /** The unit's columns; [""] is the row's existence. */
+  unit: string[];
+  /** The version(s) the displayed value came from: the resolution's basis. */
+  basis: string[];
+  alternatives: { ver: string; values: Record<string, unknown> }[];
+}
 
 /** The flags a row can carry, as `_cs_flag.kind` holds them. */
 export type FlagKind = "pending" | "delete-conflict" | "kept-referenced" | "held" | "orphan";
@@ -114,8 +137,14 @@ interface Keys {
   pk: string[];
 }
 
-/** A captured row change, as it travels: [table, key values, op, new, old, bases, seen]. */
-type Op = [string, unknown[], "I" | "U" | "D", Map<string, unknown>, Map<string, unknown>, Map<string, string[]>, string[]];
+/**
+ * A captured row change, as it travels: [table, key values, op, new, old,
+ * bases, seen, resolves?]. `resolves` is present only on a resolution (R-X):
+ * per column, the alternatives it explicitly accepted or rejected.
+ */
+type Op =
+  | [string, unknown[], "I" | "U" | "D", Map<string, unknown>, Map<string, unknown>, Map<string, string[]>, string[]]
+  | [string, unknown[], "I" | "U" | "D", Map<string, unknown>, Map<string, unknown>, Map<string, string[]>, string[], Map<string, string[]>];
 
 const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s: string): Uint8Array => Uint8Array.from(s.match(/../g) ?? [], (x) => parseInt(x, 16));
@@ -606,6 +635,8 @@ export class Changes {
   private readonly appStatements = new Set<Any>();
   /** How deep `place` is in making room for a row (M04): a ring of moves ends, its last row decided as before. */
   private roomDepth = 0;
+  /** The observations issued and not yet used, by token (R-X §4). */
+  private readonly observations = new Map<string, Observation>();
   /** Rows the runtime wrote on this connection, and the application's last statement's count (D08). */
   private runtimeChanges = 0;
   private runtimeWrote = false;
@@ -1484,6 +1515,12 @@ export class Changes {
           const row = createEntity(this.rows, CHANGES_LOG, entity, { payload });
           const ver = `${this.authorHex}:${row._r_seq}`;
           const touched = this.ingest(payloadOps, ver, Number(row._r_lc), this.authorHex);
+          // What this save wrote is what the row shows, until a projection decides it again (`_cs_shown`).
+          for (const [t, k, code, n] of payloadOps) {
+            const pk = this.identity(t, k);
+            if (code === "D") this.shownAs(t, pk, null);
+            else for (const c of n.keys()) if (c !== "") this.runCached("INSERT OR REPLACE INTO _cs_shown (tbl, pk, col, ver) VALUES (?, ?, ?, ?)", [t, pk, c, ver]);
+          }
           // A save over a flagged or held row may have resolved it: decide it again.
           const marked = touched.filter(
             ([t, pk]) =>
@@ -1678,7 +1715,7 @@ export class Changes {
   /** Records one changeset's versions. Grow-only, so the order changesets arrive in does not matter. */
   private ingest(ops: Op[], ver: string, lc: number, author: string): [string, string][] {
     const touched: [string, string][] = [];
-    for (const [table, k, , n, , b, seen] of ops) {
+    for (const [table, k, , n, , b, seen, r] of ops) {
       const pk = this.identity(table, k);
       // Any author's id in this author's range raises the counter, not only its own (K06, K07).
       this.counterAbove(table, k);
@@ -1701,6 +1738,8 @@ export class Changes {
         ]);
       }
       for (const [c, vers] of b) for (const v of vers) this.runCached("INSERT OR IGNORE INTO _cs_sup (tbl, pk, col, ver) VALUES (?, ?, ?, ?)", [table, pk, c, v]);
+      // A resolution supersedes exactly the alternatives it names, and no other (R-X §4).
+      if (r) for (const [c, vers] of r) for (const v of vers) this.runCached("INSERT OR IGNORE INTO _cs_sup (tbl, pk, col, ver) VALUES (?, ?, ?, ?)", [table, pk, c, v]);
       for (const v of seen) this.runCached("INSERT OR IGNORE INTO _cs_seen (tbl, pk, del, ver) VALUES (?, ?, ?, ?)", [table, pk, ver, v]);
       touched.push([table, pk]);
     }
@@ -1860,17 +1899,19 @@ export class Changes {
     for (let n = 1; n <= versions.length; n++) {
       const aside = new Set(versions.slice(0, n).map((h: Any) => h.ver));
       const values = { ...state.values };
+      const vers = versOf(state);
       const entries: Any[] = [];
       for (const [col, h] of Object.entries(state.shownBy)) {
         if (!aside.has(h.ver)) continue;
         const before = cells.filter((c) => c.col === col && !aside.has(c.ver)).sort(later)[0];
         if (!before) continue;
         values[col] = typed(before.t, before.val);
+        vers[col] = String(before.ver);
         entries.push({ col, constraint: reason, values: [{ ver: h.ver, val: shown(h.val) }, { ver: before.ver, val: shown(before.val) }] });
       }
       if (entries.length === 0) continue;
       try {
-        this.write(table, keys, k, values);
+        this.write(table, keys, k, values, vers);
       } catch {
         continue;
       }
@@ -2026,7 +2067,7 @@ export class Changes {
    * rewritten too, so a row another copy wrote first under another spelling
    * shows the same on every copy (1d-H5).
    */
-  private write(table: string, keys: Keys, k: unknown[], values: Record<string, unknown>): void {
+  private write(table: string, keys: Keys, k: unknown[], values: Record<string, unknown>, vers: Record<string, string>): void {
     const data = Object.keys(values).filter((c) => !keys.pk.includes(c));
     const cols = [...keys.pk, ...data];
     const vals = [...k, ...data.map((c) => values[c] ?? null)].map(bound);
@@ -2036,6 +2077,24 @@ export class Changes {
       `INSERT INTO main.${q(table)} (${cols.map(q).join(", ")}) VALUES (${vals.map((v) => v.at).join(", ")}) ON CONFLICT (${keys.pk.map(q).join(", ")}) DO ${update ? `UPDATE SET ${update}` : "NOTHING"}`,
       vals.map((v) => v.value),
     );
+    this.shownAs(table, this.identity(table, k), vers);
+  }
+
+  /**
+   * The version each value a row shows came from, as projection wrote it, or
+   * a save (R-X): what an edit is based on and what an observation shows.
+   * Null: the row shows nothing.
+   */
+  private shownAs(table: string, pk: string, vers: Record<string, string> | null): void {
+    this.runCached("DELETE FROM _cs_shown WHERE tbl = ? AND pk = ?", [table, pk]);
+    for (const [c, v] of Object.entries(vers ?? {})) this.runCached("INSERT INTO _cs_shown (tbl, pk, col, ver) VALUES (?, ?, ?, ?)", [table, pk, c, v]);
+  }
+
+  /** The version a shown value came from: as recorded, else (a row projected before `_cs_shown`) its column's later head. */
+  private shownVersion(table: string, pk: string, col: string): string | null {
+    const v = this.db.selectValue("SELECT ver FROM _cs_shown WHERE tbl = ? AND pk = ? AND col = ?", [table, pk, col]);
+    if (v != null) return String(v);
+    return (this.stateOf(table, pk)?.shownBy[col]?.ver as string | undefined) ?? null;
   }
 
   /**
@@ -2067,12 +2126,13 @@ export class Changes {
     const at = keyValues(pk).map(compared);
     if (state.deleted && !force) {
       this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, at);
+      this.shownAs(table, pk, null);
       return;
     }
     if (state.contested) this.flag(table, pk, "delete-conflict", null);
     if (state.pending.length) this.flag(table, pk, "pending", state.pending);
     try {
-      this.write(table, keys, k, state.values);
+      this.write(table, keys, k, state.values, versOf(state));
     } catch (e) {
       const message = String((e as Error).message);
       if (/UNIQUE/.test(message)) {
@@ -2096,7 +2156,7 @@ export class Changes {
             this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(found.pk).map(compared));
             let wrote = true;
             try {
-              this.write(table, keys, k, state.values);
+              this.write(table, keys, k, state.values, versOf(state));
             } catch {
               wrote = false;
             }
@@ -2113,7 +2173,7 @@ export class Changes {
           if (earlier(mine, theirs)) {
             this.hold(table, occupant, `UNIQUE: ${pk} holds the slot`, this.stateOf(table, occupant)?.values ?? {});
             this.rows.run(`DELETE FROM main.${q(table)} WHERE ${this.whereKey(table)}`, keyValues(occupant).map(compared));
-            this.write(table, keys, k, state.values);
+            this.write(table, keys, k, state.values, versOf(state));
             return;
           }
           this.hold(table, pk, `UNIQUE: ${occupant} holds the slot`, state.values);
@@ -2134,6 +2194,7 @@ export class Changes {
       JSON.stringify(values, (_k, v) => (v instanceof Uint8Array || v instanceof Float64 || typeof v === "bigint" ? shown(v) : v)),
     ]);
     this.flag(table, pk, "held", reason);
+    this.shownAs(table, pk, null);
   }
 
   /** The other row holding a UNIQUE slot this row's values want. */
@@ -2231,6 +2292,148 @@ export class Changes {
 
   held(): { tbl: string; pk: string; reason: string; row: string }[] {
     return this.db.selectObjects("SELECT tbl, pk, reason, row FROM _cs_held ORDER BY tbl, pk") as Any[];
+  }
+
+  /* ------------------------------------------------------------ resolution */
+
+  /**
+   * One unit's conflict, observed (R-X §4): the value it shows, where that
+   * value came from, and the alternatives presented, under an opaque token
+   * the resolution names. A unit is one column, or a coupled group's every
+   * column (§5); `[]` is the row's existence, contested by a delete. Null
+   * when the unit has nothing to resolve. The token is never expanded: an
+   * alternative that arrives after it stays unresolved.
+   */
+  observe(table: string, key: unknown[], unit: string[]): { token: string; unit: string[]; shown: string | null; alternatives: { ver: string; values: Record<string, unknown> }[] } | null {
+    return this.trusted(() => {
+      const keys = this.keysOf(table);
+      if (!keys) throw new Error(`CHANGES_REFUSED: ${RESOLVE_REFUSED.unit}`);
+      const pk = this.identity(table, key);
+      const cols = this.unitOf(table, keys, unit);
+      const state = this.stateOf(table, pk);
+      if (!state || state.deleted) return null;
+      let o: Observation;
+      if (cols[0] === "") {
+        if (!state.contested) return null;
+        // The delete versions, and the versions that kept the row: data its deletes never saw.
+        const exists = this.cellHeads(table, pk, [""]);
+        const dels = exists.filter((h) => Number(h.val) === 0).map((h) => String(h.ver));
+        const saw = new Set(
+          this.db.selectValues(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [table, pk, ...dels]) as string[],
+        );
+        const kept = [...new Set(this.cellHeads(table, pk, null).map((h) => String(h.ver)).filter((v) => !saw.has(v)))].sort();
+        o = {
+          table,
+          pk,
+          unit: [""],
+          basis: exists.filter((h) => Number(h.val) === 1).map((h) => String(h.ver)).sort(),
+          alternatives: [...dels.sort().map((ver) => ({ ver, values: { "": 0 } })), ...kept.map((ver) => ({ ver, values: { "": 1 } }))],
+        };
+      } else {
+        const heads = this.cellHeads(table, pk, cols);
+        const vers = [...new Set(heads.map((h) => String(h.ver)))].sort();
+        if (vers.length < 2) return null;
+        const alternatives = vers.map((ver) => ({
+          ver,
+          values: Object.fromEntries(cols.map((c) => {
+            const cell = this.db.selectObject("SELECT val, typeof(val) AS t FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, ver]) as Any;
+            return [c, cell ? typed(cell.t, cell.val) : state.values[c] ?? null];
+          })),
+        }));
+        const basis = this.shownVersion(table, pk, cols[0]!);
+        o = { table, pk, unit: cols, basis: basis ? [basis] : [], alternatives };
+      }
+      const token = crypto.randomUUID();
+      this.observations.set(token, o);
+      return {
+        token,
+        unit: unit.slice(),
+        shown: o.basis[0] ?? null,
+        alternatives: o.alternatives.map((a) => ({ ver: a.ver, values: Object.fromEntries(Object.entries(a.values).map(([c, v]) => [c, shown(v)])) })),
+      };
+    });
+  }
+
+  /**
+   * Keeps or chooses one of an observation's alternatives (R-X §4): a signed
+   * resolution, logged as it is made, though no byte changes. It binds the
+   * observed basis and resolves exactly the alternatives presented. Choosing
+   * a delete of a contested row deletes it; anything else writes the chosen
+   * value, whole (a coupled group's every column). The application's own
+   * changes are saved first, as their own batch.
+   */
+  resolve(token: string, choice: string): SavedChanges {
+    const o = this.observations.get(token);
+    if (!o) throw new Error(`CHANGES_REFUSED: ${RESOLVE_REFUSED.token}`);
+    const chosen = o.alternatives.find((a) => a.ver === choice);
+    if (!chosen) throw new Error(`CHANGES_REFUSED: ${RESOLVE_REFUSED.choice}`);
+    if (this.refusal) throw new Error(`CHANGES_SAVE_REFUSED: ${this.refusal}`);
+    if (this.inTransaction) throw new Error(`CHANGES_REFUSED: ${RESOLVE_REFUSED.transaction}`);
+    this.save();
+    const saved = this.trusted(() => this.resolving(o, chosen.values));
+    this.observations.delete(token);
+    return saved;
+  }
+
+  private resolving(o: Observation, values: Record<string, unknown>): SavedChanges {
+    const k = this.spellingOf(o.table, o.pk, this.stateOf(o.table, o.pk)?.values ?? {});
+    const deleting = values[""] === 0;
+    const n = new Map<string, unknown>(Object.entries(values));
+    const bases = new Map<string, string[]>(o.unit.map((c) => [c, o.basis.slice()]));
+    const resolves = new Map<string, string[]>(o.unit.map((c) => [c, o.alternatives.filter((a) => c !== "" || a.values[""] === 0).map((a) => a.ver)]));
+    // A delete chosen sees what the presented deletes saw and the versions that kept the row, and no other.
+    const dels = o.alternatives.filter((a) => a.values[""] === 0).map((a) => a.ver);
+    const seen = deleting
+      ? [
+          ...new Set([
+            ...(this.db.selectValues(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [o.table, o.pk, ...dels]) as string[]),
+            ...o.alternatives.filter((a) => a.values[""] === 1).map((a) => a.ver),
+          ]),
+        ].sort()
+      : [];
+    const op: Op = [o.table, k, deleting ? "D" : "U", n, new Map(), bases, seen, resolves];
+    const payload = cborEncode([1, [op] as unknown as CborValue[]] as CborValue);
+    const fk = Number(this.db.selectValue("PRAGMA foreign_keys")) === 1;
+    if (fk) this.exec("PRAGMA foreign_keys = OFF");
+    try {
+      this.exec("SAVEPOINT cs_resolve");
+      try {
+        const row = createEntity(this.rows, CHANGES_LOG, crypto.getRandomValues(new Uint8Array(16)), { payload });
+        const ver = `${this.authorHex}:${row._r_seq}`;
+        const touched = this.ingest([op], ver, Number(row._r_lc), this.authorHex);
+        this.withoutCapture(() => this.project(touched));
+        this.exec("RELEASE cs_resolve");
+        return { ver, ops: 1, bytes: payload.length };
+      } catch (e) {
+        this.exec("ROLLBACK TO cs_resolve");
+        this.exec("RELEASE cs_resolve");
+        throw e;
+      }
+    } finally {
+      if (fk) this.exec("PRAGMA foreign_keys = ON");
+    }
+  }
+
+  /** A unit's columns, whole (R-X §5): one column, or every column of its coupled group; `[]`, the row's existence. */
+  private unitOf(table: string, keys: Keys, unit: string[]): string[] {
+    if (unit.length === 0) return [""];
+    const columns = new Set(this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main')", [table]) as string[]);
+    const cols = [...new Set(unit)];
+    const group = this.declaredOf(table).coupled.find((g) => g.includes(cols[0]!));
+    const whole = group ? cols.length === group.length && group.every((c) => cols.includes(c)) : cols.length === 1;
+    // A key column is a unit only where its spelling is a value (1e-H3).
+    const keyed = cols.some((c) => keys.pk.includes(c)) && !this.respells(table);
+    if (!whole || keyed || cols.some((c) => !columns.has(c))) throw new Error(`CHANGES_REFUSED: ${RESOLVE_REFUSED.unit}`);
+    return group ? group.slice() : cols;
+  }
+
+  /** The current versions of a row's cells, for the columns named (null: every data column). */
+  private cellHeads(table: string, pk: string, cols: string[] | null): { col: string; ver: string; val: unknown }[] {
+    const all = this.db.selectObjects(
+      "SELECT col, ver, val FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY col, ver",
+      [table, pk],
+    ) as Any[];
+    return all.filter((h) => (cols ? cols.includes(h.col) : h.col !== ""));
   }
 
   close(): void {
@@ -2448,6 +2651,10 @@ function runtimeObjects(sqlite3: Any): { triggers: Map<string, string>; views: M
   }
   return ownObjects;
 }
+
+/** The version each column a row's state shows came from (`_cs_shown`). */
+const versOf = (state: { shownBy: Record<string, Any> }): Record<string, string> =>
+  Object.fromEntries(Object.entries(state.shownBy).map(([c, h]) => [c, String(h.ver)]));
 
 /** The later version first, by (lc, author, ver): the order a column's shown value is chosen in. */
 function later(a: Any, b: Any): number {

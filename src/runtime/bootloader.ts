@@ -3118,6 +3118,19 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     // Two arguments only: which seals a save carries is the runtime's to say.
     saveState: (bytes?: Uint8Array | null, options?: Any) => saveState(bytes, options),
     /*
+     * A conflict, observed and resolved (R-X). `conflict` observes one unit of
+     * a row and issues the token; `resolve` keeps or chooses one of the
+     * alternatives it presented, logged as it is made, and the save follows
+     * as a write's does. A document with no data interface has neither.
+     */
+    conflict: (table: string, key: unknown[], unit: string[] = []) => (changes ? changes.observe(table, key, unit) : null),
+    resolve: (token: string, choice: string) => {
+      if (!changes) throw new Error("CHANGES_REFUSED: This document keeps no changes to resolve.");
+      const saved = changes.resolve(token, choice);
+      if (liveDb) scheduleAutosave(liveDb);
+      return saved;
+    },
+    /*
      * Opens the host's own share sheet — the same one behind its menu.
      *
      * Not a way to share: a way to ask the host to offer to. The host still

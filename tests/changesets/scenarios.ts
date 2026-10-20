@@ -288,13 +288,14 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("UPDATE items SET note = 'from B' WHERE title = 'Map'");
     },
   },
-  // RW-12: A saw B's title, and kept the one it showed by writing it again, no byte changed; B edited another column.
+  // RW-12's outcome, by R-X's call: A saw B's title and kept the one it showed, no byte changed; B edited another column.
   "RW-12 resolution": {
     write: async (a, b) => {
       a.db.exec("UPDATE items SET title = 'Tent (2p)' WHERE title = 'Tent'");
       b.db.exec("UPDATE items SET title = 'Tent (4p)' WHERE title = 'Tent'");
       await a.mergeFrom(await b.bytes());
-      a.db.exec("UPDATE items SET title = title WHERE title LIKE 'Tent%'");
+      const seen = a.changes.observe("items", [a.db.selectValue("SELECT id FROM items WHERE title LIKE 'Tent%'")], ["title"]);
+      a.changes.resolve(seen.token, seen.shown);
       b.db.exec("UPDATE items SET qty = 2 WHERE title LIKE 'Tent%'");
     },
   },

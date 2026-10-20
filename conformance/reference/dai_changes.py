@@ -268,14 +268,17 @@ def apply_log(db: sqlite3.Connection) -> None:
     for author, seq, lc, payload in rows:
         ver = f"{author}:{seq}"
         _, ops = cbor_decode(payload)  # type: ignore[misc]
-        for table, k, _code, new, _old, bases, saw in ops:  # type: ignore[union-attr]
+        for op in ops:  # type: ignore[union-attr]
+            table, k, _code, new, _old, bases, saw = op[:7]
+            # A resolution (R-X) names the alternatives it accepted or rejected; it supersedes exactly those.
+            resolves = op[7] if len(op) > 7 else {}
             pk = key_text(k, folds(table))
             if new.get("") == 1 and key_spelling(k) != pk:
                 spell.setdefault((table, pk, ver), key_spelling(k))
             row = cells.setdefault((table, pk), {})
             for col, val in new.items():
                 row.setdefault(col, {})[ver] = (val, int(lc), author)
-            for col, vers in bases.items():
+            for col, vers in list(bases.items()) + list(resolves.items()):
                 for v in vers:
                     sup.add((table, pk, col, v))
             for v in saw:

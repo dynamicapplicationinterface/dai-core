@@ -864,10 +864,20 @@ if (shared() && shared().writable) shared().writable().then(function () { sayVoi
 window.addEventListener('dai:new-player', function () { setTimeout(sayNewPlayer, 0); });
 if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
 
+/*
+ * A conflict, kept or chosen (R-X). conflict(table, key, columns) observes one
+ * unit of a row (a column, or every column of its coupled group; [] is the row
+ * itself, against a delete): what it shows, the alternatives, and a token.
+ * resolve(token, ver) keeps or chooses one of those alternatives, saved as it
+ * is made. Writing a shown value back with SQL resolves nothing.
+ */
+function conflict(table, key, columns) { return window.dai.conflict(table, key, columns || []); }
+function resolve(token, ver) { var saved = window.dai.resolve(token, ver); refresh(); return saved; }
+
 // Anything outside these is ordinary JavaScript against window.dai, which is
 // still there. This is a shortcut, not a framework.
 window.daiKit = {
-  db: db, run: run, refresh: refresh,
+  db: db, run: run, refresh: refresh, conflict: conflict, resolve: resolve,
   newSession: newSession, claimSeat: claimSeat, mySeat: mySeat, amCreator: amCreator,
   pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer,
   onSessionVoid: onSessionVoid, onContested: onContested, author: me,
