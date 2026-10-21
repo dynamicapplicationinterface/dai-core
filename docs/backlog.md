@@ -902,6 +902,267 @@ All readers must agree on canonical state, pending alternatives, and determinist
 
 The decisive distinction is not finer-grained pending flags. It is an authenticated distinction between “I wrote this field back” and “I chose this value.”
 
+#### R-Y — Ordinary SQL does not grant runtime authority
+
+**Decision**
+
+**Build 2 must separate application-controlled execution from the authority that validates R-X operations, advances receipt chains, authorizes signatures, and constructs acknowledged checkpoints.**
+
+A host-created database/runtime worker is the preferred implementation. The requirement is the authority boundary, not “put everything in a worker.”
+
+Owner enrollment and storage integration can proceed in parallel, but Build 2 must not declare the protected recovery path complete while its authoritative state still depends on replaceable application-realm behavior.
+
+*Why the frozen-exports floor is not that boundary*
+
+The current `Native` implementation closes the identified sqlite-wasm wrapper-replacement path. It also explicitly identifies shared built-ins as the remaining boundary. Its memory-reading path still invokes `TextDecoder`, `DataView`, and typed-array methods in the application’s realm.
+
+There is a second distinction: immutable exported function bindings do not make the memory those functions operate on immutable or inaccessible. WebAssembly exposes memory through a buffer; retaining or freezing an exports object is not access control over that memory. [W3C](https://www.w3.org/TR/wasm-js-api-2/)
+
+Therefore:
+
+> **The frozen-exports floor is defense against a bounded interference class. It is not sufficient evidence that an application that does not cooperate cannot interfere with runtime authority.**
+
+Calling the protected side “host” does not settle this. **Any runtime component whose answer the host trusts when signing, resolving, or acknowledging a checkpoint belongs on the protected side.** Moving only the private key while trusting application-controlled evidence would preserve the signing key but not the meaning of its signature.
+
+**Required architecture contract**
+
+The application may request ordinary SQL operations, obtain results, and request resolutions through the supported interface.
+
+It must not possess a writable reference to authoritative runtime memory, protected database objects, receipt state, observation-token state, or privileged statement handles.
+
+The trusted component must independently:
+
+- Enforce R-W and the permitted SQL interface.
+- Own capture, projection, R-X validation, and token issuance/consumption.
+- Validate receipt references against the authenticated chains.
+- Produce the exact accepted state from which the host signs and checkpoints.
+
+Requests are scoped by the host to a document and mount generation. A document identifier supplied by the app is not authority to select another database.
+
+**A worker must contain trusted runtime code, not arbitrary application JavaScript moved across the boundary.** Evaluating application callbacks inside it, or sharing its writable WASM memory back to the app, would reintroduce the problem.
+
+App-defined JavaScript SQL functions and callbacks therefore need an explicit compatibility decision. Do not silently execute them with runtime privileges.
+
+**The synchronous-interface question**
+
+**There is no transparent, ordinary worker-message bridge that preserves arbitrary main-thread synchronous `exec`/`prepare`/`step` behavior.** SQLite’s worker documentation describes the asynchronous interface and its transaction/queue limitations; the HTML platform allows blocking Atomics operations in dedicated/shared workers, not Window agents. [SQLite](https://sqlite.org/wasm/doc/trunk/api-worker1.md)
+
+But there are three distinct designs—not just “everything synchronous” versus “the whole app runs in a worker.”
+
+| Shape | What remains synchronous? | What owns authority? |
+|---|---|---|
+| **Authoritative database in a trusted worker** | SQL execution inside the worker; application requests are asynchronous | Worker/runtime plus host |
+| **Synchronous application-side projection** | App queries and speculative writes against its local projection | Separate trusted runtime validates and commits proposals |
+| **Private synchronous database capability** | A narrow facade can remain synchronous | An encapsulated, independently reviewed runtime with no leaked memory/raw API and hardened boundary behavior |
+
+The second is the shape that preserves a synchronous handle **without pretending its bytes are authoritative**. However, the trusted runtime must validate proposals against its own state and R-X observations; it cannot accept the app’s changeset, basis, receipt, or database export merely because the app labels it “captured.” Preserving the full promised SQL/trigger semantics may require authoritative execution or additional validation. That is a real protocol between the projection and runtime, not a cheap shim.
+
+The third is possible in principle, but it is substantially more than freezing exports. SQLite’s raw WASM API exposes low-level functions and handles; those cannot remain the application’s unrestricted interface to the authoritative instance. [SQLite](https://sqlite.org/wasm/doc/trunk/api-c-style.md)
+
+**My implementation recommendation is the first shape.** Keep ordinary SQL, introduce an explicit asynchronous application API, and batch operations rather than remotely driving every `step()`.
+
+Transaction ownership, cancellation, and failure must be defined so unrelated requests cannot interleave inside an application transaction. Update the kit, model instructions, and compatibility declaration together; **do not silently change a synchronous method into a Promise-returning one.**
+
+R-O requires authors not to implement replication. It does not require exposing the exact sqlite-wasm handle or preserving every existing JavaScript call pattern.
+
+**Boundary scope**
+
+This ruling does not promise that an application that does not cooperate cannot submit harmful changes to its own permitted data, mislead its own UI, or stop functioning.
+
+It promises that application behavior cannot become **runtime authority**: manufacture receipts, broaden resolutions, rewrite protected evidence, impersonate another mount, or cause an unvalidated state to receive a trusted checkpoint acknowledgment.
+
+A signature still does not prove that a human understood or intended the application’s actions.
+
+#### R-Y red test
+
+**Single required red**
+
+D285: app code cannot re-enter runtime authority
+
+Use one pending-conflict fixture with authentic signed history and a known observation token.
+
+An application that does not cooperate replaces an application-realm intrinsic used by the present native-reading path—for example, `TextDecoder.prototype.decode`. Its replacement delegates normally, but when invoked during runtime processing, it attempts a normally prohibited write to protected provenance state, such as `_cs_shown`.
+
+Then issue an otherwise legitimate application edit and request a checkpoint.
+
+**Required assertions:**
+
+1. Application-controlled code never executes with runtime authority. The attempted protected write cannot succeed.
+2. Trusted inspection—not an app-supplied query method—shows the original history, receipts, and unresolved alternatives intact.
+3. Any accepted batch contains only the legitimate permitted effect; no poisoned provenance reaches a signature or “Kept” checkpoint.
+4. If the operation is refused, the last acknowledged state remains intact. An unmodified control app completes the same edit/checkpoint, preventing “refuse everything” from passing.
+
+First demonstrate that the chosen injection actually reaches the pre-boundary path. Merely crashing the app or failing to invoke the payload is not a meaningful red.
+
+#### Contract I — Resolution semantic continuity
+
+**R-I / Contract I: release activation preserves R-X meaning**
+
+**Decision**
+
+> **A successor changes the application release, not the authorship, causal scope, or resolution meaning of existing document history.**
+
+Keeping the document ID is necessary for continuity, but insufficient by itself.
+
+The current R-X representation already distinguishes observation `basis`, presented alternatives, and signed operation `resolves`. Those distinctions must remain authoritative across release transitions.
+
+**1. Historical resolutions must remain interpretable**
+
+**Yes: the successor’s trusted runtime must be able to validate and interpret every retained prior resolution and its exact `resolves` set.** The successor’s application code does not need a history-reading implementation.
+
+For each historical operation, preserve its original signed bytes and the evidence needed to interpret:
+
+```text
+document and entity identity
+source schema / decision-unit semantics
+basis
+resolves
+typed values
+author sequence and chain digest
+```
+
+The association with source schema and operation semantics must be authenticated and unambiguous. It can use existing signed envelopes or retained release metadata; do not rewrite old operations merely to add fields.
+
+Replay historical operations according to their original semantics, then map their results into the target projection through the approved transition.
+
+**Never reinterpret an old `resolves` set using whatever columns or coupled groups the successor currently declares.**
+
+A checkpoint can accelerate recovery. It cannot silently discard the distinction between an explicit resolution, a normal edit, and a projected winner. Until a semantics-preserving compaction contract exists, retain the referenced evidence.
+
+If the new runtime cannot interpret the required history, activation is refused and the old release remains usable.
+
+**2. An additive release does not resolve or invalidate an alternative**
+
+A supported additive transition must preserve the decision units and interpretation of existing history.
+
+Adding an independent field or table does not:
+
+- Remove a pending alternative.
+- Broaden an old resolution.
+- Turn a schema default into an authored edit.
+- Make an old delete “observe” a subsequently introduced field.
+- Convert the currently projected winner into agreed state.
+
+For example, adding `notes DEFAULT ''` must not make a prior resolution of `qty` resolve `notes`, nor imply that every earlier author explicitly wrote an empty note.
+
+**An SQL-additive change can still be R-X-incompatible.** Adding a column and expanding an existing `dai:coupled` group changes the decision unit. So can changing key equality, a field’s meaning, or the rules that determine valid projection.
+
+Such a change is outside the minimal additive class unless a separate, explicit semantic transition proves preservation. Do not call it additive merely because the SQL uses `ADD COLUMN`.
+
+If a new constraint would exclude a retained pending alternative, either the transition preserves that evidence with a defined pending representation or activation fails. The classifier must not validate only the displayed row.
+
+**3. Observation tokens expire at activation—even for same-schema successors**
+
+An outstanding token is not a durable resolution. It is a runtime-issued capability tied to an observation.
+
+**Every activation creates a new mount generation and retires tokens issued by the old mount.** This includes same-schema activation and rollback to an earlier release.
+
+An old token must fail without producing a signed operation. Suggested sentence:
+
+> **“The app version changed. Review this choice again before applying it.”**
+
+This expiration does **not** invalidate the pending alternatives. They remain available for a new observation.
+
+A newly issued token may present a different set because more evidence has arrived. That set must actually be presented for a new decision; the runtime must not silently replace the old token and retry the old click.
+
+This deliberately avoids token migration as another compatibility problem. An unchanged schema is not proof that a different application version is continuing the same UI decision.
+
+**4. Resolution and activation must have one ordering point**
+
+If `resolve(token)` races activation, exactly one ordering must occur:
+
+**Resolution commits first:** its signed operation and evidence become part of the state staged into the successor.
+
+**Activation retires the mount first:** resolution fails as an old-mount request and logs nothing.
+
+There must be no third state in which the UI receives success but the successor lacks the resolution, or a request issued under the old release is signed against the new release’s interpretation.
+
+Likewise, activation must quiesce or preserve outstanding local capture before replacing the projection baseline. Previously acknowledged work cannot disappear because activation and checkpoint upload completed in different orders.
+
+**5. Activation cannot reset chains or disguise rollback**
+
+Because the document ID remains stable, author sequences, digest chains, receipts, and the checkpoint’s causal frontier continue across activation. A release change does not start a fresh author history.
+
+Rolling back code creates another mount generation; it does not authorize rewinding the document’s accepted history. Preserve newer evidence even if the older application cannot materialize it. Do not revive old observation tokens.
+
+**Amendments to A–H**
+
+Add **Contract I — Resolution semantic continuity**, and strengthen the existing contracts as follows:
+
+| Contract | Required amendment under R-X |
+|---|---|
+| **A — Authoritative declaration** | Include the authenticated interpretation of decision units, coupled groups, key identity, and source schema—not merely table layout. |
+| **B–C — Additive classification and dependencies** | Require preservation of existing decision units and historical operation meaning. Revalidate dependencies without reinterpreting prior decisions. |
+| **D — Pending-conflict preservation** | Preserve alternatives, bases, exact resolves sets, and their validation evidence—not just the projected values. |
+| **E — Old-schema delete versus new-column edit** | A historical delete retains its original observed scope. The new field is not retroactively included. |
+| **F — Successor forks/version skew** | Bind operations to their source interpretation; equal column positions or counts do not establish equivalent decision units. |
+| **G — Atomic activation** | Include token retirement, resolution ordering, capture baseline, chain state, and checkpoint state in the transition contract. |
+| **H — Initialization/defaults** | Schema-provided values remain distinguishable from authored edits and explicit resolutions. |
+
+Each amendment is carried in its entry: A in D276, B in D277, C in D278, D in D279, E in D274, F in D275, G in D280, H in D281.
+
+**Contract I, in one paragraph**
+
+> **Every accepted release transition preserves the validity and exact causal scope of prior signed resolutions. Historical operations are interpreted under their authenticated source semantics; target projection does not rewrite their basis or resolves sets. Pending alternatives remain pending unless an applicable signed decision resolves them. Observation tokens are mount-bound and retire on activation; a resolution racing activation either commits wholly before the transition or fails without an operation.**
+
+#### Contract I red test
+
+**Single required red**
+
+R-I/R-X: decisions survive; old capabilities do not
+
+Run one scenario parameterized over **same-schema** and **independent-additive** successors.
+
+*Arrange*
+
+In release S1, `qty` and `unit` are coupled.
+
+1. A and B produce concurrent tuples `(2, "kg")` and `(3, "kg")`.
+2. A explicitly resolves those alternatives to `(3, "kg")`, producing resolution **R**, whose `resolves` set is exactly `{A1, B1}`.
+3. Deliver C’s independently authored `(4, "kg")`. The pending alternatives are now `{R, C1}`.
+4. Issue an unconsumed observation token **T** for those alternatives.
+5. Hold back another genuine concurrent edit **B2**, based on B’s older state.
+
+Fix the fixture’s ordering so R’s `(3, "kg")` is displayed.
+
+*Activate*
+
+Activate S2, keeping the document ID. In the additive variant, S2 adds an independent `notes` field with a declared default.
+
+Assert immediately:
+
+```text
+R's original signed bytes, basis and resolves are unchanged.
+Pending alternatives are still exactly {R, C1}.
+Author chains and receipt digests retain continuity.
+Activation/default materialization authored no application edit.
+```
+
+*Exercise the token boundary*
+
+Calling `resolve(T, keep-shown)` must fail and append no operation.
+
+Obtain a fresh S2 token and explicitly keep `(3, "kg")`. This must create resolution **R2**, despite unchanged displayed tuple bytes:
+
+```text
+R2 resolves exactly {R, C1}.
+R2 resolves neither B2 nor the newly added field.
+```
+
+Now deliver B2. It must remain a genuine alternative against R2.
+
+Finally checkpoint, clear the local context, and recover under S2. Rebuild with the runtime and Python reader, including permitted delivery orders where B2 arrives before or after R2.
+
+**The oracle is the complete causal result, not just the displayed number:**
+
+```text
+Original R remains verifiable with resolves = {A1, B1}.
+R2 remains verifiable with resolves = {R, C1}.
+R2 and B2 remain the unresolved alternatives.
+No old token was accepted.
+No default or transition was misattributed as an edit.
+```
+
 ### The data interface's runtime rules
 
 What the runtime holds for every document under the ordinary data
@@ -10507,7 +10768,9 @@ recomputed over the merged candidate. **Acceptance:** T08's two workouts give
 Under R-W the schema changes only through a release. These are what a
 release transition must hold, held for Build 2 (successor authority, R-I).
 Each cites external review 2026-10-20 by its id. Contract E is RW-07 and
-contract F is RW-08, so each is filed with its RW entry.
+contract F is RW-08, so each is filed with its RW entry. Contract I
+(resolution semantic continuity, under R-X's rulings) amends A to H; each
+entry carries its amendment.
 
 #### D271 — A prepared statement survives release activation (RW-04)
 
@@ -10522,6 +10785,9 @@ with the migration's privileges.
 **Acceptance:** a statement prepared before activation and stepped after it
 is refused, with nothing written.
 
+**Under Contract I (§3, G):** an observation token is mount-bound in the
+same way, and retires with the mount at activation.
+
 #### D272 — An addition activates a dormant `UPDATE OF` trigger (RW-05)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10533,6 +10799,9 @@ A release that adds that column gives an unchanged trigger new behavior.
 **Change:** release validation rejects a trigger naming a column the table
 does not have. **Acceptance:** such a release is refused at validation, never
 activated.
+
+**Under Contract I (B–C):** one instance of an unchanged object gaining
+behavior; see D278.
 
 #### D273 — Adding a field while another has pending alternatives (RW-06)
 
@@ -10546,6 +10815,9 @@ synthetic edit and resolves nothing implicitly.
 **Acceptance:** a pending row across an additive release keeps both
 alternatives, both signatures and its flag, and the log gains no op.
 
+**Under Contract I (§2):** the addition neither resolves nor invalidates the
+alternatives; Contract I's red test is this entry's acceptance under R-X.
+
 #### D274 — Old-schema DELETE against an edit to a new column (RW-07, contract E)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10558,6 +10830,8 @@ concurrent edit to a column the new schema added.
 **Change:** the causal delete/update policy holds across schemas: the delete's
 `seen` does not cover the new column's version. **Acceptance:** the row is
 kept and flagged `delete-conflict` in both delivery orders.
+
+**Amended by Contract I (E):** A historical delete retains its original observed scope. The new field is not retroactively included.
 
 #### D275 — Two successors append different columns at one ordinal (RW-08, contract F)
 
@@ -10574,6 +10848,8 @@ Two additive successors each append a different column at the same position.
 **Acceptance:** both successors' batches, crossed, keep every value under its
 own column name, or hold it as received; nothing lands in the wrong column.
 
+**Amended by Contract I (F):** Bind operations to their source interpretation; equal column positions or counts do not establish equivalent decision units.
+
 #### D276 — One authoritative declaration chain (contract A)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10588,6 +10864,8 @@ settings (`foreign_keys` and the like) are the host's.
 **Acceptance:** a stored database differing from its signed declaration in
 any of those is repaired by the host or refused, before the application runs.
 
+**Amended by Contract I (A):** Include the authenticated interpretation of decision units, coupled groups, key identity, and source schema—not merely table layout.
+
 #### D277 — "Additive", narrowly (contract B)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10601,6 +10879,8 @@ same behavior, not the same column list.
 **Acceptance:** release validation classifies each of those changes as not
 additive.
 
+**Amended by Contract I (B–C):** Require preservation of existing decision units and historical operation meaning. Revalidate dependencies without reinterpreting prior decisions.
+
 #### D278 — An unchanged object gains behavior from an addition (contract C)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10611,6 +10891,8 @@ dependencies.
 
 **Acceptance:** tests over a widened table for a positional INSERT, `SELECT *`,
 a view's shape and a trigger's inserts.
+
+**Amended by Contract I (B–C):** Require preservation of existing decision units and historical operation meaning. Revalidate dependencies without reinterpreting prior decisions.
 
 #### D279 — Pending conflicts migrate as evidence (contract D)
 
@@ -10624,6 +10906,8 @@ and an authored value stay distinct.
 
 **Acceptance:** each kind of flag crosses a release with its evidence equal
 before and after.
+
+**Amended by Contract I (D):** Preserve alternatives, bases, exact resolves sets, and their validation evidence—not just the projected values.
 
 #### D280 — Activation switches one coherent state (contract G)
 
@@ -10639,6 +10923,8 @@ keeps the successor's branch and never drops fields silently.
 **Acceptance:** a crash at each step of activation reopens as wholly old or
 wholly new.
 
+**Amended by Contract I (G):** Include token retirement, resolution ordering, capture baseline, chain state, and checkpoint state in the transition contract.
+
 #### D281 — Schema installation is not seeding (contract H)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10648,6 +10934,8 @@ Installing a schema is separate from seeding. A new column's default is not
 a person's edit.
 
 **Acceptance:** an additive release logs no op for the default it fills.
+
+**Amended by Contract I (H):** Schema-provided values remain distinguishable from authored edits and explicit resolutions.
 
 ### R-X residue (filed 20 October)
 
