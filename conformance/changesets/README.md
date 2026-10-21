@@ -30,6 +30,11 @@ One directory per scenario, from the merge scenarios in
 | `kept-released` | M05 kept, then released | a category kept for a row that refers to it, then the row moved out by the copy that deleted it: the delete stands on both, nothing flagged |
 | `forged-basis` | R-X forged basis | a third copy's edit whose `bases` names a concurrent version it never saw, carried in `b.db`: refused by both readers, `basis-forged`, unapplied |
 | `missing-basis` | R-X missing basis | a third copy's edit whose `bases` names nothing for the column it writes: refused, `basis-missing`, unapplied |
+| `delete-pending-loser` | 1g-H1 delete over a pending loser | B's and C's titles pending on A, which deletes the row it showed; C's batch travels in `b.db`. The delete saw the title shown, not the other: the row is kept, `delete-conflict`, and the title it did not see stays `pending` |
+| `delete-set-aside` | 1g-H1 delete over a set-aside proposal | B's finish set aside by the CHECK on A, which deletes the row: kept, `delete-conflict`, and `pending` with the constraint, B's finish presented |
+| `unreceived-basis` | 1g-M1 unreceived basis | a third copy, its clock past A's, names A's title version in its title `bases`, though its `received` shows it never had A's batch: refused, `basis-forged`; A's edit stands |
+| `unreceived-seen` | 1g-M1 unreceived seen | the same, named in a delete's `seen`: refused, `basis-forged`; the row and A's edit stand |
+| `counter-over-pending` | D267 counter over a pending total | a trigger-kept total pending between two copies, then a third insert on one, whose trigger raises the total it showed: an edit based on that version, and the alternative it never read stays `pending` (D267, closed by R-X) |
 
 Each holds:
 

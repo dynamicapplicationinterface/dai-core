@@ -43,6 +43,11 @@ const VECTORS: Record<string, string> = {
   "kept-released": "M05 kept, then released",
   "forged-basis": "R-X forged basis",
   "missing-basis": "R-X missing basis",
+  "delete-pending-loser": "1g-H1 delete over a pending loser",
+  "delete-set-aside": "1g-H1 delete over a set-aside proposal",
+  "unreceived-basis": "1g-M1 unreceived basis",
+  "unreceived-seen": "1g-M1 unreceived seen",
+  "counter-over-pending": "D267 counter over a pending total",
 };
 
 interface Applied {

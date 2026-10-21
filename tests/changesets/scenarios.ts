@@ -310,6 +310,21 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("INSERT INTO workouts (what) VALUES ('workout B')");
     },
   },
+  // D267 under R-X: T08's total pending on A, and a third workout there, whose trigger raises the total A shows.
+  "D267 counter over a pending total": {
+    extra: [
+      `CREATE TABLE workouts (id INTEGER PRIMARY KEY, what TEXT NOT NULL);
+       CREATE TABLE summary (id INTEGER PRIMARY KEY, count INTEGER NOT NULL);
+       CREATE TRIGGER workouts_count AFTER INSERT ON workouts BEGIN UPDATE summary SET count = count + 1 WHERE id = 1; END;`,
+      "INSERT INTO summary (id, count) VALUES (1, 0)",
+    ],
+    write: async (a, b) => {
+      a.db.exec("INSERT INTO workouts (what) VALUES ('workout A')");
+      b.db.exec("INSERT INTO workouts (what) VALUES ('workout B')");
+      await a.mergeFrom(await b.bytes());
+      a.db.exec("INSERT INTO workouts (what) VALUES ('workout A2')");
+    },
+  },
   // The catalog's M02: two edits to different columns, each valid, whose combination a CHECK refuses.
   "M02 check across columns": {
     extra: [

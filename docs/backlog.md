@@ -10434,7 +10434,18 @@ vector with the same name in `main` and `temp`, the apply writing `main`.
 
 #### D267 — A routine write over a pending aggregate settles it (M10)
 
-*Status: open, held not tested. Filed 19 October, from the catalog (M10).*
+*Status: closed 21 October, against R-X (Build 1h). Filed 19 October, from
+the catalog (M10).*
+
+**Answered by R-X:** a write records changes, not touches, and is based on
+the version its unit showed (§2, §3). A routine write over a pending value,
+or a trigger-kept increment, is an edit of the value shown; the alternatives
+it never read stay pending until the kit's resolution call names them (§4).
+Vector `counter-over-pending` (scenario "D267 counter over a pending
+total"): T08's total pending between two copies, a third workout on one,
+whose trigger raises the total it showed. Both readers, both directions: the
+raised total and the alternative it never read, `pending`. The acceptance
+below is met by staying pending.
 
 R-F says editing is resolving. So a routine `UPDATE x = x + 1`, or a
 trigger-kept increment, over a pending value resolves it from whichever
@@ -10685,6 +10696,31 @@ that break dependency, through both readers.
 order gives one state on every reader, a batch whose basis has not arrived
 waits rather than being refused, and a receipt naming a batch not yet here
 is judged when it arrives.
+
+#### D284 — A constraint conflict is resolved by an edit and then a resolution
+
+*Status: open, needs host design. Filed 21 October, from Build 1g's open
+ruling ("a constraint conflict (R-T) alone cannot be observed").*
+
+A proposal R-T set aside is its column's only head: on `spans` (`CHECK
+(start <= finish)`), A's `start = 8` and B's `finish = 5` meet, and A shows
+`(8, 10)` with B's `finish` pending under the constraint. The kit's
+`conflict()` presents a unit with two or more current versions, so it has
+nothing to present there. What resolves it today is two actions: an edit
+that writes an admitted row (M02's `start = 8, finish = 12`), which makes
+the edit and the set-aside proposal two heads of `finish`, and then the
+resolution call over them. A person sees one problem ("these two edits do
+not fit together") and is asked for two steps, and between them the edit
+stands as a save of its own.
+
+**Change:** the host sheet offers a constraint conflict as one action: it
+presents the proposal set aside, what is shown, and the constraint, takes
+the person's admitted row, and logs the edit and the resolution naming the
+set-aside proposal together, as one batch. Whether `conflict()` presents a
+set-aside proposal as an alternative of its own is to rule with it.
+**Acceptance:** on M02's scenario, one action on A leaves an admitted row,
+no pending flag, and the set-aside proposal named in the resolution's
+`resolves`; both readers, both directions.
 
 ### Branch review residue (filed 8 October)
 

@@ -1,0 +1,157 @@
+{
+  "scenario": "1g-H1 delete over a pending loser",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 2309176281792520,
+          "item_id": 2309176281792518,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 2309176281792513,
+          "name": "Food"
+        },
+        {
+          "id": 2309176281792514,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 2309176281792513,
+          "done": 0,
+          "id": 2309176281792515,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 2309176281792514,
+          "done": 0,
+          "id": 2309176281792516,
+          "note": null,
+          "qty": 1,
+          "title": "Tent (B)"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 2309176281792517,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 2309176281792518,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 2309176281792519,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "items",
+        "[2309176281792516]",
+        "delete-conflict"
+      ],
+      [
+        "items",
+        "[2309176281792516]",
+        "pending"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 2309176281792520,
+          "item_id": 2309176281792518,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 2309176281792513,
+          "name": "Food"
+        },
+        {
+          "id": 2309176281792514,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 2309176281792513,
+          "done": 0,
+          "id": 2309176281792515,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 2309176281792514,
+          "done": 0,
+          "id": 2309176281792516,
+          "note": null,
+          "qty": 1,
+          "title": "Tent (B)"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 2309176281792517,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 2309176281792518,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 2309176281792519,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "items",
+        "[2309176281792516]",
+        "delete-conflict"
+      ],
+      [
+        "items",
+        "[2309176281792516]",
+        "pending"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  }
+}

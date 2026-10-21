@@ -280,3 +280,16 @@ test("1g-L4: a whole-row save of a whole REAL is an echo in a REAL column, and a
   a.close();
   b.close();
 });
+
+test("D267, closed against R-X: a trigger-kept counter over a pending total is an edit of the total shown; the alternative it never read stays pending on both", async () => {
+  const s = SCENARIOS["D267 counter over a pending total"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  expect(o.converged).toBe(true);
+  expect(o.missing, "every value either wrote is in both copies' cells").toEqual([]);
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectValue("SELECT count(*) FROM workouts"), "three workouts").toBe(3);
+    expect(pendingOf(c, "summary", "[1]").count, "A's raised total against B's, never settled by the write").toEqual([1, 2]);
+  }
+  o.a.close();
+  o.b.close();
+});
