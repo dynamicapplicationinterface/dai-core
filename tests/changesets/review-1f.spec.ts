@@ -56,6 +56,33 @@ test("1f-M1: ATTACH is refused in the authorizer for every argument, past the ha
   b.close();
 });
 
+test("1f-M3: a save that removes a kept row's last reference decides the row again; both copies converge on Food gone", async () => {
+  const { a, b } = await base();
+  a.db.exec("INSERT INTO items (category_id, title) SELECT id, 'Jam' FROM categories WHERE name = 'Food'");
+  b.db.exec("UPDATE items SET category_id = NULL WHERE title = 'Bread'");
+  b.db.exec("DELETE FROM categories WHERE name = 'Food'");
+  const [ab, bb] = [await a.bytes(), await b.bytes()];
+  await a.mergeFrom(bb);
+  await b.mergeFrom(ab);
+  for (const c of [a, b]) {
+    expect(c.db.selectValues("SELECT name FROM categories ORDER BY name"), "Food kept: Jam refers to it").toEqual(["Food", "Gear"]);
+    expect(c.flags().filter((f: Any) => f.tbl === "categories").map((f: Any) => f.kind)).toEqual(["kept-referenced"]);
+  }
+  // B moves Jam out of Food: nothing refers to Food now, and B's own delete stands.
+  b.db.exec("UPDATE items SET category_id = (SELECT id FROM categories WHERE name = 'Gear') WHERE title = 'Jam'");
+  b.save();
+  expect(b.db.selectValues("SELECT name FROM categories ORDER BY name"), "decided again at B's save").toEqual(["Gear"]);
+  await a.mergeFrom(await b.bytes());
+  for (const c of [a, b]) {
+    expect(c.db.selectValues("SELECT name FROM categories ORDER BY name")).toEqual(["Gear"]);
+    expect(c.flags().filter((f: Any) => f.tbl === "categories")).toEqual([]);
+    expect(c.db.selectValues("SELECT * FROM pragma_foreign_key_check")).toEqual([]);
+  }
+  expect(a.state(), "converged").toBe(b.state());
+  a.close();
+  b.close();
+});
+
 test("1f-L2: a mismatched CREATE ... IF NOT EXISTS handed over as bytes is refused, not answered by SQLite's no-op", async () => {
   const { a, b } = await base({ extra: ["CREATE INDEX items_by_title ON items (title)"] });
   const before = a.db.selectValue("SELECT sql FROM sqlite_schema WHERE name = 'items_by_title'");

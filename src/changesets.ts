@@ -1568,7 +1568,10 @@ export class Changes {
               this.db.selectValue("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? UNION SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [t, pk, t, pk]) !=
               null,
           );
-          if (marked.length) this.withoutCapture(() => this.project(marked));
+          // And a held or kept-referenced row is decided again at every save, as at every projection: a save that
+          // removed a kept row's last reference lets its delete stand here, as it will on every copy (1f-M3).
+          const kept = this.db.selectValue("SELECT 1 FROM _cs_held UNION ALL SELECT 1 FROM _cs_flag WHERE kind = 'kept-referenced' LIMIT 1") != null;
+          if (marked.length || kept) this.withoutCapture(() => this.project(marked));
           this.exec("RELEASE cs_save");
           logged = { payloadOps, payload, ver };
         } catch (e) {
