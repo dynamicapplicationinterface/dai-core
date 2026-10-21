@@ -650,6 +650,8 @@ export class Changes {
   private readonly appStatements = new Set<Any>();
   /** How deep `place` is in making room for a row (M04): a ring of moves ends, its last row decided as before. */
   private roomDepth = 0;
+  /** While the application's own VACUUM runs: the one database it attaches is admitted (1f-M1). */
+  private vacuuming = false;
   /** The observations issued and not yet used, by token (R-X §4). */
   private readonly observations = new Map<string, Observation>();
   /** Rows the runtime wrote on this connection, and the application's last statement's count (D08). */
@@ -859,17 +861,20 @@ export class Changes {
         const schema = code === capi.SQLITE_ALTER_TABLE ? a1 : db;
         // SQLite's own objects (ANALYZE's sqlite_stat1), by SQLite's own reserved spelling: no application statement makes one.
         const engines = typeof a1 === "string" && /^sqlite_/i.test(a1) && code !== capi.SQLITE_ALTER_TABLE;
-        const ours = !engines && (schema == null || schema === "main" || schema === "temp");
+        // Any schema but VACUUM's own, while the application's VACUUM runs: no other database is attached (1f-M1).
+        const ours = !engines && (schema == null || schema === "main" || schema === "temp" || !this.vacuuming);
         const admitted = schema === "main" && admittable.has(code) && typeof a1 === "string" && this.admitting.has(folded(a1));
         if (ours && !admitted) return deny(REFUSED.schema);
       }
       if (app) {
         // A virtual table is not carried (C04): written where an imported document holds one.
         if (writes.has(code) && typeof a1 === "string" && db !== "temp" && this.virtualSet.has(folded(a1))) return deny(REFUSED.virtual);
-        // Only the document's own database is kept (S06).
-        // An empty name passes here only for VACUUM, which attaches one as it runs: the application's own
-        // ATTACH '' is refused by its text, before it is prepared (`schemaStatements`, 1e-L2).
-        if (code === capi.SQLITE_ATTACH && typeof a1 === "string" && a1 !== "") return deny(REFUSED.attach);
+        // Only the document's own database is kept (S06, 1f-M1): every ATTACH and DETACH, whatever its argument
+        // (an expression's is null), by any route. The one admitted is VACUUM's own temporary database, '', and
+        // its detach, while the application's VACUUM runs.
+        if (code === capi.SQLITE_ATTACH || code === capi.SQLITE_DETACH) {
+          if (!(this.vacuuming && (code === capi.SQLITE_DETACH || a1 === ""))) return deny(REFUSED.attach);
+        }
         // The settings the runtime's assumptions rest on are the runtime's (P03): set, not read.
         if (code === capi.SQLITE_PRAGMA && typeof a2 === "string" && typeof a1 === "string" && RUNTIME_PRAGMAS.has(a1.toLowerCase())) return deny(REFUSED.pragma);
         // Under a ranged key the rowid is not the key, as it was where the key was the rowid's alias (K11).
@@ -953,9 +958,12 @@ export class Changes {
     handle.prepare = (...args: Any[]): Any => {
       if (this.depth > 0) return prepare(...args);
       this.deniedBecause = null;
+      const text = textOf(args[0]);
+      if (text === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
+      const vacuum = vacuums(this.sqlite3, text);
       let stmt: Any;
       try {
-        stmt = this.admitted(textOf(args[0]), () => prepare(...args));
+        stmt = this.admitted(text, () => prepare(...args));
       } catch (e) {
         throw this.explained(e);
       }
@@ -968,7 +976,13 @@ export class Changes {
       const step = stmt.step.bind(stmt);
       stmt.step = (): Any => {
         this.counting();
-        const row = step();
+        this.vacuuming = vacuum;
+        let row: Any;
+        try {
+          row = step();
+        } finally {
+          this.vacuuming = false;
+        }
         this.counted();
         if (this.depth === 0 && this.deferred && !this.inTransaction) this.projectAdmitted();
         return row;
@@ -994,8 +1008,20 @@ export class Changes {
     handle.exec = (...args: Any[]): Any => {
       // The runtime's own calls (its reads go through exec too) run as they are.
       if (this.depth > 0) return exec(...args);
+      const text = textOf(args[0]);
+      if (text === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
+      const vacuum = vacuums(this.sqlite3, text);
       // A script is read whole first: one refused statement refuses it before any of it runs (R-V).
-      return this.admitted(textOf(args[0]), () => this.statement(handle, () => exec(...args)));
+      return this.admitted(text, () =>
+        this.statement(handle, () => {
+          this.vacuuming = vacuum;
+          try {
+            return exec(...args);
+          } finally {
+            this.vacuuming = false;
+          }
+        }),
+      );
     };
   }
 
@@ -2541,14 +2567,25 @@ export class Changes {
   }
 }
 
-/** The SQL text the application handed exec or prepare, in each form sqlite-wasm takes: a string, an array of them, bytes, or `{sql}`. */
+/**
+ * The SQL text the application handed exec or prepare: a string, or `{sql}`
+ * holding one. Null for every other form sqlite-wasm would take (an array,
+ * bytes in any typed array, an ArrayBuffer), which the handle refuses before
+ * anything runs (1f-M1): SQL the runtime cannot read is SQL it cannot hold to
+ * R-W.
+ */
 function textOf(sql: unknown): string | null {
   if (typeof sql === "string") return sql;
-  if (Array.isArray(sql)) return sql.map(String).join("");
-  if (sql instanceof Uint8Array) return new TextDecoder().decode(sql);
-  if (sql && typeof sql === "object" && "sql" in sql) return textOf((sql as { sql: unknown }).sql);
+  if (sql && typeof sql === "object" && !Array.isArray(sql) && !ArrayBuffer.isView(sql) && !(sql instanceof ArrayBuffer) && "sql" in sql) {
+    const text = (sql as { sql: unknown }).sql;
+    return typeof text === "string" ? text : null;
+  }
   return null;
 }
+
+/** Whether SQL the application runs holds a VACUUM, which attaches and detaches a database of its own as it runs. */
+const vacuums = (sqlite3: Any, text: string | null): boolean =>
+  text !== null && /\bvacuum\b/i.test(text) && splitStatements(sqlite3, text).some((s) => sqlTokens(s)[0] === "vacuum");
 
 /** A script cut into its statements where SQLite itself would end each one (sqlite3_complete), trigger bodies whole. */
 function splitStatements(sqlite3: Any, text: string): string[] {
