@@ -10728,12 +10728,16 @@ no pending flag, and the set-aside proposal named in the resolution's
 the Build 1h review (1h-H1, 1h-M2).*
 
 The application shares the database handle, and under the ordinary data
-interface the runtime reads, writes and runs a VACUUM through engine
-primitives it captures before the application has the handle, calling only
-those captured originals (Build 1i, item 1). This holds against application
-code that replaces what it can reach — a handle method, a `Stmt.prototype`
-method, a capi entry, a progress handler, a bound array — because the runtime
-takes none of those on a path of its own. It is an in-realm defense: the
+interface the runtime reads, writes and runs a VACUUM through the engine's
+own entry points, captured before the application has the handle: since
+Build 1j the module's WebAssembly exports and memory, with no function of
+sqlite-wasm's on its path (Build 1i's capture of oo1's functions still reached
+`capi` and the `wasm` helpers by property, review-1i's observation). This
+holds against application code that replaces what it can reach — a handle
+method, a `Stmt.prototype` method, a capi entry, a pointer-stack method, a
+`wasm` helper, a progress handler, a bound array — because the runtime takes
+none of those on a path of its own. What it still shares with the
+application is the realm's built-ins. It is an in-realm defense: the
 application and the runtime run in one realm (the frame), and it rests on the
 runtime capturing its references first and the authorizer trusting only the
 statements the runtime itself prepared. It does not make the database
@@ -10753,6 +10757,31 @@ message boundary.
 `Stmt.prototype`, capi or the wasm heap of the database; a merge and a save
 cross a message boundary, and replacing anything in the application's realm
 changes nothing the runtime runs.
+
+### Build 1j (filed 21 October)
+
+#### D286 — Firefox: `returning-document` 382 timed out in Build 1g's CI
+
+*Status: open, a reading (non-gating). Filed 21 October, from Build 1g's CI.
+Becomes a defect if it recurs on `main`.*
+
+Run 39529282914, on `a94d7f48` (Build 1g, PR #9), Firefox job:
+`returning-document.spec.ts:382`, "opening your own copy after they moved
+does not make yours look newer" (chess by link), timed out at 90 s, and its
+after-hook with it, on both attempts. Run locally on Firefox it passed twice,
+11 s each, and it passed in Build 1h's CI (run 39596759441). Chess runs under
+a session policy, so none of the changeset runtime starts for it. It is not
+explained.
+
+It is the case D32 records failing both attempts on Firefox four times in
+September (as `:381`, before a line moved). Firefox is a reading and decides
+no run (D246), so this held nothing.
+
+**Change:** none yet. If it fails on `main`, read the trace against D32's
+signature (a reopened document renders and the automation cannot see its
+frame) before anything else, and file it as a defect there or here.
+**Acceptance:** a run of `main` in which it fails is read and the cause is
+named, or a month of `main`'s Firefox runs passes it.
 
 ### Branch review residue (filed 8 October)
 
