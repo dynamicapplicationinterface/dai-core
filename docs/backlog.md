@@ -10722,6 +10722,38 @@ set-aside proposal as an alternative of its own is to rule with it.
 no pending flag, and the set-aside proposal named in the resolution's
 `resolves`; both readers, both directions.
 
+#### D285 — The in-realm defense against the application is bounded by the realm
+
+*Status: open, decided with Build 2's architecture. Filed 21 October, from
+the Build 1h review (1h-H1, 1h-M2).*
+
+The application shares the database handle, and under the ordinary data
+interface the runtime reads, writes and runs a VACUUM through engine
+primitives it captures before the application has the handle, calling only
+those captured originals (Build 1i, item 1). This holds against application
+code that replaces what it can reach — a handle method, a `Stmt.prototype`
+method, a capi entry, a progress handler, a bound array — because the runtime
+takes none of those on a path of its own. It is an in-realm defense: the
+application and the runtime run in one realm (the frame), and it rests on the
+runtime capturing its references first and the authorizer trusting only the
+statements the runtime itself prepared. It does not make the database
+unreachable to the application; it makes every reach the application can try
+land on something the runtime no longer depends on.
+
+The durable boundary is to put the database, and the changeset runtime over
+it, behind a worker the application addresses only by message: then no engine
+primitive is in the application's realm at all, and there is nothing to
+capture first because there is nothing the application shares.
+
+**Change:** with Build 2's architecture (the release transition, successor
+authority R-I), the data lives behind a worker; the application holds no
+handle, no capi and no engine reference, and every read and write crosses a
+message boundary.
+**Acceptance:** the application frame has no reference to the handle,
+`Stmt.prototype`, capi or the wasm heap of the database; a merge and a save
+cross a message boundary, and replacing anything in the application's realm
+changes nothing the runtime runs.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
