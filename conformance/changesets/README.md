@@ -23,6 +23,13 @@ One directory per scenario, from the merge scenarios in
 | `returning` | D07 returning | a RETURNING statement stepped once and reset is logged whole, and applied once |
 | `resolution` | RW-12 resolution | written by Build 1f, whose mechanism R-X retired: a write of the shown title, logged as an edit whose basis named both alternatives. Its outcome stands, resolved on both; a log of that shape still reads so |
 | `respelled-key` | 1e-H3 respelled key | a key respelled under its NOCASE collation travels as a value change, beside the other copy's edit of another column |
+| `form-echo` | R-X form echo | R-X's first assertion: over a coupled (qty, unit) pending between two copies, a form save writing the shown tuple back with a new note authors the note alone; the tuple stays pending |
+| `explicit-keep` | R-X explicit keep | R-X's second assertion: the shown tuple kept by the kit's call, a resolution naming exactly the two alternatives shown; a third copy's tuple, carried in `b.db`, stays pending against it, whichever arrives first |
+| `form-save` | 1f-H1 form save | a form save over a row pending on its title writes back the other copy's qty and note with `done`: `done` alone is authored, and the other copy's values stand as its own |
+| `echo` | 1f-H1 echo | `SET qty = qty` on a row pending on its title authors nothing; a third copy's qty, carried in `b.db`, shows, and only the title is pending |
+| `kept-released` | M05 kept, then released | a category kept for a row that refers to it, then the row moved out by the copy that deleted it: the delete stands on both, nothing flagged |
+| `forged-basis` | R-X forged basis | a third copy's edit whose `bases` names a concurrent version it never saw, carried in `b.db`: refused by both readers, `basis-forged`, unapplied |
+| `missing-basis` | R-X missing basis | a third copy's edit whose `bases` names nothing for the column it writes: refused, `basis-missing`, unapplied |
 
 Each holds:
 

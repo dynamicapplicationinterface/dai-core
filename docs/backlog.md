@@ -10638,6 +10638,30 @@ a person's edit.
 
 **Acceptance:** an additive release logs no op for the default it fills.
 
+### R-X residue (filed 20 October)
+
+#### D282 — A delayed form save keeps the projection it read (R-X §7)
+
+*Status: open, held for Build 2. Filed 20 October, from R-X §7.*
+
+A form reads projection P, a remote apply replaces it with Q, and the form
+then saves. Build 1g binds a save to the execution-time baseline: the
+session's old value, which is Q. So an unchanged field from P written back
+reads as an edit reverting Q, signed as the person's, though they only left
+the field alone. A read-modify-write that claims R-X's protection carries
+its observation token, or works against a stable edit snapshot, and a stale
+observation gets defined rebase or conflict handling. It is never silently
+rebound to newer alternatives. Unannotated raw SQL keeps the execution-time
+baseline: the runtime cannot infer an earlier UI observation from bound
+values.
+
+**Change:** the kit's form (and any read-modify-write it offers) binds the
+values it showed to their source versions, and a save whose field differs
+from Q but equals P authors nothing for that field, or is presented as a
+conflict.
+**Acceptance:** a form opened on P, Q applied, the form saved unchanged:
+nothing authored for the field, Q stands, on every copy.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

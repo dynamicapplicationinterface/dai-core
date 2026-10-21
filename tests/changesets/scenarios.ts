@@ -41,6 +41,15 @@ CREATE TABLE IF NOT EXISTS audit (
 
 const TRIGGER = "CREATE TRIGGER IF NOT EXISTS items_audit AFTER INSERT ON items BEGIN INSERT INTO audit (item_id, what) VALUES (NEW.id, 'created'); END;";
 
+/** R-X's table (`docs/backlog.md`, "R-X red test"), named stock beside the base's items. */
+const STOCK = `CREATE TABLE stock (
+    id INTEGER PRIMARY KEY,
+    qty INTEGER NOT NULL,
+    unit TEXT NOT NULL,
+    note TEXT
+    -- dai:coupled qty unit
+)`;
+
 /**
  * The release's schema for a scenario: the base tables, its trigger, and the
  * schema statements of its `extra` (R-W: a schema is the release's, run by the
@@ -317,6 +326,67 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       const seen = a.changes.observe("items", [a.db.selectValue("SELECT id FROM items WHERE title LIKE 'Tent%'")], ["title"]);
       a.changes.resolve(seen.token, seen.shown);
       b.db.exec("UPDATE items SET qty = 2 WHERE title LIKE 'Tent%'");
+    },
+  },
+  // R-X's first assertion: a coupled tuple pending between A's and B's, and a form save on A writing it back whole with a new note.
+  "R-X form echo": {
+    extra: [STOCK, "INSERT INTO stock (id, qty, unit, note) VALUES (7, 1, 'kg', '')"],
+    write: async (a, b) => {
+      a.db.exec("UPDATE stock SET qty = 2 WHERE id = 7");
+      b.db.exec("UPDATE stock SET qty = 3 WHERE id = 7");
+      await a.mergeFrom(await b.bytes());
+      const shown = a.db.selectObject("SELECT qty, unit FROM stock WHERE id = 7") as Any;
+      a.db.exec({ sql: "UPDATE stock SET qty = ?, unit = ?, note = 'packed' WHERE id = 7", bind: [shown.qty, shown.unit] });
+    },
+  },
+  // R-X's second assertion: A keeps the shown tuple by the call; C's (4, "kg"), from the start, travels in B's file.
+  "R-X explicit keep": {
+    extra: [STOCK, "INSERT INTO stock (id, qty, unit, note) VALUES (7, 1, 'kg', '')"],
+    write: async (a, b) => {
+      const c = await Copy.open(await person(), await a.bytes(), a.schema);
+      a.db.exec("UPDATE stock SET qty = 2 WHERE id = 7");
+      b.db.exec("UPDATE stock SET qty = 3 WHERE id = 7");
+      c.db.exec("UPDATE stock SET qty = 4 WHERE id = 7");
+      await a.mergeFrom(await b.bytes());
+      const seen = a.changes.observe("stock", [7], ["qty", "unit"]);
+      a.changes.resolve(seen.token, seen.shown);
+      await b.mergeFrom(await c.bytes());
+      c.close();
+    },
+  },
+  // 1f-H1 (a): a form save over a row pending on its title, writing B's qty and note back with done.
+  "1f-H1 form save": {
+    write: async (a, b) => {
+      b.db.exec("UPDATE items SET qty = 9, note = 'B packed it', title = 'Tent (4p)' WHERE title = 'Tent'");
+      a.db.exec("UPDATE items SET title = 'Tent (2p)' WHERE title = 'Tent'");
+      await a.mergeFrom(await b.bytes());
+      const row = a.db.selectObject("SELECT id, category_id, title, qty, note FROM items WHERE title LIKE 'Tent%'") as Any;
+      a.db.exec({ sql: "UPDATE items SET category_id = ?, title = ?, qty = ?, note = ?, done = 1 WHERE id = ?", bind: [row.category_id, row.title, row.qty, row.note, row.id] });
+    },
+  },
+  // 1f-H1 (b): SET qty = qty on a row pending on its title, beside a third copy's qty, which travels in B's file.
+  "1f-H1 echo": {
+    write: async (a, b) => {
+      const c = await Copy.open(await person(), await a.bytes(), a.schema);
+      c.db.exec("UPDATE items SET qty = 5 WHERE title = 'Tent'");
+      a.db.exec("UPDATE items SET title = 'Tent (2p)' WHERE title = 'Tent'");
+      b.db.exec("UPDATE items SET title = 'Tent (4p)' WHERE title = 'Tent'");
+      await a.mergeFrom(await b.bytes());
+      a.db.exec("UPDATE items SET qty = qty WHERE title LIKE 'Tent%'");
+      await b.mergeFrom(await c.bytes());
+      c.close();
+    },
+  },
+  // M05 (1f-M3): Food kept for Jam on both, then B moves Jam out of it; Food's delete stands on both.
+  "M05 kept, then released": {
+    write: async (a, b) => {
+      a.db.exec("INSERT INTO items (category_id, title) SELECT id, 'Jam' FROM categories WHERE name = 'Food'");
+      b.db.exec("UPDATE items SET category_id = NULL WHERE title = 'Bread'");
+      b.db.exec("DELETE FROM categories WHERE name = 'Food'");
+      const [ab, bb] = [await a.bytes(), await b.bytes()];
+      await a.mergeFrom(bb);
+      await b.mergeFrom(ab);
+      b.db.exec("UPDATE items SET category_id = (SELECT id FROM categories WHERE name = 'Gear') WHERE title = 'Jam'");
     },
   },
   // R-X §3: a third copy signs an edit whose basis names A's concurrent title, which it never saw; B carries it on.

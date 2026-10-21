@@ -36,6 +36,13 @@ const VECTORS: Record<string, string> = {
   "returning": "D07 returning",
   "resolution": "RW-12 resolution",
   "respelled-key": "1e-H3 respelled key",
+  "form-echo": "R-X form echo",
+  "explicit-keep": "R-X explicit keep",
+  "form-save": "1f-H1 form save",
+  "echo": "1f-H1 echo",
+  "kept-released": "M05 kept, then released",
+  "forged-basis": "R-X forged basis",
+  "missing-basis": "R-X missing basis",
 };
 
 interface Applied {
