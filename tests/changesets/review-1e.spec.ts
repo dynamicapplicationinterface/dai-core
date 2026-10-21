@@ -76,13 +76,14 @@ test("1e-M2: at runtime only SQLite's own spelling of sqlite_ is SQLite's; a tab
 
 test("1e-M2: NOCASE folds ASCII only, as SQLite's does: keys that differ past ASCII are two rows on every copy", async () => {
   const { a, b } = await base({ extra: ["CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT)"] });
-  a.db.exec("INSERT INTO people (email, name) VALUES ('sam', 'A')");
-  b.db.exec("INSERT INTO people (email, name) VALUES ('ſam', 'B')");
+  a.db.exec("INSERT INTO people (email, name) VALUES ('sam', 'A'), ('Émile', 'A')");
+  b.db.exec("INSERT INTO people (email, name) VALUES ('ſam', 'B'), ('émile', 'B')");
   const [ab, bb] = [await a.bytes(), await b.bytes()];
   await a.mergeFrom(bb);
   await b.mergeFrom(ab);
   for (const c of [a, b]) {
-    expect(c.db.selectValues("SELECT email FROM people ORDER BY email"), "two keys").toEqual(["sam", "ſam"]);
+    // ſ is lowercase already, so a Unicode-wide fold keeps sam and ſam apart too; É and é it would make one (1f-L4).
+    expect((c.db.selectValues("SELECT email FROM people") as string[]).sort(), "four keys").toEqual(["sam", "ſam", "Émile", "émile"].sort());
     expect(c.flags()).toEqual([]);
   }
   a.close();

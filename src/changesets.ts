@@ -387,14 +387,16 @@ class SessionCapture {
     this.open();
   }
 
+  /** A new session, attached, made the capture's; it is not the capture's until it is whole. */
   private open(): void {
     const { capi, wasm } = this.sqlite3;
     const stack = wasm.pstack.pointer;
+    let session = 0;
     try {
       const out = wasm.pstack.allocPtr();
       const rc = capi.sqlite3session_create(this.db.pointer, "main", out);
       if (rc) throw new Error(`CHANGES_CAPTURE (sqlite3session_create rc=${rc})`);
-      this.session = wasm.peekPtr(out);
+      session = wasm.peekPtr(out);
     } finally {
       wasm.pstack.restore(stack);
     }
@@ -406,9 +408,13 @@ class SessionCapture {
       if (internalNamed(name) || this.excluded(name)) return 0;
       return this.db.selectValue("SELECT 1 FROM pragma_table_info(?, 'main') WHERE pk > 0", [name]) == null ? 0 : 1;
     });
-    capi.sqlite3session_table_filter(this.session, this.filter, 0);
-    const rc = capi.sqlite3session_attach(this.session, null);
-    if (rc) throw new Error(`CHANGES_CAPTURE (sqlite3session_attach rc=${rc})`);
+    capi.sqlite3session_table_filter(session, this.filter, 0);
+    const rc = capi.sqlite3session_attach(session, null);
+    if (rc) {
+      capi.sqlite3session_delete(session);
+      throw new Error(`CHANGES_CAPTURE (sqlite3session_attach rc=${rc})`);
+    }
+    this.session = session;
   }
 
   /** Captures nothing while `f` runs: the runtime's own writes to the application's tables. */
@@ -462,12 +468,15 @@ class SessionCapture {
     return !this.session || Boolean(this.sqlite3.capi.sqlite3session_isempty(this.session));
   }
 
-  /** Starts over: what was captured is logged. */
+  /**
+   * Starts over: what was captured is logged. The new session is made before
+   * the old one goes, so one that cannot be made leaves the capture as it
+   * was, and the save that asked is retried with everything it held (1f-L3).
+   */
   clear(): void {
-    if (this.session) this.sqlite3.capi.sqlite3session_delete(this.session);
-    // Never left naming a deleted session: if the next cannot be made, there is none (Q11).
-    this.session = 0;
+    const old = this.session;
     this.open();
+    if (old) this.sqlite3.capi.sqlite3session_delete(old);
   }
 
   private decode(bytes: Uint8Array): ReturnType<SessionCapture["changes"]> {
@@ -976,10 +985,15 @@ export class Changes {
       const step = stmt.step.bind(stmt);
       stmt.step = (): Any => {
         this.counting();
+        this.deniedBecause = null;
         this.vacuuming = vacuum;
         let row: Any;
         try {
           row = step();
+        } catch (e) {
+          // A statement SQLite prepares again at its step (the schema moved) is authorized again, and a refusal
+          // there reads as one at prepare does (1f-L1).
+          throw this.explained(e);
         } finally {
           this.vacuuming = false;
         }
@@ -1572,6 +1586,9 @@ export class Changes {
           // removed a kept row's last reference lets its delete stand here, as it will on every copy (1f-M3).
           const kept = this.db.selectValue("SELECT 1 FROM _cs_held UNION ALL SELECT 1 FROM _cs_flag WHERE kind = 'kept-referenced' LIMIT 1") != null;
           if (marked.length || kept) this.withoutCapture(() => this.project(marked));
+          // The baseline advances inside the same savepoint, last: a capture that cannot start over takes the
+          // batch back with it, and the save is retried with everything it held (1f-L3, P3 not reached).
+          this.capture.clear();
           this.exec("RELEASE cs_save");
           logged = { payloadOps, payload, ver };
         } catch (e) {
@@ -1583,21 +1600,9 @@ export class Changes {
         if (fk) this.exec("PRAGMA foreign_keys = ON");
       }
     }
-    // Net-zero work (an insert then its delete) leaves the session touched with nothing to log; it starts
-    // over too, so `dirty` says exactly whether a save has something to log.
-    if (logged || !this.capture.isEmpty()) {
-      try {
-        this.capture.clear();
-      } catch (e) {
-        // Logged, and the session not started over: the next save would log the same changes again as new
-        // work (Q11). No retry cures that, so it refuses the document (P3).
-        if (logged) {
-          this.refusal = SAVE_REFUSED;
-          throw new Error(`CHANGES_SAVE_REFUSED: ${SAVE_REFUSED}`, { cause: e });
-        }
-        throw e;
-      }
-    }
+    // Net-zero work (an insert then its delete, an echo) leaves the session touched with nothing to log; it
+    // starts over too. A failure here loses nothing: there was nothing to log.
+    if (!logged && !this.capture.isEmpty()) this.capture.clear();
     if (!logged) return null;
     return { ver: logged.ver, ops: logged.payloadOps.length, bytes: logged.payload.length };
   }

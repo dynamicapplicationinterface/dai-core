@@ -97,7 +97,7 @@ test("RW-10: a local edit survives a remote reprojection, and no remote value en
   b.close();
 });
 
-test("RW-11: a save that fails after extraction, after logging, or after the baseline leaves exactly the recoverable effects", async () => {
+test("RW-11: a save that fails at extraction, logging, the re-decision or the baseline advance leaves exactly the recoverable effects, and is retried", async () => {
   // A clean run, for what each failed one must end equal to.
   const clean = await pendingTitle();
   clean.a.db.exec({ sql: "UPDATE items SET title = 'Tent (3p)' WHERE id = ?", bind: [tentOf(clean.a)] });
@@ -110,7 +110,7 @@ test("RW-11: a save that fails after extraction, after logging, or after the bas
   // The edit supersedes the title it was shown; the other copy's, which it was not based on, stays pending (R-X §3).
   expect(want.flags, "the alternative it was not based on stays pending").toEqual([["items", "pending", ["title"]]]);
 
-  for (const at of ["extraction", "logging", "baseline"] as const) {
+  for (const at of ["extraction", "logging", "re-decision", "baseline"] as const) {
     const { a, b } = await pendingTitle();
     const seq = lastSeq(a);
     a.db.exec({ sql: "UPDATE items SET title = 'Tent (3p)' WHERE id = ?", bind: [tentOf(a)] });
@@ -126,7 +126,10 @@ test("RW-11: a save that fails after extraction, after logging, or after the bas
     };
     if (at === "extraction") once(changes, "withBases");
     if (at === "logging") once(changes, "ingest");
-    if (at === "baseline") once(changes, "project");
+    // The flags of the rows the save resolved, decided again inside it.
+    if (at === "re-decision") once(changes, "project");
+    // The baseline advance itself: the capture starting over, a new session made in place of the logged one (1f-L3).
+    if (at === "baseline") once(changes.capture, "open");
     let failed = false;
     try {
       a.save();
@@ -134,8 +137,9 @@ test("RW-11: a save that fails after extraction, after logging, or after the bas
       failed = true;
     }
     for (const r of restore) r();
-    if (at !== "baseline") expect(failed, `${at}: the save fails`).toBe(true);
-    if (at !== "baseline") expect(lastSeq(a), `${at}: nothing of it is logged`).toBe(seq);
+    expect(failed, `${at}: the save fails there`).toBe(true);
+    expect(lastSeq(a), `${at}: nothing of it is logged`).toBe(seq);
+    expect(a.changes.refusal, `${at}: a retry can cure it, so the document is not refused`).toBeNull();
     a.save();
     expect(lastSeq(a), `${at}: one batch, once`).toBe(seq + 1);
     expect(shape(a, seq + 1), `${at}: the batch the clean run logged`).toEqual(want.ops);

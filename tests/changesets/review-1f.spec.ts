@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { base } from "./scenarios.js";
+import { SCHEMA, base } from "./scenarios.js";
+import { boot, statementsOf } from "./copy.js";
 
 /**
  * The review of Build 1f (`handoff-2026-10-19.md`, "Code review — PR #9,
@@ -79,6 +80,20 @@ test("1f-M3: a save that removes a kept row's last reference decides the row aga
     expect(c.db.selectValues("SELECT * FROM pragma_foreign_key_check")).toEqual([]);
   }
   expect(a.state(), "converged").toBe(b.state());
+  a.close();
+  b.close();
+});
+
+test("1f-L1: a refusal at a step SQLite prepared again reaches the application as R-W's sentence, not engine words", async () => {
+  const { a, b } = await base();
+  const audit = statementsOf(await boot(), SCHEMA).find((s) => /CREATE TABLE IF NOT EXISTS audit/.test(s))!;
+  const before = a.db.selectValues("SELECT sql FROM sqlite_schema ORDER BY name");
+  const stmt = a.db.prepare(audit);
+  // The schema moves as the runtime's expiry moves it; SQLite prepares the statement again at its step.
+  (a.changes as Any).expireStatements();
+  expect(() => stmt.step()).toThrow(SCHEMA_SENTENCE);
+  stmt.finalize();
+  expect(a.db.selectValues("SELECT sql FROM sqlite_schema ORDER BY name"), "nothing made").toEqual(before);
   a.close();
   b.close();
 });

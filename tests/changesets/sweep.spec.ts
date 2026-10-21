@@ -435,17 +435,23 @@ test("Q06: two saves with no edit between log nothing; one edit after logs one c
   b.close();
 });
 
-test("Q11: a session that cannot start over after a logged save refuses the document, its changes logged once", async () => {
+test("Q11: a session that cannot start over takes its save's batch back; retried, its changes are logged once", async () => {
   const { a, b } = await base();
   const capi = a.sqlite3.capi;
   const create = capi.sqlite3session_create;
   a.db.exec("UPDATE items SET qty = 7 WHERE title = 'Map'");
+  const seq = Number(a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author]));
   capi.sqlite3session_create = () => 7;
   try {
-    expect(() => a.save()).toThrow(/^CHANGES_SAVE_REFUSED/);
+    expect(() => a.save()).toThrow(/^CHANGES_CAPTURE \(sqlite3session_create rc=7\)/);
   } finally {
     capi.sqlite3session_create = create;
   }
+  // The new session is made before the logged one goes, inside the save's savepoint (1f-L3): nothing was logged,
+  // the capture holds the change still, and no refusal is needed.
+  expect(a.changes.refusal).toBeNull();
+  expect(Number(a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author])), "nothing logged").toBe(seq);
+  expect(a.save()?.ops, "the retry logs it").toBe(1);
   expect(a.save(), "no second log of the same change").toBeNull();
   await b.mergeFrom(await a.bytes());
   expect(b.db.selectValue("SELECT qty FROM items WHERE title = 'Map'"), "logged once, and it travels").toBe(7);
