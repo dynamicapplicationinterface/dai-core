@@ -168,6 +168,34 @@ export async function unreceived(
 }
 
 /**
+ * 1i-L1's arrangement, on 1g-M1's: F, its clock moved past A's, signs a note
+ * whose receipt names A's seq as the string "9" with A's real digest, then
+ * retitles Tent honestly. B carries F's file on.
+ */
+async function stringSeqThenHonest(a: Copy, b: Copy): Promise<void> {
+  const f = await Copy.open(await person(), await a.bytes(), a.schema);
+  for (const note of ["f1", "f2", "f3"]) {
+    f.db.exec({ sql: "UPDATE items SET note = ? WHERE title = 'Rope'", bind: [note] });
+    f.save();
+  }
+  a.db.exec("UPDATE items SET title = 'Tent (A)' WHERE title = 'Tent'");
+  a.save();
+  f.db.exec("UPDATE items SET note = 'f-string' WHERE title = 'Rope'");
+  forgingFull(f, {
+    receipt: (r) => {
+      const by = a.changes.authorHex;
+      const entry = r.get(by);
+      if (!Array.isArray(entry)) throw new Error("F's receipt holds no entry for A");
+      r.set(by, ["9", entry[1]]);
+    },
+  });
+  f.db.exec("UPDATE items SET title = 'Tent (F)' WHERE title = 'Tent'");
+  f.save();
+  await b.mergeFrom(await f.bytes());
+  f.close();
+}
+
+/**
  * 1g-L2, 1g-L3: A and B each write `table`'s row 7 (`column` to 2 and 3);
  * F, opened from the base, merges both, so the row is pending there, and
  * writes `edit`; `forge` then alters F's op, given the value F showed. B
@@ -585,6 +613,10 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
   "1h-L1 non-ascii seq": { write: (a, b) => unreceived(a, b, (op, v) => op[5].set("title", [`${v.slice(0, v.lastIndexOf(":"))}:١`])) },
   // 1h-L1: the same, with a leading space before the digit.
   "1h-L1 space seq": { write: (a, b) => unreceived(a, b, (op, v) => op[5].set("title", [`${v.slice(0, v.lastIndexOf(":"))}: 1`])) },
+  // 1i-L1: F's first batch (a note on Rope) signs its receipt for A with the seq as a string, refused for its
+  // shape by both readers; its second batch retitles Tent with the receipt the runtime builds. Both readers read
+  // the earlier receipt by the same shape rule, so the honest batch is never held to a seq the refused one claimed.
+  "1i-L1 string seq, then honest": { write: (a, b) => stringSeqThenHonest(a, b) },
   // 1g-L2 (F2a): F's op writes back the qty it showed, based on that version, and names nothing it resolves.
   "1g-L2 resolution without resolves": {
     extra: ["CREATE TABLE gear (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL)", "INSERT INTO gear (id, qty) VALUES (7, 1)"],

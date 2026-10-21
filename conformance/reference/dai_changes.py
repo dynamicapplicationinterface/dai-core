@@ -111,6 +111,14 @@ def cbor_decode(data: bytes) -> object:
 # ---------------------------------------------------------------- keys
 
 
+def receipt_entry(e: object) -> bool:
+    """A receipt entry by its one shape, in both readers and wherever a reader reads one (1h-M1, 1i-L1):
+    [seq, digest], the seq a whole number of at least 1, as a version's seq is by the version grammar, and the
+    digest a string. A string, a float or a boolean is not a seq, nor a whole number past 2^53, which the
+    runtime's CBOR reads as a BigInt."""
+    return isinstance(e, list) and len(e) == 2 and type(e[0]) is int and 1 <= e[0] <= 9007199254740991 and isinstance(e[1], str)
+
+
 def q(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
@@ -290,7 +298,7 @@ def apply_log(db: sqlite3.Connection) -> None:
         # an entry not yet held leaves the batch waiting, so a seq the signer never received never takes effect.
         rec_wait = False
         for entry in received.values():
-            if not (isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], int) and not isinstance(entry[0], bool) and isinstance(entry[1], str)):
+            if not receipt_entry(entry):
                 return "receipt-forged"
         for by, entry in received.items():
             s, digest = entry
@@ -309,11 +317,13 @@ def apply_log(db: sqlite3.Connection) -> None:
             prev_decoded = cbor_decode(payload_at[prev])  # type: ignore[arg-type]
             prev_rec = prev_decoded[2] if isinstance(prev_decoded, list) and len(prev_decoded) > 2 else {}
             if isinstance(prev_rec, dict):
+                # The earlier receipt's entries are read by the one shape rule too (1i-L1): an entry refused for
+                # its shape claims nothing, in both readers.
                 for by, pe in prev_rec.items():
-                    before = pe[0] if isinstance(pe, list) and pe and isinstance(pe[0], int) else None
+                    if not receipt_entry(pe):
+                        continue
                     cur = received.get(by)
-                    now = cur[0] if isinstance(cur, list) and cur and isinstance(cur[0], int) else None
-                    if before is not None and (now is None or now < before):
+                    if not receipt_entry(cur) or cur[0] < pe[0]:
                         return "receipt-forged"
 
         def had(v: object) -> bool:
@@ -326,7 +336,7 @@ def apply_log(db: sqlite3.Connection) -> None:
             if by == author:
                 return int(n) < seq
             entry = received.get(by)
-            return isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], int) and not isinstance(entry[0], bool) and int(n) <= entry[0]
+            return receipt_entry(entry) and int(n) <= entry[0]
 
         for op in ops:
             if not isinstance(op, list) or len(op) < 7 or not isinstance(op[3], dict) or not isinstance(op[5], dict):

@@ -166,6 +166,15 @@ type Op =
 
 /** A version string, in the one grammar both readers read (1h-L1): lowercase hex, a colon, then ASCII digits with no leading zero. */
 const VERSION = /^[0-9a-f]+:[1-9][0-9]*$/;
+/**
+ * A receipt entry by its one shape, in both readers and wherever a reader
+ * reads one (1h-M1, 1i-L1): `[seq, digest]`, the seq a whole number of at
+ * least 1, as a version's seq is by VERSION, and the digest a string. A
+ * string, a float, a boolean or a whole number past 2^53 (which CBOR reads
+ * here as a BigInt) is not a seq.
+ */
+const receiptEntry = (e: unknown): e is [number, string] =>
+  Array.isArray(e) && e.length === 2 && typeof e[0] === "number" && Number.isInteger(e[0]) && e[0] >= 1 && typeof e[1] === "string";
 const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s: string): Uint8Array => Uint8Array.from(s.match(/../g) ?? [], (x) => parseInt(x, 16));
 const q = (name: string): string => `"${String(name).split('"').join('""')}"`;
@@ -2740,7 +2749,7 @@ export class Changes {
     let recWait = false;
     if (rec) {
       for (const [, entry] of rec) {
-        if (!Array.isArray(entry) || entry.length !== 2 || !Number.isInteger(entry[0]) || typeof entry[1] !== "string") return "receipt-forged";
+        if (!receiptEntry(entry)) return "receipt-forged";
       }
       for (const [by, entry] of rec) {
         const [s, digest] = entry as [number, string];
@@ -2760,7 +2769,8 @@ export class Changes {
         }
       }
       // A signer's receipt for an author cannot go backwards between its batches: the batch before this one (its
-      // own, highest below this seq) could not have claimed a higher seq for anyone (1h-M1).
+      // own, highest below this seq) could not have claimed a higher seq for anyone (1h-M1). Its entries are read
+      // by the one shape rule too (1i-L1): an entry refused for its shape claims nothing, in both readers.
       const prevPayload = this.engine.value(
         `SELECT payload FROM ${q(CHANGES_LOG)} WHERE lower(hex(_r_replica)) = ? AND _r_seq < ? ORDER BY _r_seq DESC LIMIT 1`,
         [author, seq],
@@ -2770,9 +2780,9 @@ export class Changes {
           const prev = (cborDecode(prevPayload, { floats: true }) as unknown as [number, Op[], unknown])[2];
           if (prev instanceof Map) {
             for (const [by, pe] of prev as Map<string, unknown>) {
-              const before = Array.isArray(pe) ? Number((pe as unknown[])[0]) : NaN;
-              const now = Array.isArray(rec.get(by)) ? Number((rec.get(by) as unknown[])[0]) : NaN;
-              if (Number.isInteger(before) && (!Number.isInteger(now) || now < before)) return "receipt-forged";
+              if (!receiptEntry(pe)) continue;
+              const now = rec.get(by);
+              if (!receiptEntry(now) || now[0] < pe[0]) return "receipt-forged";
             }
           }
         } catch {
@@ -2789,7 +2799,7 @@ export class Changes {
       const [by, n] = [v.slice(0, at), Number(v.slice(at + 1))];
       if (by === author) return n < seq;
       const entry = rec?.get(by);
-      return Array.isArray(entry) && n <= Number(entry[0]);
+      return receiptEntry(entry) && n <= entry[0];
     };
     for (const op of ops) {
       const [table, k, code, n, , b, seen] = op;
