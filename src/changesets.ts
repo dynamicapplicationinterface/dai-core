@@ -116,9 +116,12 @@ CREATE TABLE IF NOT EXISTS _cs_refused (ver TEXT PRIMARY KEY, reason TEXT NOT NU
  * Why an admitted changeset is refused, unapplied (R-X §3): an operation
  * whose `bases` does not name, for every unit it writes, the versions it was
  * based on; or one whose `bases` or `resolves` names a version it could not
- * have seen (not a version of that cell, or one no earlier than itself).
+ * have seen (not a version of that cell, one no earlier than itself, or one
+ * its signer had not received, 1g-M1), or that resolves a unit in part
+ * (1g-L3); or an edit that changes nothing it was based on and resolves
+ * nothing (`basis-unchanged`, 1g-L2).
  */
-export type BasisRefusal = "basis-missing" | "basis-forged";
+export type BasisRefusal = "basis-missing" | "basis-forged" | "basis-unchanged";
 
 /**
  * What a resolution is refused with (R-X §4, §5), as the application reads it:
@@ -1987,13 +1990,23 @@ export class Changes {
       return typeof upTo === "number" && n <= upTo;
     };
     for (const op of ops) {
-      const [table, k, , n, , b, seen] = op;
+      const [table, k, code, n, , b, seen] = op;
       const r = op[7];
       if (!(b instanceof Map) || !(n instanceof Map)) return "basis-missing";
       for (const c of n.keys()) if (!Array.isArray(b.get(c))) return "basis-missing";
       if (r !== undefined && !(r instanceof Map)) return "basis-forged";
       if (!Array.isArray(seen) || seen.some((v) => !had(String(v)))) return "basis-forged";
+      // A resolution resolves one unit whole (R-X §5, 1g-L3): every column it writes, and no other, names the
+      // same alternatives. An empty one resolves nothing, and is read as none.
+      const resolving = r instanceof Map && r.size > 0;
+      if (resolving) {
+        const alts = (c: string): string => JSON.stringify(Array.isArray(r.get(c)) ? [...(r.get(c) as unknown[])].map(String).sort() : null);
+        const first = alts([...n.keys()][0] ?? "");
+        if ([...r.keys()].some((c) => !n.has(c)) || [...n.keys()].some((c) => alts(c) !== first) || first === "null") return "basis-forged";
+      }
       const pk = this.identity(table, k);
+      const waiting: boolean = wait;
+      wait = false;
       for (const [c, vers] of [...b, ...(r ?? new Map<string, string[]>())]) {
         if (!Array.isArray(vers)) return "basis-forged";
         if (vers.some((v) => !had(String(v)))) return "basis-forged";
@@ -2006,6 +2019,27 @@ export class Changes {
           else wait = true;
         }
       }
+      /*
+       * An edit that changes nothing it was based on, and resolves nothing, is
+       * one an honest runtime never signs (1g-L2): an echo authors nothing
+       * (R-X §2), and a resolution names what it resolves. Judged once its
+       * basis is here, by value and storage class.
+       */
+      if (code === "U" && !resolving && !wait && n.size > 0) {
+        const unchanged = [...n].every(([c, val]) => {
+          const vers = b.get(c) as unknown[];
+          if (vers.length !== 1) return false;
+          const v = bound(val);
+          return (
+            this.db.selectValue(
+              `SELECT 1 FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ? AND val IS ${v.at} AND typeof(val) = typeof(${v.at})`,
+              [table, pk, c, String(vers[0]), v.value, v.value],
+            ) != null
+          );
+        });
+        if (unchanged) return "basis-unchanged";
+      }
+      wait ||= waiting;
     }
     return wait ? "wait" : null;
   }

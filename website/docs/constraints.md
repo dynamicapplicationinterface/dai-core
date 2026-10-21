@@ -188,9 +188,9 @@ qty = qty + 1 on two copies at once is not summed: the row is pending, both numb
 
 **Applies to** every shape. **Enforcement:** not checked by anything.
 
-A form may save every field whole: a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).
+A form may save every field whole (type a REAL column: untyped, 2.0 reads back as 2): a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).
 
-**Why.** A write cannot tell a choice from a field left alone; the call records the choice against what was shown.
+**Why.** A write cannot tell a choice from a field left alone.
 
 <small>Depends on [`src/kit.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/kit.ts), [`src/changesets.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/changesets.ts).</small>
 

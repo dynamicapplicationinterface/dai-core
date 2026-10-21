@@ -351,8 +351,8 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "A form may save every field whole: a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).",
-    why: "A write cannot tell a choice from a field left alone; the call records the choice against what was shown.",
+      "A form may save every field whole (type a REAL column: untyped, 2.0 reads back as 2): a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).",
+    why: "A write cannot tell a choice from a field left alone.",
     enforced: ["prose"],
     anchors: [
       { file: "src/kit.ts", contains: "function resolve(token, ver)" },

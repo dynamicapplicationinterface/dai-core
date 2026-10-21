@@ -10662,6 +10662,30 @@ conflict.
 **Acceptance:** a form opened on P, Q applied, the form saved unchanged:
 nothing authored for the field, Q stands, on every copy.
 
+### Build 1g review residue (filed 21 October)
+
+#### D283 — Out-of-order arrival is untested until the store exists
+
+*Status: open, held until the store delivers single batches. Filed 21
+October, from the Build 1g review (question 1, "Not reached").*
+
+A copy's file carries its author's whole log, so every test that exchanges
+files delivers each author's batches together and in order. A batch that
+arrives without a batch it depends on (a basis it names, or, since 1g-M1,
+an author's earlier batch its receipt counts) is reached only by
+`basis.spec.ts`'s one stripped-file test: R-X §3's "not yet here" wait, and
+the order-independence the readers claim for it, are otherwise untested.
+The store (mailbox delivery, batch by batch) is where single batches will
+arrive out of order in practice.
+
+**Change:** once the store delivers single batches, a harness that hands a
+reader each batch alone, in every dependency-respecting order and in orders
+that break dependency, through both readers.
+**Acceptance:** for R-X's fixture and the Build 1g review's scenarios, every
+order gives one state on every reader, a batch whose basis has not arrived
+waits rather than being refused, and a receipt naming a batch not yet here
+is judged when it arrives.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

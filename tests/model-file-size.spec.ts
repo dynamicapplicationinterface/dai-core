@@ -66,6 +66,7 @@ const bytesOf = (text: string): number => Buffer.byteLength(text, "utf8");
 
 test("R-X: the model file teaches the kit's resolution call, a form saved whole, and nothing that resolves by writing", () => {
   expect(RECIPE).toContain("A form may save every field whole");
+  expect(RECIPE, "1g-L4: where a whole save is not an echo").toContain("type a REAL column: untyped, 2.0 reads back as 2");
   expect(RECIPE).toContain("window.daiKit.conflict(table, [id], [column])");
   expect(RECIPE).toContain("window.daiKit.resolve(c.token, chosen.ver)");
   expect(RECIPE, "a pending row is not resolved by writing it").not.toMatch(/until someone writes it again|writing the row again resolves|editing is resolving/i);

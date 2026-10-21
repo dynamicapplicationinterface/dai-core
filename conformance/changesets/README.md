@@ -100,6 +100,14 @@ changeset, unapplied, when an operation in it:
   received: not its own from before (a lower seq), and above the seq
   `received` records for that author (a payload without `received` records
   none).
+  Or is a resolution (a non-empty `resolves`) whose `resolves` does not name,
+  for exactly the columns it writes, one and the same set of alternatives: a
+  unit resolved in part (1g-L3);
+- **`basis-unchanged`**: is an edit (`"U"`) that resolves nothing (no
+  `resolves`, or an empty one) and whose every column holds, by value and
+  storage class, the value of the one version its basis names. An honest
+  runtime never signs one: an echo authors nothing, and a resolution names
+  what it resolves (1g-L2). Judged once that version is here.
 
 A version named that the reader has not admitted yet, with a lower clock,
 is waited for: the changeset is applied, or refused, once it arrives. So

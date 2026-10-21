@@ -293,7 +293,7 @@ def apply_log(db: sqlite3.Connection) -> None:
         for op in ops:
             if not isinstance(op, list) or len(op) < 7 or not isinstance(op[3], dict) or not isinstance(op[5], dict):
                 return "basis-missing"
-            table, k, _code, new, _old, bases, saw = op[:7]
+            table, k, code, new, _old, bases, saw = op[:7]
             if any(not isinstance(bases.get(c), list) for c in new):
                 return "basis-missing"
             res = op[7] if len(op) > 7 else {}
@@ -301,7 +301,17 @@ def apply_log(db: sqlite3.Connection) -> None:
                 return "basis-forged"
             if not isinstance(saw, list) or not all(had(v) for v in saw):
                 return "basis-forged"
+            # A resolution resolves one unit whole (1g-L3): every column it writes, and no other, names the same
+            # alternatives. An empty one resolves nothing, and is read as none.
+            resolving = bool(res)
+            if resolving:
+                def alts(c):
+                    return sorted(str(v) for v in res[c]) if isinstance(res.get(c), list) else None
+                first = alts(next(iter(new), ""))
+                if first is None or any(c not in new for c in res) or any(alts(c) != first for c in new):
+                    return "basis-forged"
             pk = key_text(k, folds(table))
+            op_wait = False
             for col, vers in list(bases.items()) + list(res.items()):
                 if not isinstance(vers, list):
                     return "basis-forged"
@@ -315,7 +325,19 @@ def apply_log(db: sqlite3.Connection) -> None:
                     elif v in judged_vers or known.get(v, float("-inf")) >= lc:
                         return "basis-forged"
                     else:
-                        wait = True
+                        op_wait = True
+            # An edit that changes nothing it was based on, and resolves nothing, is one an honest runtime never
+            # signs (1g-L2). Judged once its basis is here, by value and storage class.
+            if code == "U" and not resolving and not op_wait and new:
+                def unchanged(c, val):
+                    vers = bases[c]
+                    if len(vers) != 1:
+                        return False
+                    cell = cells.get((table, pk), {}).get(c, {}).get(vers[0])
+                    return cell is not None and type(cell[0]) is type(val) and cell[0] == val
+                if all(unchanged(c, val) for c, val in new.items()):
+                    return "basis-unchanged"
+            wait = wait or op_wait
         return "wait" if wait else None
 
     for author, seq, lc, payload in rows:

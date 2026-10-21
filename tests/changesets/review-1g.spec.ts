@@ -246,3 +246,37 @@ for (const [label, change, choose] of [
     for (const x of [a, b, c]) x.close();
   });
 }
+
+for (const [name, table, reason] of [
+  ["1g-L2 resolution without resolves", "gear", "basis-unchanged"],
+  ["1g-L2 resolution with empty resolves", "gear", "basis-unchanged"],
+  ["1g-L3 partial coupled resolution", "stock", "basis-forged"],
+] as const) {
+  test(`${name}: refused by the runtime, ${reason}, whichever way the copies meet`, async () => {
+    const s = SCENARIOS[name]!;
+    const o = await exchange(s.write, { extra: s.extra });
+    expect(o.converged, "converged").toBe(true);
+    const forger = rejected(o.a);
+    expect(forger.map(([, r]) => r), "F's op refused").toEqual([reason]);
+    expect(rejected(o.b), "the same on the copy that carried it").toEqual(forger);
+    for (const c of [o.a, o.b]) {
+      expect(c.rows.all("SELECT 1 FROM _cs_cell WHERE ver = ?", [forger[0]![0]]), "kept in no cell").toEqual([]);
+      expect(pendingOf(c, table, "[7]").qty, "the two alternatives stay pending").toEqual([2, 3]);
+    }
+    o.a.close();
+    o.b.close();
+  });
+}
+
+test("1g-L4: a whole-row save of a whole REAL is an echo in a REAL column, and an edit in a column with no type, as the model file teaches", async () => {
+  const { a, b } = await base({ extra: ["CREATE TABLE measures (id INTEGER PRIMARY KEY, r REAL, v)", "INSERT INTO measures (id, r, v) VALUES (1, 2.0, 2.0)"] });
+  const row = a.db.selectObject("SELECT id, r, v FROM measures WHERE id = 1") as Any;
+  expect(row, "sqlite-wasm reads both as the number 2").toEqual({ id: 1, r: 2, v: 2 });
+  const seq = lastSeq(a);
+  a.db.exec({ sql: "UPDATE measures SET r = ?, v = ? WHERE id = ?", bind: [row.r, row.v, row.id] });
+  a.save();
+  expect(opsAfter(a, seq).map((x) => x.wrote), "the untyped column alone is authored").toEqual([["v"]]);
+  expect(a.db.selectObject("SELECT typeof(r) AS r, typeof(v) AS v FROM measures"), "REAL affinity keeps the REAL").toEqual({ r: "real", v: "integer" });
+  a.close();
+  b.close();
+});

@@ -129,6 +129,38 @@ export async function unreceived(
   f.close();
 }
 
+/**
+ * 1g-L2, 1g-L3: A and B each write `table`'s row 7 (`column` to 2 and 3);
+ * F, opened from the base, merges both, so the row is pending there, and
+ * writes `edit`; `forge` then alters F's op, given the value F showed. B
+ * carries F's file on.
+ */
+export async function overPending(
+  a: Copy,
+  b: Copy,
+  table: string,
+  column: string,
+  edit: string,
+  forge: (op: Any[], shown: unknown, alternatives: string[]) => void,
+): Promise<void> {
+  const f = await Copy.open(await person(), await a.bytes(), a.schema);
+  a.db.exec(`UPDATE ${table} SET ${column} = 2 WHERE id = 7`);
+  b.db.exec(`UPDATE ${table} SET ${column} = 3 WHERE id = 7`);
+  await f.mergeFrom(await a.bytes());
+  await f.mergeFrom(await b.bytes());
+  const shown = f.db.selectValue(`SELECT ${column} FROM ${table} WHERE id = 7`);
+  const alternatives = f.rows
+    .all(
+      "SELECT ver FROM _cs_cell c WHERE tbl = ? AND pk = '[7]' AND col = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY ver",
+      [table, column],
+    )
+    .map((r) => String(r["ver"]));
+  f.db.exec(edit);
+  forging(f, (op) => op[0] === table && forge(op, shown, alternatives));
+  await b.mergeFrom(await f.bytes());
+  f.close();
+}
+
 export interface Outcome {
   a: Copy;
   b: Copy;
@@ -479,6 +511,25 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
   "1g-M1 unreceived resolves": { write: (a, b) => unreceived(a, b, (op, v) => (op[7] = new Map([["title", [v]]]))) },
   // 1g-M1: F deletes Tent, and its delete names A's title version, never received, among what it saw.
   "1g-M1 unreceived seen": { write: (a, b) => unreceived(a, b, (op, v) => op[6].push(v), "DELETE FROM items WHERE title = 'Tent'") },
+  // 1g-L2 (F2a): F's op writes back the qty it showed, based on that version, and names nothing it resolves.
+  "1g-L2 resolution without resolves": {
+    extra: ["CREATE TABLE gear (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL)", "INSERT INTO gear (id, qty) VALUES (7, 1)"],
+    write: (a, b) => overPending(a, b, "gear", "qty", "UPDATE gear SET qty = 9 WHERE id = 7", (op, shown) => op[3].set("qty", shown)),
+  },
+  // 1g-L2 (F2b): the same, with an empty resolves.
+  "1g-L2 resolution with empty resolves": {
+    extra: ["CREATE TABLE gear (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL)", "INSERT INTO gear (id, qty) VALUES (7, 1)"],
+    write: (a, b) =>
+      overPending(a, b, "gear", "qty", "UPDATE gear SET qty = 9 WHERE id = 7", (op, shown) => {
+        op[3].set("qty", shown);
+        op[7] = new Map();
+      }),
+  },
+  // 1g-L3 (F2c): F's tuple edit of R-X's coupled (qty, unit) resolves qty's alternatives and not unit's.
+  "1g-L3 partial coupled resolution": {
+    extra: [STOCK, "INSERT INTO stock (id, qty, unit, note) VALUES (7, 1, 'kg', '')"],
+    write: (a, b) => overPending(a, b, "stock", "qty", "UPDATE stock SET qty = 9 WHERE id = 7", (op, _shown, alts) => (op[7] = new Map([["qty", alts]]))),
+  },
   // 1e-H3: a key respelled under its collation on one copy while the other edits another column of the row.
   "1e-H3 respelled key": {
     extra: ["CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT)", "INSERT INTO people (email, name) VALUES ('bob@x.com', 'Bob')"],
