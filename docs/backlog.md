@@ -10783,6 +10783,32 @@ frame) before anything else, and file it as a defect there or here.
 **Acceptance:** a run of `main` in which it fails is read and the cause is
 named, or a month of `main`'s Firefox runs passes it.
 
+#### D287 — The WebKit mailbox job has 35 minutes; its split into two shards is owed
+
+*Status: open, needs a ruleset edit. Filed 21 October, at the merge of PR #9.*
+
+`tests/mailbox-link-e2e.spec.ts` runs as a job of its own on WebKit (D174),
+because the file stays whole and no shard that holds it fits the wall. Its
+tests ran 14.3, 16.9 and 18.3 minutes in PR #9's last three runs (21
+October), against the 25-minute wall on the `npm test` step: the one gating
+part past the 15 minutes the Chromium parts are held to, and rising. The
+workflow's rule is to split a part that brushes the wall, not to raise it.
+
+Its test step now has 35 minutes and its job 55 (the setup's 20-minute
+allowance unchanged), set in the step's and the job's timeout expressions for
+`webkit`/`mailbox` alone. That is the stopgap the rule warns against: it
+buys time and gives back the blind spot if the file keeps growing.
+
+**Change:** split the file into two jobs (two spec files, or one file run
+twice by `--grep` over its describe titles), each well inside 15 minutes.
+Each new job's name is a new check, and the `Main` ruleset requires
+`browser (webkit, mailbox, tests/mailbox-link-e2e.spec.ts)` by name, so the
+ruleset's required checks are edited in the same change (the old name
+removed, the two new ones added), or main refuses every push after it.
+Then the 35 and the 55 go back to 25 and 45.
+**Acceptance:** two WebKit mailbox jobs, each under 15 minutes on the slowest
+runner seen, both required by the ruleset; no part of the gate above 25.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

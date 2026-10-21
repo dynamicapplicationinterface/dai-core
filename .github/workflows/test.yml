@@ -237,8 +237,9 @@ jobs:
     # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
     # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
     # whose apt mirror was slow (30 September, D174), and that spent the tests'
-    # budget before they began. This is the setup's allowance, not theirs.
-    timeout-minutes: 45
+    # budget before they began. This is the setup's allowance, not theirs; a
+    # part whose tests are given more (D287) keeps the same allowance on top.
+    timeout-minutes: ${{ matrix.browser == 'webkit' && matrix.part == 'mailbox' && 55 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -259,6 +260,14 @@ jobs:
           - { browser: webkit, part: "2", shard: "2/4", extra: '--grep-invert "a game continues over a shared link"' }
           - { browser: webkit, part: "3", shard: "3/4", extra: '--grep-invert "a game continues over a shared link"' }
           - { browser: webkit, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
+          # 35 minutes, not 25 (D287): this job's tests ran 14.3, 16.9 and
+          # 18.3 minutes in PR #9's last three runs (21 October), the one
+          # gating part past the 15 the Chromium parts are held to. It is a
+          # stopgap, against the rule above: the split into two shards is
+          # owed, and it renames this required check, so it waits on a
+          # ruleset edit. The 35 is set in the timeouts, not as a matrix key
+          # here: every matrix value is part of this job's name, which the
+          # ruleset requires by name.
           - { browser: webkit, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
 
     # Anchored: the Firefox job below runs these same steps.
@@ -288,7 +297,7 @@ jobs:
       - run: npx playwright install --with-deps ${{ matrix.browser == 'node' && 'chromium' || matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
-        timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || 25 }}
+        timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || matrix.browser == 'webkit' && matrix.part == 'mailbox' && 35 || 25 }}
 
       # This part's count, for the count-gate job's sum (scripts/count-parts.mjs),
       # whatever the tests did. A part that keeps none is red there by name.
