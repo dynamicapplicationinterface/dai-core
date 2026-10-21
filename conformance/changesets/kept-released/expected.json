@@ -1,0 +1,143 @@
+{
+  "scenario": "M05 kept, then released",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 8934850530639880,
+          "item_id": 8934850530639878,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 8934850530639874,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639875,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 8934850530639874,
+          "done": 0,
+          "id": 8934850530639876,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639877,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639878,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639879,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        },
+        {
+          "category_id": 8934850530639874,
+          "done": 0,
+          "id": 8934850530639881,
+          "note": null,
+          "qty": 1,
+          "title": "Jam"
+        }
+      ]
+    },
+    "flags": [],
+    "held": [],
+    "rejected": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 8934850530639880,
+          "item_id": 8934850530639878,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 8934850530639874,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639875,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 8934850530639874,
+          "done": 0,
+          "id": 8934850530639876,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639877,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639878,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8934850530639879,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        },
+        {
+          "category_id": 8934850530639874,
+          "done": 0,
+          "id": 8934850530639881,
+          "note": null,
+          "qty": 1,
+          "title": "Jam"
+        }
+      ]
+    },
+    "flags": [],
+    "held": [],
+    "rejected": []
+  }
+}

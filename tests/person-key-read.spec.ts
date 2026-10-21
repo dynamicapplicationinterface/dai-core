@@ -30,7 +30,7 @@ test.describe("a person key that cannot be read", () => {
 
   let container: string;
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

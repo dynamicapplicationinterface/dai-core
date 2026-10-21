@@ -11,7 +11,7 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 
 ## Every application
 
-- `await window.dai.openDatabase()` — Opens the database inside this file. In a shared document it waits for the host's write rules first.
+- `await window.dai.openDatabase()` — Opens the database inside this file. It waits for the host's write rules first.
 - `db.exec(sql)` — Runs one or more statements.
 - `db.exec({ sql, bind })` — Runs a statement with bound parameters. Omit bind when there are none: an empty array throws.
 - `db.selectObjects(sql, bind?)` — Returns rows as plain objects. bind is an array for ? or an object for :name.
@@ -27,7 +27,7 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 
 ## Shared tables (passable and session)
 
-- `await window.dai.openDatabase()` — Opens the database inside this file. In a shared document it waits for the host's write rules first.
+- `await window.dai.openDatabase()` — Opens the database inside this file. It waits for the host's write rules first.
 - `db.exec(sql)` — Runs one or more statements.
 - `db.exec({ sql, bind })` — Runs a statement with bound parameters. Omit bind when there are none: an empty array throws.
 - `db.selectObjects(sql, bind?)` — Returns rows as plain objects. bind is an array for ? or an object for :name.

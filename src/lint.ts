@@ -17,6 +17,8 @@
  * what the reader will actually do next.
  */
 
+import { hiddenKeyTables } from "./changes-log.js";
+import { DECLARATION, declarationLines, marksPolicyLayer, ONE_SHAPE, RESERVED_NAME, reservedNames } from "./declarations.js";
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
 import { seatWritesIn } from "./seat-check.js";
@@ -232,8 +234,41 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
     ...code.flatMap(([name, source]) =>
       lintSource(source).map((finding) => ({ ...finding, file: name })),
     ),
+    ...lintOneShape(files),
+    ...lintDeclarations(files),
+    ...lintReservedNames(files),
     ...lintShared(files),
+    ...lintLiteralIds(files),
+    ...lintPositionalInserts(files),
   ];
+}
+
+/* One shape (R-O): the finding and the scan are src/declarations.ts's, shared with the compiler. */
+function lintOneShape(files: Record<string, string>): (Finding & { file: string })[] {
+  return Object.entries(files)
+    .filter(([name]) => /\.sql$/i.test(name))
+    .filter(([, source]) => marksPolicyLayer(source))
+    .map(([file]) => ({ ...ONE_SHAPE, file }));
+}
+
+/* A schema object named with a reserved prefix in any spelling (1e-M1, 1e-M2): the scan is src/declarations.ts's, shared with the compiler. */
+function lintReservedNames(files: Record<string, string>): (Finding & { file: string })[] {
+  return Object.entries(files)
+    .filter(([name]) => /\.sql$/i.test(name))
+    .filter(([, source]) => reservedNames(source).length > 0)
+    .map(([file]) => ({ ...RESERVED_NAME, file }));
+}
+
+/*
+ * A -- dai: declaration that does not read exactly (1b-H2; src/declarations.ts).
+ * The runtime ignores such a line, so what it meant to declare never happens;
+ * refused here, at every door that lints, and by the compiler, with one message.
+ */
+function lintDeclarations(files: Record<string, string>): (Finding & { file: string })[] {
+  return Object.entries(files)
+    .filter(([name]) => /\.sql$/i.test(name))
+    .filter(([, source]) => declarationLines(source).some((line) => !line.ok))
+    .map(([file]) => ({ ...DECLARATION, file }));
 }
 
 /*
@@ -336,6 +371,100 @@ function tableBody(schema: string, name: string): string | null {
     index += 1;
   }
   return schema.slice(begin, index - 1);
+}
+
+/*
+ * An id the application chooses as a literal (R-O, Build 1).
+ *
+ * Under the ordinary data interface an INTEGER PRIMARY KEY the application
+ * omits is drawn from its author's range, so two people adding a row offline
+ * never pick the same id. A literal id is the same row on every copy: two
+ * authors who both write `VALUES (42, …)` write one row, column-merged and
+ * flagged. A warning, not a refusal: a seed with fixed ids is legal, and is
+ * written once, by the document's creator.
+ */
+const LITERAL_ID = {
+  id: "literal-id",
+  severity: "warning" as const,
+  what: "It inserts a row with an id it chose itself.",
+  why:
+    "Every copy of the document has its own range of ids, and the runtime picks one when the id is left out. " +
+    "A number written into the INSERT is the same id on every copy, so two people adding a row with it " +
+    "write one row between them, merged and flagged as a conflict.",
+  fix: "Omit the id column from the INSERT and let the runtime choose it; read it back with last_insert_rowid() or RETURNING id.",
+};
+
+function integerKeysOf(schema: string): Map<string, string> {
+  const keys = new Map<string, string>();
+  const create = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)["`]?\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = create.exec(schema)) !== null) {
+    const body = tableBody(schema, match[1]!) ?? "";
+    const key = /(?:^|,)\s*["`]?(\w+)["`]?\s+INTEGER\s+PRIMARY\s+KEY/i.exec(body);
+    if (key) keys.set(match[1]!.toLowerCase(), key[1]!.toLowerCase());
+  }
+  return keys;
+}
+
+function lintLiteralIds(files: Record<string, string>): (Finding & { file: string })[] {
+  const schemaName = Object.keys(files).find((name) => name === "schema.sql" || name.endsWith("/schema.sql"));
+  if (!schemaName) return [];
+  const keys = integerKeysOf(withoutComments(files[schemaName] ?? ""));
+  if (keys.size === 0) return [];
+  const findings: (Finding & { file: string })[] = [];
+  const insert = /INSERT\s+(?:OR\s+\w+\s+)?INTO\s+["`]?(\w+)["`]?\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/gi;
+  for (const [file, source] of Object.entries(files)) {
+    if (!/\.(?:html?|m?js|ts|sql)$/i.test(file) || file === schemaName) continue;
+    let match: RegExpExecArray | null;
+    let found = false;
+    const text = withoutComments(source);
+    while (!found && (match = insert.exec(text)) !== null) {
+      const key = keys.get(match[1]!.toLowerCase());
+      if (!key) continue;
+      const columns = match[2]!.split(",").map((c) => c.trim().replace(/["`]/g, "").toLowerCase());
+      const at = columns.indexOf(key);
+      if (at < 0) continue;
+      const literal = (match[3]!.split(",")[at] ?? "").trim();
+      if (/^-?\d+$/.test(literal)) found = true;
+    }
+    insert.lastIndex = 0;
+    if (found) findings.push({ ...LITERAL_ID, file });
+  }
+  return findings;
+}
+
+/*
+ * An INSERT that names no columns, into a table the compiler gives the hidden
+ * key (X1, `_dai_id`, src/changes-log.ts). The table has one column more than
+ * the application declared, first, so the values no longer line up: the
+ * INSERT fails, or, with a matching count, writes each value into the wrong
+ * column. Breaking, at every door that lints.
+ */
+const POSITIONAL_INSERT = {
+  id: "positional-insert",
+  what: "It inserts into a table with no primary key without naming the columns.",
+  why:
+    "A table that declares no primary key is given one, _dai_id, as its first column, so every copy of the " +
+    "document keys its rows the same way. An INSERT that lists its values without naming the columns now has " +
+    "one value fewer than the table has columns, and fails.",
+  fix:
+    "Name the columns in every INSERT, as INSERT INTO marks (body) VALUES (...), or give the table an INTEGER " +
+    "PRIMARY KEY of its own.",
+};
+
+function lintPositionalInserts(files: Record<string, string>): (Finding & { file: string })[] {
+  const schemaName = Object.keys(files).find((name) => name === "schema.sql" || name.endsWith("/schema.sql"));
+  if (!schemaName) return [];
+  const keyless = new Set(hiddenKeyTables(files[schemaName] ?? "").map((name) => name.toLowerCase()));
+  if (keyless.size === 0) return [];
+  const positional = /\b(?:INSERT(?:\s+OR\s+\w+)?|REPLACE)\s+INTO\s+(?:["`[]?main["`\]]?\s*\.\s*)?["`[]?(\w+)["`\]]?\s+(?:VALUES|SELECT|WITH)\b/gi;
+  const findings: (Finding & { file: string })[] = [];
+  for (const [file, source] of Object.entries(files)) {
+    if (!/\.(?:html?|m?js|ts|sql)$/i.test(file) || file === schemaName) continue;
+    const text = withoutComments(source);
+    if ([...text.matchAll(positional)].some((m) => keyless.has(m[1]!.toLowerCase()))) findings.push({ ...POSITIONAL_INSERT, file });
+  }
+  return findings;
 }
 
 function lintShared(files: Record<string, string>): (Finding & { file: string })[] {

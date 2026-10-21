@@ -175,6 +175,10 @@ const ALLOWED = [
   // Records of evaluation runs, kept as evidence, not code anything runs.
   { path: "eval/candidates/", why: "the output of past evaluation runs, kept as the record of what they produced" },
   { path: "eval/prompts.json", why: "the prompts past evaluation runs were given, kept with their output" },
+  {
+    path: "eval/changesets-ten/",
+    why: "ten cold replies and their apps, rerun through the real runtime by hand (R-O, Build 1); shares the suite's port, so never run beside it",
+  },
   // Operator tools: run by a person against live systems or on demand.
   { path: "scripts/measure.mjs", why: "a timing measurement a person runs; its output is a number, not a verdict" },
   { path: "scripts/check-deploys.mjs", why: "checks the live deploys; needs the network and the production hosts" },

@@ -1,0 +1,167 @@
+{
+  "scenario": "K12 key moved",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 7949512018493448,
+          "item_id": 7949512018493446,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 7949512018493441,
+          "name": "Food"
+        },
+        {
+          "id": 7949512018493442,
+          "name": "Gear"
+        }
+      ],
+      "codes": [
+        {
+          "code": "new",
+          "v": "base"
+        },
+        {
+          "code": "old",
+          "v": "edited"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 7949512018493441,
+          "done": 0,
+          "id": 7949512018493443,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 7949512018493442,
+          "done": 0,
+          "id": 7949512018493444,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 7949512018493445,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 7949512018493446,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 7949512018493447,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "codes",
+        "[\"old\"]",
+        "delete-conflict"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 7949512018493448,
+          "item_id": 7949512018493446,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 7949512018493441,
+          "name": "Food"
+        },
+        {
+          "id": 7949512018493442,
+          "name": "Gear"
+        }
+      ],
+      "codes": [
+        {
+          "code": "new",
+          "v": "base"
+        },
+        {
+          "code": "old",
+          "v": "edited"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 7949512018493441,
+          "done": 0,
+          "id": 7949512018493443,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 7949512018493442,
+          "done": 0,
+          "id": 7949512018493444,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 7949512018493445,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 7949512018493446,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 7949512018493447,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "codes",
+        "[\"old\"]",
+        "delete-conflict"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  }
+}

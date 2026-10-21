@@ -66,7 +66,7 @@ const asks = (app: FrameLocator): Promise<number> =>
 test("two asks for one open seat: the creator's kit sets the session aside, says so, and the game moves to a new one", async ({ browser }) => {
   test.slow();
   const scratch = mkdtempSync(join(tmpdir(), "dai-session-contested-"));
-  const built = await compileDirectory({ sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
   const container = join(scratch, "ttt.dai.html");
   writeFileSync(container, built.html, "utf8");
   const contexts = await Promise.all([0, 1, 2].map(() => browser.newContext({ acceptDownloads: true })));

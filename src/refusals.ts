@@ -113,6 +113,50 @@ export const REFUSALS = {
       "append-only: a change is a new row and a removal a tombstone, both through " +
       "window.dai.replicated. What SQLite says when an application writes one with plain SQL.",
   },
+  CHANGES_CAPTURE: {
+    recoverable: false,
+    means:
+      "SQLite's session extension could not record or read back what a save changed (src/changesets.ts). " +
+      "The save fails, is kept and is retried; nothing is written to the log half-captured.",
+  },
+  APP_TRANSACTION_OPEN: {
+    recoverable: true,
+    means:
+      "A merge arrived while the application held a transaction open (R-S, src/runtime/bootloader.ts). Nothing " +
+      "was written and the application's transaction is untouched; the merge can be asked again once it ends.",
+  },
+  CHANGES_APPLY: {
+    recoverable: true,
+    means:
+      "A TEMP trigger the runtime lifted off while merged rows were applied could not be put back (R-S, " +
+      "src/changesets.ts). The merged rows stand; the error names the trigger, which is missing until the " +
+      "application creates it again.",
+  },
+  CHANGES_SAVE_REFUSED: {
+    recoverable: false,
+    means:
+      "A save failed and no retry can cure it (P3, src/changesets.ts): the session could not read back what it " +
+      "held, or a value could not be encoded. The document is refused once, with SAVE_REFUSED's sentence: its last " +
+      "saved work is kept, later writes and merges are held, and Save a copy keeps what is on screen.",
+  },
+  CHANGES_REFUSED: {
+    recoverable: true,
+    means:
+      "A statement the data interface cannot carry was refused as it ran, before any data was accepted under it " +
+      "(R-V, src/changesets.ts). The message carries the rule it broke, as one sentence; nothing was written.",
+  },
+  CHANGES_KEY_UNREWRITABLE: {
+    recoverable: false,
+    means:
+      "An application table's INTEGER PRIMARY KEY could not be rewritten to take author-ranged ids. " +
+      "Never thrown to the application: the table is kept as a natural key, and its ids are the application's.",
+  },
+  ID_RANGE_EXHAUSTED: {
+    recoverable: false,
+    means:
+      "This author has used all 4,294,967,295 ids of its range in one document. Ids are never reused, " +
+      "so a further insert that leaves its id to the runtime is refused.",
+  },
   ROW_REJECTED: {
     recoverable: false,
     means:
@@ -340,6 +384,14 @@ export const REFUSALS = {
 } as const;
 
 export type RefusalCode = keyof typeof REFUSALS;
+
+/**
+ * What a person reads when a save fails and cannot succeed on a retry (P3):
+ * the document is refused, in one sentence, its last saved work kept. Shown by
+ * the host as it is, with no code and nothing around it.
+ */
+export const SAVE_REFUSED =
+  "This document can't save its latest change, so it keeps its last saved work and takes no more changes; use Save a copy to keep what is on screen.";
 
 /** Whether a string is one of the names above. */
 export function isRefusalCode(value: unknown): value is RefusalCode {

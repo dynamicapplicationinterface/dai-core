@@ -31,7 +31,7 @@ const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
  */
 test("a sealed batch is not published until the save that holds it has landed", async ({ page }) => {
   test.slow();
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Velvet Chess",

@@ -1,0 +1,127 @@
+{
+ "saves": 1000,
+ "created": {
+  "parts": {
+   "file": 106496,
+   "app": 4096,
+   "cells": 28672,
+   "logAndAuthorship": 49152,
+   "payload": 375,
+   "logRows": 1,
+   "appRows": 3,
+   "largest": [
+    {
+     "name": "sqlite_schema",
+     "bytes": 16384
+    },
+    {
+     "name": "sqlite_autoindex_lifts_1",
+     "bytes": 4096
+    },
+    {
+     "name": "sqlite_autoindex__dai_replicas_1",
+     "bytes": 4096
+    },
+    {
+     "name": "sqlite_autoindex__dai_replica_1",
+     "bytes": 4096
+    },
+    {
+     "name": "sqlite_autoindex__dai_meta_1",
+     "bytes": 4096
+    },
+    {
+     "name": "sqlite_autoindex__dai_batch_1",
+     "bytes": 4096
+    }
+   ]
+  },
+  "opens": {
+   "1x": {
+    "medianMs": 473,
+    "all": [
+     453,
+     467,
+     473,
+     473,
+     485
+    ]
+   },
+   "4x": {
+    "medianMs": 1867,
+    "all": [
+     1800,
+     1823,
+     1867,
+     1889,
+     1895
+    ]
+   }
+  }
+ },
+ "after": {
+  "parts": {
+   "file": 1667072,
+   "app": 57344,
+   "cells": 802816,
+   "logAndAuthorship": 770048,
+   "payload": 153217,
+   "logRows": 1001,
+   "appRows": 803,
+   "largest": [
+    {
+     "name": "_cs_cell",
+     "bytes": 712704
+    },
+    {
+     "name": "_cs_log",
+     "bytes": 253952
+    },
+    {
+     "name": "_dai_batch",
+     "bytes": 245760
+    },
+    {
+     "name": "_dai_covers",
+     "bytes": 98304
+    },
+    {
+     "name": "_dai_covers_by_id",
+     "bytes": 61440
+    },
+    {
+     "name": "lifts",
+     "bytes": 57344
+    }
+   ]
+  },
+  "opens": {
+   "1x": {
+    "medianMs": 845,
+    "all": [
+     815,
+     827,
+     845,
+     857,
+     901
+    ]
+   },
+   "4x": {
+    "medianMs": 3085,
+    "all": [
+     3026,
+     3055,
+     3085,
+     3088,
+     3232
+    ]
+   }
+  }
+ },
+ "growth": 15.65,
+ "perAppByte": 29.1,
+ "actionToSavedMs": {
+  "median": 1991,
+  "p95": 2028
+ }
+}

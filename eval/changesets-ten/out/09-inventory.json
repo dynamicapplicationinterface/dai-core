@@ -1,0 +1,51 @@
+{
+ "name": "09-inventory",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "− One fewer  UPDATE items SET qty = max(qty - 1, 0) WHERE id = :id",
+  "b": "− One fewer  UPDATE items SET qty = max(qty - 1, 0) WHERE id = :id"
+ },
+ "delete": {
+  "a": "Remove Remove this item  DELETE FROM items WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 6,
+   "U": 1,
+   "D": 1
+  },
+  "b": {
+   "I": 2,
+   "U": 1,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 4,
+  "b": 4
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

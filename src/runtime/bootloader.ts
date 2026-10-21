@@ -1045,19 +1045,32 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
      * saved is what was signed. A seal that fails is a save that fails, kept,
      * retried and said, never a save of rows left unsigned.
      */
-    saving = sealPending()
+    // Said of the person's writes, before the save's own changeset row is written.
+    const setup = setupOnly(db);
+    // Capture, then seal, then save: the changeset row is one of the rows the seal signs.
+    saving = Promise.resolve()
+      .then(() => captureSave(db))
+      .then(sealPending)
       .then(() => {
+        // What the application wrote while the signature was out is logged before the bytes are taken
+        // (Q09, D263): the stored copy never holds an edit no log row carries. The row is unsealed, so this
+        // copy's queued save is kept below, and seals it.
+        captureSave(db);
         // The seal is a write, and queues a save of its own; the bytes taken
         // here already hold it, so that save is this one. Not when a row was
         // written while the signature was out (D178): the seal did not take
         // it, these bytes hold it pending, and its queued save is the same
         // database. That save still runs, and seals it.
-        if (autosaveDb === db && !hasPendingOwn()) {
+        // Nor when the application wrote while the signature was out under the
+        // ordinary data interface (Q07): its edit is in the next capture epoch,
+        // not yet in any log row, so no row is pending, and only its queued
+        // save will log it (R-S).
+        if (autosaveDb === db && !hasPendingOwn() && !(changes && db === liveDb && changes.dirty)) {
           autosaveDb = null;
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
           autosaveTimer = undefined;
         }
-        return saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined);
+        return saveState(exportDatabase(db), { method: "auto", setup }, db === liveDb ? sealsRecorded : undefined);
       })
       .then(
       (result: Any) => {
@@ -1068,6 +1081,19 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       },
       (error: unknown) => {
         saving = null;
+        /*
+         * A save no retry cures refuses the document (P3): said once, in the
+         * data interface's own sentence, and never retried. What the store
+         * holds is the last save that succeeded; later writes are held by the
+         * data interface, and Save a copy keeps what is on screen.
+         */
+        if (changes && changes.refusal) {
+          if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+          autosaveTimer = undefined;
+          autosaveDb = null;
+          tellSaveStatus("failed", String(changes.refusal));
+          return;
+        }
         // Kept, not dropped: the data is still only here.
         if (!autosaveDb) autosaveDb = db;
         const delay = RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length - 1)] as number;
@@ -1086,6 +1112,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     // A mount the host will not write saves nothing (D108): what is here is
     // kept as it came, and no save is asked only to be refused.
     if (!autosaves || mountReadOnly) return;
+    // Nor one refused under P3: no save of it can succeed, and the refusal has been said.
+    if (changes && changes.refusal) return;
     autosaveDb = db;
     if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
@@ -1141,20 +1169,86 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * first, then the rest in document order (seed rows, idempotent by the
    * recipe's rule), and marks each so the kit does not run it twice.
    */
-  const runDocumentSql = (db: Any): void => {
-    const blocks = Array.from(
+  const runDocumentSql = (db: Any, which: "schema" | "seed"): void => {
+    const blocks = (Array.from(
       document.querySelectorAll('script[type="application/sql"]'),
-    ) as HTMLScriptElement[];
-    const ordered = [
-      ...blocks.filter((b) => b.getAttribute("data-dai") === "schema"),
-      ...blocks.filter((b) => b.getAttribute("data-dai") !== "schema"),
-    ];
-    for (const block of ordered) {
+    ) as HTMLScriptElement[]).filter((b) => (b.getAttribute("data-dai") === "schema") === (which === "schema"));
+    for (const block of blocks) {
       if (block.getAttribute("data-dai-ran") === "1") continue;
       const sql = (block.textContent || "").trim();
       block.setAttribute("data-dai-ran", "1");
       if (sql) db.exec(sql);
     }
+  };
+
+  /*
+   * Seed blocks run once, when the document is created (R-O, Build 1).
+   *
+   * Under the ordinary data interface every write on open is a signed change
+   * on every copy, so a seed that ran on every open re-inserted a row its
+   * person had deleted and sent the re-insert to everyone (the changeset
+   * spike's packing and reading lists). A document carrying the changeset log
+   * runs its seed blocks once and records that it did; a copy that arrived
+   * carries the record, and its rows came in the log. The blocks are still
+   * marked as run, so the kit does not run them either. A document with a
+   * session policy runs them as it always has.
+   */
+  const SEEDED = "seed-blocks-ran";
+  const runSeedsOnce = (db: Any): void => {
+    if (!changes) {
+      runDocumentSql(db, "seed");
+      return;
+    }
+    trusted(() => db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"));
+    const ran = (db.selectObjects("SELECT 1 FROM _dai_meta WHERE key = ?", [SEEDED]) as Any[]).length > 0;
+    if (ran) {
+      for (const block of Array.from(document.querySelectorAll('script[type="application/sql"]'))) block.setAttribute("data-dai-ran", "1");
+      return;
+    }
+    runDocumentSql(db, "seed");
+    trusted(() => db.exec({ sql: "INSERT OR IGNORE INTO _dai_meta (key, value) VALUES (?, '1')", bind: [SEEDED] }));
+  };
+
+  /*
+   * The ordinary data interface (R-O): a document with no session policy
+   * carries the changeset log, and the application writes ordinary tables.
+   * Started once the schema block has run (the log is declared there) and
+   * before the seed blocks (a seed is the creator's first change). From then
+   * on what each save changed is captured, and goes into the log as one row
+   * the authorship layer seals and signs like any other (src/changesets.ts).
+   */
+  let changes: Any | null = null;
+  /*
+   * The runtime's own writes to its own tables (the log's seal, the merge's
+   * admission, the replica, the seed record). Under the ordinary data
+   * interface SQLite's authorizer refuses a write to a `_dai*` or `_cs_*`
+   * table outside one (T11, P01): the application shares this handle.
+   */
+  const trusted = <T,>(f: () => T): T => (changes ? (changes.trusted(f) as T) : f());
+  const startChanges = (db: Any, rawExec: (sql: Any) => unknown): void => {
+    if (changes || !mergeModule || !sqlite3) return;
+    const merge = mergeModule as Any;
+    const rows = frameRows(db);
+    if (!merge.declaresChanges(rows)) return;
+    settleReplica(rows);
+    const author = mountReplica ?? (db.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0]?.id as Uint8Array | undefined);
+    if (!(author instanceof Uint8Array)) return;
+    // The release's schema, as this document declares it and as runDocumentSql ran it (R-W).
+    const schema = (Array.from(document.querySelectorAll('script[type="application/sql"]')) as HTMLScriptElement[])
+      .filter((b) => b.getAttribute("data-dai") === "schema")
+      .map((b) => b.textContent || "")
+      .join(";\n");
+    const started: Any = new merge.Changes(sqlite3, db, { author, rawExec, schema });
+    changes = started;
+    started.watch(db);
+    // A copy that arrived, or one rebuilt from another's log, is filled from what was admitted.
+    started.projectAdmitted();
+  };
+  /** What changed since the last save, into the log: the first step of every save. */
+  const captureSave = (db: Any): void => {
+    if (!changes || db !== liveDb) return;
+    settleReplica(frameRows(db));
+    changes.save();
   };
 
   /*
@@ -1381,6 +1475,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     const bytes = request && request.databaseBytes;
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new Error("NOT_A_DATABASE");
     if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
+    // A document refused under P3 takes nothing in: its own changes can no longer be logged before an apply (R-S).
+    if (changes && changes.refusal) throw new Error("CHANGES_SAVE_REFUSED");
 
     if (!mergeModule) {
       const source = request.mergeSource;
@@ -1439,18 +1535,26 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // the schema, the connection reports its own defaults and not the file's.
       sibling.exec("SELECT count(*) FROM sqlite_schema");
 
-      const rows = (db: Any): Any => ({
-        all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
-        run: (sql: string, params: Any[] = []) => {
-          db.exec(sql, { bind: params.slice() });
-        },
-      });
+      // Through the captured engine, as every read and write of the live handle is (1h-H1); the sibling carries
+      // no authorizer, so its own captured view suffices.
+      const rows = frameRows;
 
       const merge = mergeModule as Any;
+      // This copy's own unsaved changes go into its log first, so a merged row
+      // is never written over a change nobody has captured yet.
+      captureSave(liveDb);
       // Verified first, and outside the transaction: the checks are async, and
       // nothing may await while the live database holds one open (ruling #3).
       const verdicts = await merge.verifyBatches(rows(sibling), merge.mergeTablesOf(rows(sibling)), mountDocument);
+      // The application holds a transaction (it may, across an await): the
+      // merge is refused before it writes, never folded into the application's
+      // transaction or rolled back with it (R-S). Asked of SQLite, not of our
+      // own bookkeeping.
+      if (changes ? changes.inTransaction : sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       liveDb.exec("BEGIN");
+      // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
+      // ROLLBACK with no transaction open would replace it (1d-L2).
+      let committed = false;
       try {
         // The two signed-view digests when the shell relayed them: this
         // document's and the sibling's. The merge refuses the sibling whole
@@ -1473,7 +1577,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           return report;
         }
         liveDb.exec("COMMIT");
+        committed = true;
         noteRefusedBatches(report);
+        // The admitted changesets, applied to the application's tables by the
+        // policy (src/changesets.ts). After the commit, because projection
+        // turns foreign keys off for its own savepoint, which only an open
+        // connection outside a transaction can.
+        if (changes) report.projected = changes.projectAdmitted();
         // Rows changed under whatever is on screen. Scheduling a save also
         // makes the merge durable rather than living until the next write.
         scheduleAutosave(liveDb);
@@ -1492,7 +1602,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "carrier" } }));
         return report;
       } catch (error) {
-        liveDb.exec("ROLLBACK");
+        if (!committed) liveDb.exec("ROLLBACK");
+        // A save inside the merge that no retry cures refuses the document here as at an autosave (P3).
+        if (changes && changes.refusal) tellSaveStatus("failed", String(changes.refusal));
         throw error;
       }
     } finally {
@@ -1518,12 +1630,38 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   };
 
   /** The Rows view of a database handle, the shape the merge module reads. */
-  const frameRows = (db: Any): Any => ({
-    all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
-    run: (sql: string, params: Any[] = []) => {
-      db.exec(sql, { bind: params.slice() });
-    },
-  });
+  /*
+   * The Rows view the merge module reads and writes a database through.
+   *
+   * Through the runtime's captured engine (1h-H1), never the handle's own
+   * methods or Stmt.prototype, which the application shares this handle and can
+   * replace: a merge or a save cannot be hijacked or broken by a replaced
+   * method. The live handle reuses the runtime's own engine, its runtime-table
+   * writes counted apart inside `trusted` (D08); a sibling or staging database,
+   * which carries no authorizer of its own, gets its own captured view.
+   */
+  const frameRows = (db: Any): Any => {
+    // The ordinary data interface (a changeset document): its runtime reads and writes only through its
+    // captured engine (1h-H1). The live handle reuses that engine, its runtime-table writes counted apart
+    // inside `trusted` (D08); a sibling or staging database, which carries no authorizer, gets its own captured
+    // view. A document with a session policy has no such runtime, and reads and writes the handle as before.
+    if (changes) {
+      const live = changes as Any;
+      if (db === liveDb) {
+        return {
+          all: (sql: string, params: Any[] = []) => live.rows.all(sql, params.slice()),
+          run: (sql: string, params: Any[] = []) => trusted(() => live.rows.run(sql, params.slice())),
+        };
+      }
+      if (typeof (mergeModule as Any)?.createRows === "function") return (mergeModule as Any).createRows(sqlite3, db);
+    }
+    return {
+      all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
+      run: (sql: string, params: Any[] = []) => {
+        trusted(() => db.exec(sql, { bind: params.slice() }));
+      },
+    };
+  };
 
   /*
    * An arriving database is merged, not mounted (step 6; D133's load path).
@@ -1554,11 +1692,16 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         .all("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
         .sort((a: Any, b: Any) => (order[a.type] ?? 4) - (order[b.type] ?? 4));
       const to = frameRows(fresh);
+      // Under the ordinary data interface the application's rows are not
+      // copied either: they arrive in the admitted log, signed, and are
+      // projected when the copy starts (startChanges).
+      const fromLog = merge.declaresChanges(from) as boolean;
       fresh.exec("BEGIN");
       for (const statement of statements) fresh.exec(String(statement.sql));
       for (const statement of statements) {
         const name = String(statement.name);
         if (statement.type !== "table" || replicated.has(name)) continue;
+        if (fromLog && !name.startsWith("_dai_")) continue;
         // `_dai_meta` and `_dai_replica` are this copy's own, not rows: the
         // schema stamp, and the id cache the host's id is settled over at
         // mount (binding rule 2), as it is on any open.
@@ -1712,8 +1855,15 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // one the transaction opens on is the one the merge writes to (cold review
       // of step 4). A document closed meanwhile takes nothing.
       if (!liveDb) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
+      // As a file merge (R-S, P3): refused before it writes while the application holds a transaction, or
+      // once the document is refused.
+      if (changes && changes.refusal) throw new Error("CHANGES_SAVE_REFUSED");
+      if (changes ? changes.inTransaction : sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       const into = frameRows(liveDb);
       liveDb.exec("BEGIN");
+      // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
+      // ROLLBACK with no transaction open would replace it (1d-L2).
+      let committed = false;
       try {
         const report = merge.mergeVerified(into, frameRows(staged), {
           level: 1,
@@ -1726,12 +1876,18 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           return report;
         }
         liveDb.exec("COMMIT");
+        committed = true;
         noteRefusedBatches(report);
+        // The admitted changesets, applied as a file merge applies them (Q13): admitted alone, they reached
+        // the application's tables only at the next file merge or reopen.
+        if (changes) report.projected = changes.projectAdmitted();
         scheduleAutosave(liveDb);
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
         return report;
       } catch (error) {
-        liveDb.exec("ROLLBACK");
+        if (!committed) liveDb.exec("ROLLBACK");
+        // A save inside the merge that no retry cures refuses the document here as at an autosave (P3).
+        if (changes && changes.refusal) tellSaveStatus("failed", String(changes.refusal));
         throw error;
       }
     } finally {
@@ -2502,6 +2658,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   /** Extracts the live database as bytes, ready to be written back. */
   const exportDatabase = (db: Any): Uint8Array => {
     if (!sqlite3) throw new Error("SQLite is not initialized.");
+    // A changeset document is serialized by its runtime's own engine, never through a capi entry the application can replace (1i).
+    if (changes && db === liveDb && typeof changes.serialize === "function") return changes.serialize() as Uint8Array;
     return sqlite3.capi.sqlite3_js_db_export(db.pointer) as Uint8Array;
   };
 
@@ -2925,9 +3083,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // holds what this frame produced (D133's load path).
         const opened = db;
         const live = (db: Any): Any => {
+          const rawExec = db.exec.bind(db);
           // Watched first, so the seed rows a first open inserts are saved.
           watched(db);
-          runDocumentSql(db);
+          if (mergeModule && typeof (mergeModule as Any).stageChangeFunctions === "function") (mergeModule as Any).stageChangeFunctions(db);
+          runDocumentSql(db, "schema");
+          startChanges(db, rawExec);
+          runSeedsOnce(db);
           markSetupDone(db);
           if (db !== opened) scheduleAutosave(db);
           return db;
@@ -2967,13 +3129,32 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
       autosaveDb = null;
-      // Sealed first, as an automatic save is (identity step 3).
-      return sealPending().then(() =>
-        saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined),
-      );
+      // Captured and sealed first, as an automatic save is (identity step 3).
+      const setup = setupOnly(db);
+      return Promise.resolve()
+        .then(() => captureSave(db))
+        .then(sealPending)
+        .then(() => {
+          // Logged before the bytes are taken, as an automatic save is (Q09, D263).
+          captureSave(db);
+          return saveState(exportDatabase(db), { ...(options ?? {}), setup }, db === liveDb ? sealsRecorded : undefined);
+        });
     },
     // Two arguments only: which seals a save carries is the runtime's to say.
     saveState: (bytes?: Uint8Array | null, options?: Any) => saveState(bytes, options),
+    /*
+     * A conflict, observed and resolved (R-X). `conflict` observes one unit of
+     * a row and issues the token; `resolve` keeps or chooses one of the
+     * alternatives it presented, logged as it is made, and the save follows
+     * as a write's does. A document with no data interface has neither.
+     */
+    conflict: (table: string, key: unknown[], unit: string[] = []) => (changes ? changes.observe(table, key, unit) : null),
+    resolve: (token: string, choice: string) => {
+      if (!changes) throw new Error("CHANGES_REFUSED: This document keeps no changes to resolve.");
+      const saved = changes.resolve(token, choice);
+      if (liveDb) scheduleAutosave(liveDb);
+      return saved;
+    },
     /*
      * Opens the host's own share sheet — the same one behind its menu.
      *

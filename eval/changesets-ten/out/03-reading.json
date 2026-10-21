@@ -1,0 +1,53 @@
+{
+ "name": "03-reading",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Finished   UPDATE books SET status = 'done' WHERE id = :id",
+  "b": "Finished   UPDATE books SET status = 'done' WHERE id = :id"
+ },
+ "delete": {
+  "a": "Remove   DELETE FROM books WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 6,
+   "U": 1,
+   "D": 1
+  },
+  "b": {
+   "I": 2,
+   "U": 1,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 4,
+  "b": 4
+ },
+ "flags": [
+  "books:pending"
+ ],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

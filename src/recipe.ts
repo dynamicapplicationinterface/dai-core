@@ -16,30 +16,7 @@
  */
 
 import { EXAMPLE_APPS } from "./generated/examples.js";
-import {
-  APP_REFUSALS,
-  CONSTRAINTS,
-  MARKERS,
-  SHAPES,
-  SHAPE_DECISION,
-  SHAPE_ORDER,
-  SURFACE,
-  TOPICS,
-  VIEWS,
-  type Constraint,
-  type Shape,
-} from "./rules.js";
-
-const SHAPE_LABEL: Record<Shape, string> = {
-  solo: "solo",
-  passable: "passable",
-  session: "session",
-  broadcast: "broadcast",
-};
-
-function shapesOf(shapes: readonly Shape[]): string {
-  return shapes.length === SHAPE_ORDER.length ? "every shape" : shapes.map((s) => SHAPE_LABEL[s]).join(", ");
-}
+import { APP_REFUSALS, CONSTRAINTS, SURFACE, TOPICS, type Constraint } from "./rules.js";
 
 function enforcementOf(constraint: Constraint): string {
   const parts = constraint.enforced.map((how) =>
@@ -54,15 +31,25 @@ function enforcementOf(constraint: Constraint): string {
 function renderConstraint(constraint: Constraint): string {
   return [
     `[${constraint.id}] ${constraint.title}`,
-    `  Applies to: ${shapesOf(constraint.shapes)}. Enforcement: ${enforcementOf(constraint)}.`,
+    `  Enforcement: ${enforcementOf(constraint)}.`,
     `  ${constraint.rule}`,
     `  Why: ${constraint.why}`,
   ].join("\n");
 }
 
+/*
+ * One shape (R-O, Build 1). Every application the model file teaches is
+ * written over ordinary tables; whether its copies merge, and with whom, is
+ * the host's policy, not the author's choice. The constraints taught are the
+ * ones every application meets. The shape decision and the shared-table and
+ * session surfaces stay in rules.ts for documents already built through the
+ * policy layer (chess), and are not taught.
+ */
+export const TAUGHT = (constraint: Constraint): boolean => constraint.shapes.includes("solo") && constraint.topic !== "shape";
+
 function renderConstraints(): string {
   return TOPICS.map((topic) => {
-    const inTopic = CONSTRAINTS.filter((constraint) => constraint.topic === topic.id);
+    const inTopic = CONSTRAINTS.filter((constraint) => constraint.topic === topic.id && TAUGHT(constraint));
     if (inTopic.length === 0) return "";
     return `${topic.title.toUpperCase()}\n\n${inTopic.map(renderConstraint).join("\n\n")}`;
   })
@@ -70,39 +57,20 @@ function renderConstraints(): string {
     .join("\n\n");
 }
 
-function renderShapes(): string {
-  const questions = SHAPE_DECISION.map(
-    (step, index) => `${index + 1}. ${step.ask}\n   Yes: ${step.yes}\n   No: ${step.no}`,
-  ).join("\n");
-  const shapes = SHAPES.map(
-    (shape) =>
-      `${shape.title.toUpperCase()} — ${shape.who}\n  Declare: ${shape.declares}\n  What the runtime does: ${shape.mechanism}\n  For example: ${shape.examples}.`,
-  ).join("\n\n");
-  return `${questions}\n\n${shapes}`;
-}
-
 function renderSurface(): string {
-  const groups: { title: string; test: (shapes: readonly Shape[]) => boolean }[] = [
-    { title: "Every application", test: (s) => s.length === SHAPE_ORDER.length },
-    { title: "Shared tables (passable and session)", test: (s) => s.includes("passable") },
-    { title: "Sessions", test: (s) => s.length === 1 && s[0] === "session" },
-  ];
-  return groups
-    .map((group) => {
-      const entries = SURFACE.filter((entry) => group.test(entry.shapes));
-      return `${group.title}:\n${entries.map((entry) => `- ${entry.call} — ${entry.does}`).join("\n")}`;
-    })
-    .join("\n\n");
+  return SURFACE.filter((entry) => entry.shapes.includes("solo"))
+    .map((entry) => `- ${entry.call} — ${entry.does}`)
+    .join("\n");
 }
 
-function renderSchemaObjects(): string {
-  const markers = MARKERS.map((m) => `- ${m.marker}\n  Where: ${m.where}\n  Does: ${m.does}`).join("\n");
-  const views = VIEWS.map((v) => `- ${v.name} (${shapesOf(v.shapes)}): ${v.holds} ${v.read}`).join("\n");
-  return `Markers:\n${markers}\n\nWhat the rewrite creates, for a replicated table t:\n${views}`;
-}
+/** A refusal is taught when it can meet an ordinary-table application: nothing about shared tables or sessions. */
+export const TAUGHT_REFUSAL = (r: { code: string; when: string; then: string }): boolean =>
+  !/replicated|_r_|session|seat|roster|SHARED-|IDENTITY-SEAT|SESSION-/i.test(`${r.code} ${r.when} ${r.then}`);
 
 function renderRefusals(): string {
-  return APP_REFUSALS.map((r) => `- ${r.code} — ${r.when} ${r.then}`).join("\n");
+  return APP_REFUSALS.filter(TAUGHT_REFUSAL)
+    .map((r) => `- ${r.code} — ${r.when} ${r.then}`)
+    .join("\n");
 }
 
 function bundleOf(name: string, files: Record<string, string>): string {
@@ -115,48 +83,32 @@ function bundleOf(name: string, files: Record<string, string>): string {
 function renderExamples(): string {
   const intro: Record<string, string> = {
     solo:
-      "SOLO — one person, one document. Written with the kit and no JavaScript of its own; the seed rows are local and idempotent.",
+      "A packing list. Written with the kit and no JavaScript of its own: ordinary tables, a seed block that runs once when the document is created, and nothing about who else holds a copy.",
     passable:
       "PASSABLE — two people in one household hand the document back and forth. The shared table is written through window.dai.replicated and read from receipts_current; the totals are derived, never stored; a merge redraws; an edit made on both copies is shown and settled by the person.",
     session:
       "SESSION — one person writes a request and sends a link; the person who opens it answers. Each request is a session: the creator writes it, whoever opens the invite takes the open seat. The two sides are not interchangeable, so the tables declare author=creator and author=joiner (SESSION-AUTHOR-ROLES); which side this copy is on is read from the seats. Progress is derived, never stored; the application joins on a carrier open only, shows the contested and not-invited states, settles an answer edited on two devices, and lets only the creator close. A session whose parties are interchangeable — two players of one game — is the same with no author= on any table.",
   };
-  const apps = EXAMPLE_APPS.map(
-    (app) => `${intro[app.shape] ?? app.shape.toUpperCase()}\n\n${bundleOf(app.name, app.files)}`,
-  ).join("\n\n");
-  return (
-    `${apps}\n\n` +
-    "BROADCAST — no example. Build it exactly as solo (SHAPE-BROADCAST-CONVENTION).\n\n" +
-    "THE MISTAKE THESE EXAMPLES AVOID. The first chess application written from an earlier version of these " +
-    "instructions marked its tables shared and then stored the board, the turn, the result and an updated_at " +
-    "column in the games table; changed that row in place with UPDATE on every move; kept the selected square " +
-    "and the theme in the shared table; put UNIQUE(game_id, ply) on moves; read the moves table itself; and never " +
-    "listened for dai:merged. After the first exchange each copy showed a board computed from the moves it had, " +
-    "and the other player's move never appeared. The correct version stores only games, moves and game events, " +
-    "derives the board by replaying the moves, keeps the per-copy state local, lets two moves at one ply exist so " +
-    "the players can see and settle it, reads the _current views, redraws on dai:merged, and declares a session."
-  );
+  // The examples written over ordinary tables. The shared and session examples
+  // stay in examples/ and in CI, built through the policy layer; they are not taught.
+  return EXAMPLE_APPS.filter((app) => app.shape === "solo")
+    .map((app) => `${intro[app.shape]}\n\n${bundleOf(app.name, app.files)}`)
+    .join("\n\n");
 }
 
 function renderChecklist(): string {
-  return SHAPE_ORDER.map((shape) => {
-    const ids = CONSTRAINTS.filter((c) => c.shapes.includes(shape)).map((c) => c.id);
-    return `- ${SHAPE_LABEL[shape]}: ${ids.join(", ")}`;
-  }).join("\n");
+  return CONSTRAINTS.filter(TAUGHT)
+    .map((c) => c.id)
+    .join(", ");
 }
 
 /** The model file, addressed to whoever is writing the code. */
 export const RECIPE = `HOW TO ANSWER
 Write a self-contained application that will be sealed into a DAI container: a single file holding the app, its SQLite database and its data, opened by double-clicking or from a link, with no server and no installation. There is no network: the container can reach nothing outside itself.
 
-Decide the shape first (below). Then follow every constraint that applies to that shape. Each constraint has an ID in brackets, which is also what a lint finding cites; each says whether anything checks it. A constraint that nothing checks is still a constraint.
+Write ordinary SQLite tables, with their own keys, and ordinary SQL over them: INSERT, UPDATE, DELETE, joins, transactions, foreign keys. That is the whole data model. Whether the document is kept on one device, moved between a person's devices or handed to somebody else is the host's business, not the application's: the host records what each save changed, signs it, and merges copies, and nothing in the application has to know. Follow every constraint below. Each has an ID in brackets, which is also what a lint finding cites; each says whether anything checks it. A constraint that nothing checks is still a constraint.
 
-Content is the kit where the kit can express it: HTML with dai-rows, dai-value, dai-form, dai-attach and dai-save, and SQL in the document. The kit removes the dangerous sinks by construction (no statement built from a value, text-only rendering). Its write controls are for local tables only; shared tables are written in JavaScript through window.dai.replicated. Transport is whatever the channel has: when a tool is available, call it with the files as its arguments; when it is not, write the files as one text bundle, in the format under HOW TO HAND IT OVER.
-
-FIRST, THE SHAPE
-Answer these before writing a single table. The answer decides which tables are shared, whether there is a session profile, and which constraints apply.
-
-${renderShapes()}
+Content is the kit where the kit can express it: HTML with dai-rows, dai-value, dai-form, dai-attach and dai-save, and SQL in the document. The kit removes the dangerous sinks by construction (no statement built from a value, text-only rendering). Transport is whatever the channel has: when a tool is available, call it with the files as its arguments; when it is not, write the files as one text bundle, in the format under HOW TO HAND IT OVER.
 
 THE CONSTRAINTS
 
@@ -166,10 +118,6 @@ THE SURFACE
 Everything an application is given, and nothing else.
 
 ${renderSurface()}
-
-THE SCHEMA
-
-${renderSchemaObjects()}
 
 REFUSALS YOU MAY MEET
 What an error means, and what to do instead.
@@ -188,7 +136,7 @@ The database, from JavaScript. Parameters are bound, never interpolated.
 
 Pass bind only when there are parameters: an empty array is read as parameters promised and not supplied, and throws. Use SQL for the work — joins, aggregates, ORDER BY — rather than loading everything and filtering in JavaScript.
 
-A local table and its seed (the notes table above is local, so an ordinary UPDATE is right for it):
+A table and its seed. Leave the id out of an INSERT and the runtime chooses it; read it back with last_insert_rowid() or RETURNING id. The seed block runs once, when the document is created:
 
   --- file: schema.sql
   CREATE TABLE IF NOT EXISTS notes (
@@ -199,7 +147,7 @@ A local table and its seed (the notes table above is local, so an ordinary UPDAT
   );
 
   <script type="application/sql">
-    INSERT INTO notes (body) SELECT 'Try editing this' WHERE NOT EXISTS (SELECT 1 FROM notes);
+    INSERT INTO notes (body) VALUES ('Try editing this');
   </script>
 
 A migration, when a later version changes a table:
@@ -207,7 +155,7 @@ A migration, when a later version changes a table:
   --- file: migrations/002-add-priority.sql
   ALTER TABLE notes ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
 
-The kit, over local tables:
+The kit:
 
   <dai-value query="SELECT count(*) AS n FROM tasks WHERE done = 0"></dai-value> left
 
@@ -234,22 +182,8 @@ The kit, over local tables:
 - A control's own attributes data-x become :x, and what was typed into an input is :typed.
 - A picture goes in the document, in a BLOB column, so it travels with the file: <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">Add a photo</dai-attach>, and <img data-blob="photo" alt=""> to show it. Never write a file path or a URL to an image the document does not carry.
 
-A shared table, written and read:
+When another copy's changes arrive, the host applies them to the same tables and the application hears dai:merged; redraw on it (the kit's elements already do):
 
-  --- file: schema.sql
-  -- dai:replicated
-  CREATE TABLE IF NOT EXISTS moves (
-    game_id TEXT NOT NULL,   -- the games row's entity, as hex
-    ply     INTEGER NOT NULL,
-    san     TEXT NOT NULL
-  );
-
-  const entity = window.dai.replicated.insert("moves", { game_id, ply, san });   // add
-  window.dai.replicated.change("moves", entity, { game_id, ply, san: "Nf3" });   // every column
-  window.dai.replicated.remove("moves", entity);                                  // delete
-  const moves = db.selectObjects(
-    "SELECT lower(hex(_r_entity)) AS entity, ply, san, _r_conflicted FROM moves_current WHERE game_id = ? ORDER BY ply",
-    [game_id]);
   window.addEventListener("dai:merged", () => redraw());
 
 HOW TO HAND IT OVER
@@ -282,16 +216,16 @@ One fence around everything, not one per file: the file markers begin with three
 Every file starts with a line reading "--- file: " and its path, at the start of the line. Everything after that line belongs to that file until the next one. If a line inside a file would itself start with "--- file:", put a backslash in front of it.
 
 COMPLETE EXAMPLES
-One complete application per shape, each a bundle you could hand over as it is. Each schema.sql opens with the decision that led to its shape.
+A complete application, a bundle you could hand over as it is.
 
 ${renderExamples()}
 
 BEFORE YOU ANSWER, CHECK
-Every constraint for the shape you chose, by ID:
+Every constraint, by ID:
 
 ${renderChecklist()}
 
-And for every shape: the files are handed over as a tool call or as ONE fenced bundle; icon.svg exists; index.html has a description line and three dai:does lines; the background reaches every edge and content pads with var(--dai-safe-*, 0px).`;
+And: the files are handed over as a tool call or as ONE fenced bundle; icon.svg exists; index.html has a description line and three dai:does lines; the background reaches every edge and content pads with var(--dai-safe-*, 0px).`;
 
 /** The four custom properties a host sets; defined in rules.ts, re-exported for existing readers. */
 export { CSS_VARS } from "./rules.js";

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Chores for the whole family, ticked off as they get done" />
+  <meta name="dai:does" content="Give each chore to someone and set it to daily or weekly" />
+  <meta name="dai:does" content="Tick chores off and see who is on track this week" />
+  <meta name="dai:does" content="Hand the chart around so everyone's ticks are kept" />
+  <meta name="theme-color" content="#fbf7ee" />
+  <title>Family chores</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only. Shared rows are never seeded with SQL.
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+  </script>
+
+  <!-- Nothing to type into until app.js has started: a form on screen before
+       then takes typing the app cannot handle yet, and loses it. -->
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden inert>
+    <header>
+      <h1>Family chores</h1>
+      <button id="share" type="button" class="quiet">Share</button>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="week" class="week" aria-live="polite" hidden>
+      <h2>This week</h2>
+      <ul id="progress" class="progress-list"></ul>
+    </section>
+
+    <nav id="chips" class="chips" aria-label="Whose chores" hidden></nav>
+
+    <section>
+      <h2 id="list-title">Chores</h2>
+      <ul id="list" class="list"></ul>
+      <p id="empty" class="empty" hidden></p>
+    </section>
+
+    <form id="entry" class="card" autocomplete="off">
+      <h2 id="entry-title">Add a chore</h2>
+      <div class="fields">
+        <label class="wide">Chore <input id="title" required maxlength="80" placeholder="e.g. Empty the dishwasher" /></label>
+        <label>Whose <select id="who"></select></label>
+        <label>How often
+          <select id="cadence">
+            <option value="daily">Every day</option>
+            <option value="weekly">Once a week</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="save-entry" type="submit">Add</button>
+        <button id="cancel-edit" type="button" class="quiet" hidden>Cancel</button>
+      </div>
+    </form>
+
+    <section class="card">
+      <h2>Family</h2>
+      <ul id="people" class="people"></ul>
+      <p id="no-people" class="empty" hidden>Add everyone who has chores, starting with yourself.</p>
+      <form id="add-person" class="row" autocomplete="off">
+        <input id="person" required maxlength="30" placeholder="Name" aria-label="Name" />
+        <button type="submit">Add</button>
+      </form>
+    </section>
+
+    <dialog id="conflict">
+      <h2>Changed on two copies</h2>
+      <p>This chore was edited on both copies before they met. Keep the version that is right.</p>
+      <ul id="versions" class="versions"></ul>
+      <button id="conflict-close" type="button" class="quiet">Decide later</button>
+    </dialog>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+{
+  "scenario": "D267 counter over a pending total",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 4408878418624520,
+          "item_id": 4408878418624518,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 4408878418624513,
+          "name": "Food"
+        },
+        {
+          "id": 4408878418624514,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 4408878418624513,
+          "done": 0,
+          "id": 4408878418624515,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 4408878418624514,
+          "done": 0,
+          "id": 4408878418624516,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4408878418624517,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4408878418624518,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4408878418624519,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ],
+      "summary": [
+        {
+          "count": 2,
+          "id": 1
+        }
+      ],
+      "workouts": [
+        {
+          "id": 22007412424705,
+          "what": "workout B"
+        },
+        {
+          "id": 4408878418624521,
+          "what": "workout A"
+        },
+        {
+          "id": 4408878418624522,
+          "what": "workout A2"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "summary",
+        "[1]",
+        "pending"
+      ],
+      [
+        "workouts",
+        "[22007412424705]",
+        "pending"
+      ],
+      [
+        "workouts",
+        "[4408878418624522]",
+        "pending"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 4408878418624520,
+          "item_id": 4408878418624518,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 4408878418624513,
+          "name": "Food"
+        },
+        {
+          "id": 4408878418624514,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 4408878418624513,
+          "done": 0,
+          "id": 4408878418624515,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 4408878418624514,
+          "done": 0,
+          "id": 4408878418624516,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4408878418624517,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4408878418624518,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 4408878418624519,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ],
+      "summary": [
+        {
+          "count": 2,
+          "id": 1
+        }
+      ],
+      "workouts": [
+        {
+          "id": 22007412424705,
+          "what": "workout B"
+        },
+        {
+          "id": 4408878418624521,
+          "what": "workout A"
+        },
+        {
+          "id": 4408878418624522,
+          "what": "workout A2"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "summary",
+        "[1]",
+        "pending"
+      ],
+      [
+        "workouts",
+        "[22007412424705]",
+        "pending"
+      ],
+      [
+        "workouts",
+        "[4408878418624522]",
+        "pending"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  }
+}

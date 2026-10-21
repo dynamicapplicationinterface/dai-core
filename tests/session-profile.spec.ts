@@ -47,7 +47,7 @@ function build(schema: string): Promise<{ html: string; manifest: ContainerManif
   const dir = mkdtempSync(join(tmpdir(), "dai-session-"));
   writeFileSync(join(dir, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">x</p>', "utf8");
   writeFileSync(join(dir, "schema.sql"), schema, "utf8");
-  return compileDirectory({ sourceDir: dir, root: repoRoot, appName: "Session" }).then((built) => ({
+  return compileDirectory({ policyLayer: true, sourceDir: dir, root: repoRoot, appName: "Session" }).then((built) => ({
     html: built.html,
     manifest: JSON.parse(
       new TextDecoder().decode(parseContainer(built.html).archive[MANIFEST_ENTRY]!),

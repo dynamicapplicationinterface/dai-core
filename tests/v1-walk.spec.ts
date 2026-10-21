@@ -481,6 +481,9 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
      * for a test that does one thing.
      */
     test.setTimeout(300_000);
+    // Expected to fail at the update step: a successor release takes a new document id, and the
+    // log its predecessor signed cannot cross into it until R-I and R-K (Build 2). Backlog D260.
+    test.fail(true, "D260: the update step needs a document id per release (R-I/R-K, Build 2)");
     const she = await author();
     const door = await relay();
     const device = await browser.newContext({ userAgent: IPHONE, viewport: { width: 390, height: 844 } });

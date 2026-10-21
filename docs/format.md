@@ -931,3 +931,107 @@ otherwise; and the default as declared, verbatim, or nothing when the column
 declares none. A reader MAY check a copy against it; the comparison a merge
 makes is [SCHEMA_MISMATCH](#merge-whole-refusals)'s. The reference readers, `conformance/reference/dai_merge.py` and
 `conformance/readers/rust-merge`, are checked against this page.
+
+## The ordinary data interface
+
+A document with no session policy (R-O) keeps its data in ordinary SQLite
+tables, and each save's changes travel as one signed changeset, a row of
+`_cs_log` ([conformance/changesets](../conformance/changesets/README.md)).
+
+<a id="ranged-ids"></a>**Ranged ids.** An integer key the application leaves
+out, or gives as NULL, is drawn from the author's range: the author index in
+bits 32 to 52, a counter in bits 0 to 31. An explicit key is kept as given.
+The guarantee is:
+- an id is unique, and never reused within the author's range;
+- ids rise within one author's range;
+- the counter starts above every id the range has ever held, live or
+  deleted, written by this author or by another with an explicit key. So the
+  high-water mark is the log's, and it survives a restore from stored bytes
+  and a rebuild from the log (K06, K07).
+
+It is not SQLite's AUTOINCREMENT, which the rewrite drops. Another author's
+ids can sit above this author's next one, so ids do not give creation order
+across authors.
+
+<a id="engine"></a>**The engine (R-U).** The conformance baseline of the ordinary data
+interface is one SQLite build, the one the container packages:
+- `@sqlite.org/sqlite-wasm` 3.53.0-build1, an exact dependency;
+- SQLite 3.53.0, source id `2026-04-09 11:41:38 4525003a…f20b`;
+- `sqlite3.wasm` SHA-256 `02d7e481…d312`.
+
+Its compile options include `ENABLE_SESSION`, `ENABLE_PREUPDATE_HOOK`,
+`DEFAULT_RECURSIVE_TRIGGERS`, `ENABLE_FTS5`, `ENABLE_RTREE`, `DQS=0`,
+`MAX_TRIGGER_DEPTH=1000` and `TEMP_STORE=2`. This build's session extension
+captures generated columns (3.49.0 and later) and WITHOUT ROWID tables.
+`conformance/changesets/engine.json` holds the full source id, the hash and
+every option, and `tests/changesets/engine-pin.spec.ts` holds the running
+engine to it. What a capture holds, and what a trigger, a conflict algorithm
+or a generated column does, is this build's; a change of engine is a change
+to that record.
+
+Keyless capture is by the explicit `_dai_id` column, never the session
+extension's rowid mode (`SQLITE_SESSION_OBJCONFIG_ROWID`): a rowid does not
+survive VACUUM, and a key that moves is not an identity a changeset can
+carry.
+
+<a id="row-keys"></a>**Row keys.** A row's key, as `_cs_flag.pk` and
+`_cs_held.pk` hold it, is a JSON array with one entry per key column: an
+integer within ±(2^53 − 1) or text as plain JSON, a larger integer as
+`{"$int": "<digits>"}`, a BLOB as `{"$blob": "<hex>"}`, and a REAL with no
+fraction as the integer it equals (SQLite takes them for one key), or as
+`{"$real": "<value>"}` past 2^53 or when infinite. Text is folded as the key
+column's collation compares it: NOCASE lowers ASCII letters, RTRIM drops
+trailing spaces. Two keys SQLite takes for one row have one such text; a row
+is written back with the spelling its earliest-born version wrote. In a
+changeset, values keep their storage class: a REAL with no fraction, or an
+infinity, is a CBOR float64.
+
+<a id="schema-changes"></a>**Schema changes (R-S).** An ALTER TABLE or a DROP
+TABLE closes the capture epoch: what was captured is logged, the statement
+runs, and a new epoch begins. Schema does not travel; each copy makes its own
+changes, as the application's code does on each. What does travel:
+- a dropped table's rows, as deletes;
+- a table made since the last save, as its rows, logged by difference; a
+  table rebuilt under its old name (SQLite's twelve-step change, in one
+  transaction) logs only what the rebuild changed;
+- a renamed table or column carries its history here, and a change made
+  under the old name lands under the new one.
+
+A copy without a table or column a change names holds the row, flagged, until
+it makes it.
+
+<a id="refused-at-execution"></a>**Refused at execution (R-V).** What the data
+interface does not carry is refused as it runs, before any data is accepted
+under it, with one sentence (`CHANGES_REFUSED`): a write to the runtime's
+tables; ALTER or DROP TABLE prepared outside exec; a runtime name for a table,
+trigger, index or function; a trigger that writes the runtime's tables; a NULL
+in a key; a virtual table; ATTACH; the pragmas `writable_schema`,
+`schema_version`, `ignore_check_constraints`, `legacy_alter_table` and
+`trusted_schema`; `rowid` on a ranged-key table; and renaming or dropping a
+declared column. A save that fails and no retry cures refuses the document
+(`CHANGES_SAVE_REFUSED`, P3).
+
+<a id="data-interface-limits"></a>**What the data interface does not promise.**
+Each keeps every value in the cells, and flags what it cannot settle:
+- intent: `x = x + 1` on two copies is two versions of one value, a pending
+  conflict, never a sum (M07);
+- read dependencies: a write that relied on another row's absence is not
+  checked against the merge (M08), nor is a trigger that validates across
+  rows (T09);
+- derived values a trigger keeps: a stale total is pending, never recomputed
+  (T08);
+- a natural key names one entity across a delete and a re-insert; an old
+  change to it lands on the row made again (K13);
+- the table's name is its identity: a table dropped and made again is the
+  same table to a change made before (S02);
+- `user_version` and the other database settings are each copy's own (S08);
+- what this engine does with a BEFORE trigger that changes its own row is
+  what is captured; SQLite promises nothing there (T07);
+- an edit not yet saved when a page closes is lost as any unsaved edit is;
+  the store holds the last save (Q14);
+- by construction, the application holds one handle to an in-memory database
+  and no engine API: no second connection (C09), no incremental BLOB write
+  (C08), no hook (C10), no deserialize or backup (S11, P05), and the frame has
+  no network (T10);
+- history is kept whole: deleted values stay in `_cs_cell` and travel with
+  every copy (P07), and nothing is compacted yet (P08).

@@ -149,7 +149,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await new Promise<void>((r) => store.listen(0, r));
     storeBase = `http://localhost:${(store.address() as { port: number }).port}`;
 
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",
@@ -171,7 +171,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     );
     expect(swapped, "the profile line was swapped to close=creator").toContain("close=creator");
     writeFileSync(schemaPath, swapped, "utf8");
-    const builtCreator = await compileDirectory({ sourceDir: creatorDir, root: repo, appName: "Velvet Chess" });
+    const builtCreator = await compileDirectory({ policyLayer: true, sourceDir: creatorDir, root: repo, appName: "Velvet Chess" });
     creatorContainer = join(mkdtempSync(join(tmpdir(), "dai-link-creator-")), "velvet-chess.dai.html");
     writeFileSync(creatorContainer, builtCreator.html, "utf8");
 
@@ -189,7 +189,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
         "\n-- dai:replicated author=joiner\nCREATE TABLE answers (\n  note TEXT NOT NULL\n);\n",
       "utf8",
     );
-    const builtRoles = await compileDirectory({ sourceDir: rolesDir, root: repo, appName: "Velvet Chess" });
+    const builtRoles = await compileDirectory({ policyLayer: true, sourceDir: rolesDir, root: repo, appName: "Velvet Chess" });
     rolesContainer = join(mkdtempSync(join(tmpdir(), "dai-link-roles-")), "velvet-chess.dai.html");
     writeFileSync(rolesContainer, builtRoles.html, "utf8");
   });
@@ -1860,7 +1860,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const uuid = crypto.randomUUID();
     const dir = mkdtempSync(join(tmpdir(), "dai-two-publishers-"));
     const build = async (key: string, name: string): Promise<string> => {
-      const built = await compileDirectory({
+      const built = await compileDirectory({ policyLayer: true,
         sourceDir: join(repo, "tests", "fixture", "chess"),
         root: repo,
         appName: "Velvet Chess",

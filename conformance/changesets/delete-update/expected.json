@@ -1,0 +1,147 @@
+{
+  "scenario": "S4 delete/update",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 3483141167644680,
+          "item_id": 3483141167644678,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 3483141167644673,
+          "name": "Food"
+        },
+        {
+          "id": 3483141167644674,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 3483141167644673,
+          "done": 0,
+          "id": 3483141167644675,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 3483141167644674,
+          "done": 0,
+          "id": 3483141167644676,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 3483141167644677,
+          "note": null,
+          "qty": 2,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 3483141167644678,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 3483141167644679,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "items",
+        "[3483141167644677]",
+        "delete-conflict"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 3483141167644680,
+          "item_id": 3483141167644678,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 3483141167644673,
+          "name": "Food"
+        },
+        {
+          "id": 3483141167644674,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 3483141167644673,
+          "done": 0,
+          "id": 3483141167644675,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 3483141167644674,
+          "done": 0,
+          "id": 3483141167644676,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 3483141167644677,
+          "note": null,
+          "qty": 2,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 3483141167644678,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 3483141167644679,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [
+      [
+        "items",
+        "[3483141167644677]",
+        "delete-conflict"
+      ]
+    ],
+    "held": [],
+    "rejected": []
+  }
+}

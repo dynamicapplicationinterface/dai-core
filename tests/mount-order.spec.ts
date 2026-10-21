@@ -42,7 +42,7 @@ type Opened = { chessFile: string; forgerFile: string };
 /** Chess, played once, with nothing in flight; and a forger that asks for a header naming it. */
 async function openChessAndBuildForger(page: Page): Promise<Opened> {
   const dir = mkdtempSync(join(tmpdir(), "dai-mount-order-"));
-  const chess = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const chess = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const chessFile = join(dir, "chess.dai.html");
   writeFileSync(chessFile, chess.html, "utf8");
 
@@ -93,7 +93,7 @@ document.getElementById("out").textContent = "ready";
 `,
     "utf8",
   );
-  const forger = await compileDirectory({ sourceDir: source, root: repo, appName: "Forger" });
+  const forger = await compileDirectory({ policyLayer: true, sourceDir: source, root: repo, appName: "Forger" });
   const forgerFile = join(dir, "forger.dai.html");
   writeFileSync(forgerFile, forger.html, "utf8");
   return { chessFile, forgerFile };
@@ -252,12 +252,12 @@ test("the last shell's handshake, after the next document is framed, makes it a 
     };
   }, TO_HOST.HANDSHAKE);
   const dir = mkdtempSync(join(tmpdir(), "dai-mount-order-shell-"));
-  const chess = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const chess = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const chessFile = join(dir, "chess.dai.html");
   writeFileSync(chessFile, chess.html, "utf8");
   const source = mkdtempSync(join(tmpdir(), "dai-mount-order-other-"));
   writeFileSync(join(source, "index.html"), '<!doctype html><meta charset="utf-8"><title>Other</title><p id="out">ready</p>', "utf8");
-  const other = await compileDirectory({ sourceDir: source, root: repo, appName: "Other" });
+  const other = await compileDirectory({ policyLayer: true, sourceDir: source, root: repo, appName: "Other" });
   const otherFile = join(dir, "other.dai.html");
   writeFileSync(otherFile, other.html, "utf8");
 

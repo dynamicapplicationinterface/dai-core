@@ -28,7 +28,7 @@ const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocat
 
 test("after her own close, an author's writes in that session are refused by name, and none is stored", async ({ browser }) => {
   test.slow();
-  const built = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const container = join(mkdtempSync(join(tmpdir(), "dai-closed-writes-")), "chess.dai.html");
   writeFileSync(container, built.html, "utf8");
   const context = await browser.newContext();

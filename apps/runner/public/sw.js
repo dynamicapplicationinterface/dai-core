@@ -91,6 +91,9 @@ const PRECACHE = [
    * the page happens to mention, and stops covering it silently.
    */
   "__DAI_CONFUSABLES__",
+  // The merge module under its digest name (R-O, Build 1): every document
+  // with no session policy waits for it at open, so an offline reopen needs it.
+  "__DAI_MERGE__",
 ];
 
 /**

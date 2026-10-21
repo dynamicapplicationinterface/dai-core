@@ -21,35 +21,23 @@ loses your data are different problems with different fixes.
 Only `usable` counts as working. An application that mounts beautifully and
 saves nothing is a demonstration, not a document.
 
-## Shared prompts, and what is not measured
+## Shared prompts, retired
 
-A prompt with `"shape": "passable"` or `"session"` asks for a shared document,
-and it is scored differently, because of one fact: a shared document writes its
-shared tables only under a host, and this harness opens the file without one.
-Driving it here would fail every shared application for a reason that is not
-the application's.
+Every prompt asks for one person's application. The shared prompts (a
+`"shape"` of `passable` or `session`, among them `two-player-game`) asked a
+model for the policy layer: tables marked `-- dai:replicated`, a session
+profile, writes through `window.dai.replicated`. Under one shape (R-O) an
+authored schema no longer declares those. A document's data is shared by the
+ordinary data interface, ordinary tables and signed changesets, whatever the
+application writes, so there is no separate shared shape for a model to get
+right or wrong. They were retired on 19 October, with the `shaped` stage that
+scored them.
 
-So a shared prompt stops at a fifth stage, between `built` and `mounted`:
-
-| Stage | The question |
-|---|---|
-| `checked` | As above — and the lint's shared-table checks run here: shared rows written only through `window.dai.replicated`, read only through `_current`, a `dai:merged` listener, conflicts shown, no UNIQUE or CHECK. |
-| `built` | As above. |
-| `shaped` | Does the source declare the shape the prompt needs — at least one `-- dai:replicated` table, and for a session the `-- dai:profile session` line — and does no shared table store a column the prompt names as derived state? |
-
-`mounted` and `usable` are reported as **not measured**, never as passed, and a
-shared prompt counts as passing when it reaches `shaped`. The rate is the share
-of prompts that reached their target: `usable` for a solo prompt, `shaped` for a
-shared one.
-
-`two-player-game` is the session prompt, and it is how the claim "a model given
-only the model file writes a correct session application on the first attempt"
-becomes a number rather than an assertion. What `shaped` cannot see is whether
-the application behaves across two devices — joins on open, redraws when the
-other player's disc arrives, shows two moves at one turn. That is measured for
-the examples by `tests/examples-shared.spec.ts`, which drives them across
-devices in the real host, and a hosted stage for candidates would follow the
-same pattern.
+The examples built on the policy layer stay: they build through its own path
+(`--policy-layer`, R-R) and are driven across devices by
+`tests/examples-shared.spec.ts`. The candidates already answered for the
+retired prompt stay in `eval/candidates` as they were written; the harness no
+longer scores them.
 
 ```bash
 node scripts/evaluate.mjs eval/candidates/reference --json
@@ -157,6 +145,6 @@ A benchmark of models. It measures how well a set of instructions travels, using
 models as the medium — and the instructions are ours. A low rate is our result
 before it is anybody else's.
 
-The starter set is five prompts — four solo and one session — which is enough
+The starter set is four prompts, which is enough
 to prove the pipeline and far too few to publish. A real run wants several hundred, and the cost of that is
 the completions rather than the scoring.

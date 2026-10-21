@@ -93,7 +93,7 @@ const ownTop = (app: FrameLocator): Promise<{ top: number; pending: number }> =>
 test("a session whose creator signed twice is void, and the copy that took part is told so and offered a new game", async ({ browser }) => {
   test.slow();
   const scratch = mkdtempSync(join(tmpdir(), "dai-session-void-"));
-  const built = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const container = join(scratch, "chess.dai.html");
   writeFileSync(container, built.html, "utf8");
   const contexts = [await browser.newContext({ acceptDownloads: true }), await browser.newContext({ acceptDownloads: true })];

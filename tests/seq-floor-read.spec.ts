@@ -29,7 +29,7 @@ test.describe("a sequence floor that does not answer", () => {
 
   let container: string;
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

@@ -53,7 +53,7 @@ async function bigDocument(prefix: string, withIcon: boolean): Promise<string> {
     );
   }
   writeFileSync(join(dir, "index.html"), `<!doctype html><meta charset="utf-8"><p>big</p><!-- ${filler} -->`, "utf8");
-  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Big one" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "Big one" });
   const file = join(dir, "big.dai.html");
   writeFileSync(file, built.html, "utf8");
   return file;
@@ -77,7 +77,7 @@ test.describe("sending a document", () => {
       '<!doctype html><meta charset="utf-8"><style>body{margin:0;background:rgb(90, 20, 60)}</style><p>plum</p>',
       "utf8",
     );
-    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Plum" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "Plum" });
     const file = join(dir, "plum.dai.html");
     writeFileSync(file, built.html, "utf8");
 
@@ -278,7 +278,7 @@ test.describe("sending a document", () => {
       "-- dai:replicated\nCREATE TABLE moves (ply INTEGER NOT NULL, san TEXT NOT NULL);\n",
       "utf8",
     );
-    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Played together" });
+    const built = await compileDirectory({ policyLayer: true, sourceDir: dir, root: repo, appName: "Played together" });
     const file = join(dir, "played.dai.html");
     writeFileSync(file, built.html, "utf8");
     return file;
@@ -371,7 +371,8 @@ test.describe("what a share carries", () => {
       ].join("\n"),
       "utf8",
     );
-    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Jobs" });
+    // Built as before R-O: a plain document whose share leaves the entries out unless asked.
+    const built = await compileDirectory({ policyLayer: true, sourceDir: source, root: repo, appName: "Jobs", changesetLog: false });
     const file = join(source, "jobs.dai.html");
     writeFileSync(file, built.html, "utf8");
 

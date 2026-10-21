@@ -316,6 +316,9 @@ principle beside them.
     code names its next action before release. Recorded in format-design.md's
     properties as a product principle, not a format rule. *Rejected:*
     technically safe dead ends; promising data survives deletion everywhere.
+    *Added 19 October:* a save that fails and cannot succeed on a retry is a
+    document-level refusal: one sentence, the last saved work kept, Save a
+    copy offered, later writes held.
 
 ### The owner/author rulings (18 October)
 
@@ -425,6 +428,27 @@ nothing lost, in both readers; B(ii): on the same row both copies converge
 on two heads, and `_current` shows one value, picked by author id on a clock
 tie (`ORDER BY _r_lc DESC, hex(_r_replica) ASC`), which to the person is
 arbitrary.
+
+**R-F amended, 18 October.** For documents under the ordinary data
+interface (R-O):
+- **Different columns of one record merge by default.** An app may declare
+  columns *coupled*. Concurrent changes to coupled columns are one conflict,
+  and the record shows the coupled values together, all from one change.
+- **The same column:** both values are kept. The row holds the later value
+  by (lc, author) and carries the pending mark. A new signed change that
+  acknowledges both parents resolves it, as before.
+- **An app may declare a column *consequential*.** For such a column, the
+  kit's query views exclude a row while its value in that column is
+  pending. Every other read sees the row with the later value.
+
+The clauses on V1.0 and V1.2 granularity and the clock-tie rule stand.
+*Rejected:* a declaration required before columns merge (R-F as first
+written), since undeclared apps then lose concurrent edits to different
+fields to a conflict nobody needed; a universal "pending never feeds
+calculations", since a list, a label or a note is better shown with its
+later value than hidden. *Evidence:* the changeset spike (S2, S3, S5b,
+S5c) and Build 1 (`tests/changesets/merge-policy.spec.ts`). The review of
+PR #9 (PR9-H2) found that the code did not match R-F as first written.
 
 **R-G. Freshness witnesses.**
 - **A surviving second client** remembers the latest head it saw. On its
@@ -538,6 +562,380 @@ replicated-table compiler as the universal payload, unproven. *Evidence:*
 §3, contradiction 6 (simple one-person apps, against replication and
 sessions); "Owner/author spike", B: sessionless replication converges for
 one person's contexts, with the same-row conflict still open.
+
+**R-P. Stop: no new protocol surface before Gate B.** Ruled 17 October,
+filed after R-O. No new protocol surface (seats, rosters, floors, mailbox
+sessions, new vectors, reader levels) is built before Gate B. Everything
+that exists stays in CI. R-O's lifecycle means the existing engine goes
+everywhere once its data interface is proven, not that the engine grows.
+*Rejected:* growing the protocol while the data interface is unproven.
+*Evidence:* `handoff-2026-10-18.md`, "Keep all of it in CI unchanged, but
+build nothing new there until Gate B", and Gate B under it.
+
+**R-Q. The changeset payload is R-O's data interface, not R-P's surface.**
+Ruled 18 October. The `_cs_log` payload,
+`cbor([1, [[table, key, op, new, old, bases, seen], …]])`, and the policy
+that projects it are how any reader reads a plain document's data. They
+are the data interface R-O requires, not new protocol of the kind R-P
+stops. They get readers on the same footing as the authorship layer:
+- **Now:** vectors under `conformance/changesets/`, and the Python reader
+  (`conformance/reference/dai_changes.py`) passing them;
+- **Before Gate C:** the Rust reader.
+
+*Rejected:* holding the payload back as surface under R-P, since without
+it the documents R-O makes cannot be read; and a payload that only the
+runtime reads, with no vectors (PR9-M4). *Evidence:* the review of PR #9,
+M4 and question 8.
+
+**R-R. Entry-point parity (§4.9).** Ruled 19 October. Every entry point
+refuses what `dai check` refuses. A schema rule the lint holds (`one-shape`,
+`declaration`) is held by the compiler too, with the lint's message, so the
+command line's build, `create_dai_app`, the paste box and the desktop app
+refuse it whichever door the files came through, and no door builds a
+document the checker would refuse. The documents built through the policy
+layer before R-O (R-P) build through their own path: the compiler's
+`policyLayer` option, `dai build --policy-layer` on the command line, which
+no authoring door sets. The marker scan reads a schema as the policy layer
+does: a byte-order mark is dropped, and a no-break space or a form feed is
+a space.
+*Rejected:* refusing at the checker only, which left the model's own path
+building a marked schema into the policy layer (1b-M1); a scan that
+allowed only spaces and tabs, which missed markers the policy layer's
+rewrite still read (1b-L5). *Evidence:* the review of Build 1b, 1b-M1 and
+1b-L5; `tests/changesets/authoring.spec.ts`, "one shape at every entry
+point".
+
+**R-S. The capture-epoch boundary.** Ruled 19 October. A signed batch
+describes an immutable, committed set of local effects from a known schema
+and causal baseline.
+- A save is refused or deferred while the app holds a transaction, decided
+  by `sqlite3_get_autocommit`, never by our bookkeeping.
+- Extraction happens only at a committed boundary.
+- The local epoch is logged and the session rotated BEFORE any remote apply
+  or runtime bookkeeping touches the database.
+- Remote apply runs on a connection carrying no app TEMP triggers.
+- The local delta is frozen before any reprojection; the baseline advances
+  only after the batch is durable; a resolution to the displayed value is
+  recorded though no byte changed (added 20 October).
+
+Nothing arriving remotely, written by the runtime, or occurring after
+extraction can become part of the person's authorship. The provenance
+invariant, as the catalog states it: "Remote application and runtime
+bookkeeping cannot become newly authored local changes."
+
+*Retired 20 October:* "DDL closes the capture epoch" (added 19 October), and
+its machinery. Under R-W the application makes no schema change, so there is
+no epoch for a DDL to close.
+*Rejected:* disabling the session during apply as the isolation mechanism
+(C07, reproduced). *Evidence:* the data-interface catalog
+(`handoff-2026-10-19.md`), C07, Q01, Q02, Q07, Q08, T01, and section 10.
+
+**R-T. Valid materialization.** Ruled 19 October. Merged state is never
+presented as settled when a declared constraint fails.
+- The combined candidate is validated. A CHECK, UNIQUE or FK violation
+  across individually valid edits keeps both proposals as a constraint
+  conflict (pending), never a settled invalid row.
+- The data interface promises state convergence and no silent loss; it
+  does not promise serializability.
+- Intent (counters), read dependencies, and trigger-maintained derived
+  values are not inferred. The model file teaches totals in queries, not
+  triggers; counters are flagged unless declared.
+
+*Rejected:* inferring intent from before/after values. *Evidence:* the
+catalog, M02, M06, M07, M08, T08, and "Three things the changeset cannot
+tell you".
+
+**R-U. The engine pin.** Ruled 19 October. The shipped sqlite-wasm version
+and compile options are recorded in `docs/format.md` as the conformance
+baseline. Keyless capture is by the explicit `_dai_id` column, not the
+session's rowid mode: rowids do not survive VACUUM. *Evidence:* the
+catalog, C01, S10, P11, and its version corrections.
+
+**R-V. Refuse before accepting.** Ruled 19 October. Every SQLite shape the
+data interface does not support is refused at execution, before any data
+is accepted under it. No input is accepted and then mishandled.
+*Rejected:* accepting a write and losing, misattributing or diverging it
+later, at the save or on another copy. *Evidence:* the review of Builds
+1c and 1d (`handoff-2026-10-19.md`), 1d-H1 to 1d-H5.
+
+**R-W. The schema belongs to the release.** Ruled 20 October. A document's
+schema is declared in `schema.sql`, signed in `schema.json`, and changed
+only through a release (R-I). The application's DDL is refused at prepare,
+through every entry point (exec, prepare, the select helpers), with one
+sentence: "This change needs a new version of the app; the current version
+was left unchanged."
+- **The one admission:** `CREATE TABLE`, `INDEX`, `TRIGGER` or `VIEW ... IF
+  NOT EXISTS` whose object already exists with the release's canonical
+  definition. It is a verified no-op. A mismatch, in definition or in type,
+  is refused.
+- **A missing declared object** is a damaged mount: the host repairs it or
+  refuses the document. The application never recreates it.
+- **TEMP DDL** on the application's connection is refused.
+- **Prepared statements are bound to the mount.**
+- "DDL closes the epoch" (R-S) is retired and its machinery removed.
+
+*Rejected:* runtime schema change; SQLite's native `IF NOT EXISTS`
+semantics, under which a different definition is silently a success.
+*Evidence:* the review of Build 1e (`handoff-2026-10-19.md`), 1e-H1, 1e-H2,
+1e-H4, 1e-H5, 1e-M1, 1e-M2, 1e-L1, 1e-L2 and 1e-L3, each a consequence of
+following a schema change at runtime; external review 2026-10-20, RW-01 to
+RW-12.
+
+#### R-X — Authorship records changes and explicit decisions, not touches
+
+**Problem**
+
+An application may name every field in an UPDATE while changing only one. Neither membership in the statement’s SET list nor a pending flag establishes that the application intended to change or resolve the other fields.
+
+SQLite’s UPDATE OF triggers identify columns named in the statement, not columns the person deliberately edited. Consequently, a provenance trigger cannot infer resolution intent from firing alone.
+
+A projected value remains attributable to its recorded source until a local operation actually changes it or explicitly accepts it as a resolution.
+
+**1. The unit is a column or a declared coupled group**
+
+An independent column is one decision unit. A dai:coupled group is one tuple-valued decision unit.
+
+Pending is derived status attached to the affected unit and its retained alternatives. It is not an instruction to author a new version.
+
+For each unit, the runtime must distinguish:
+
+* Echo: writing back the bound projection unchanged.
+* Edit: changing the unit’s value relative to that projection.
+* Resolution: explicitly accepting a value against identified alternatives, whether or not its bytes change.
+
+“Bound projection” means the particular materialized state and provenance against which the operation was made—not whatever projection happens to exist when the save is eventually signed.
+
+**2. An unchanged write is not an edit, even when pending**
+
+The authorship predicate is:
+
+```
+emit an operation for unit U when:
+    its committed value differs from its bound projected value
+    OR
+    an explicit resolution was recorded for U
+```
+
+It is not:
+
+```
+U is pending OR its value changed
+```
+
+An echo produces no new version of that unit, does not clear its pending state, and cannot supersede any alternative.
+
+Equality uses the existing typed-value contract, including storage class. Logical key equality and stored key spelling remain separate.
+
+This rule concerns the echoed unit. It does not suppress ordinary SQL execution or discard real, committed effects of application triggers.
+
+**3. Signed operations must bind their causal basis**
+
+Yes: the signature must bind what the operation is based on, not merely its output value. But one projected version and a set of alternatives being resolved are different things.
+
+The authenticated operation must bind, directly or through authenticated references:
+
+```
+document/entity identity
+schema and decision-unit identity
+operation kind: edit or resolution
+resulting typed value or complete coupled tuple
+basis: source version(s) of the bound projection
+resolves: alternatives explicitly accepted/rejected by this decision
+```
+
+resolves may be absent for an ordinary edit. No particular new wire encoding is required if the existing signed representation already expresses these distinctions unambiguously.
+
+A normal edit may supersede its projected basis. It does not implicitly resolve every competing alternative merely because the host possesses those alternatives. A user action choosing a replacement can submit an edit and an explicit resolution together.
+
+The receiving copy must never reconstruct this basis from its own current projection, arrival order, or pending flags.
+
+*Projection disagreement does not require no-op signatures*
+
+Two copies can show different values while holding different evidence. Once they receive the same admitted evidence, the deterministic projector must produce the same result.
+
+If they hold the same evidence and schema but still project differently, that is a projection defect.
+
+Signing unchanged displayed values is not a convergence mechanism. It would turn differences in delivery timing into new authored decisions.
+
+**4. Resolution requires an explicit, observation-bound operation**
+
+Keeping the displayed value must use a host/kit resolution operation distinct from an ordinary SQL assignment.
+
+The runtime supplies an opaque observation token identifying the unit, the displayed value’s provenance, and the alternatives presented for resolution. The resolution binds that observation and the chosen result.
+
+The token must not silently expand to include alternatives received afterward. A newly arrived alternative remains unresolved unless a subsequent explicit decision includes it.
+
+The resolution and its durable log entry commit together. It must be recorded even when the materialized SQLite bytes remain unchanged. Native session extraction cannot supply that event by itself: when a tracked row retains its original field values, SQLite emits no corresponding change.
+
+This replaces RW-12’s inference that assigning a pending field to its displayed value proves a resolution. RW-12’s desired outcome remains; its implicit-intent mechanism is retired.
+
+**5. Coupling changes the decision’s scope, not its existence**
+
+For dai:coupled qty unit:
+
+| Operation | Result |
+| --- | --- |
+| Write back both qty and unit unchanged | Neither is a resolution. No tuple version is authored. |
+| Change qty, retaining the displayed unit | Author one complete tuple edit, based on the bound tuple. Do not independently resolve unrelated alternatives. |
+| Explicitly choose the displayed (qty, unit) tuple | Author one tuple resolution, even though neither stored value changes. |
+| Resolve only qty while leaving unit’s coupled meaning unspecified | Refuse the incomplete resolution or require selection of a complete tuple. |
+
+An unchanged member travels with a genuine tuple edit to preserve the declared coupling. Its presence does not create an additional independent decision.
+
+**6. Key spelling follows the same rule**
+
+1f-M2 is the same family.
+
+For a logical key whose spelling is a separately versioned value:
+
+* Echoing the displayed spelling does not author a new spelling version.
+* Actually respelling it authors a change.
+* Explicitly keeping the displayed spelling against alternatives authors a resolution, even with no byte change.
+
+The operation addresses the stable logical entity. It must not manufacture a new entity merely to record a spelling decision.
+
+**7. The boundary must survive delayed form saves**
+
+An execution-time baseline is not necessarily the state a form previously read.
+
+If a form read projection P and remote application replaces it with Q before submission, unchanged values from P must not automatically become intentional reversions of Q.
+
+A read-modify-write workflow claiming this protection must carry its observation token or operate against a stable edit snapshot. A stale observation must receive defined rebase/conflict handling; it must not be silently rebound to newer alternatives.
+
+For unannotated raw SQL, the runtime can establish execution-time effects. It cannot infer an earlier UI observation or human resolution intent from bound values alone.
+
+**Rejected**
+
+Row-level or per-column pending as authority to author an unchanged value; SET-list membership as resolution intent; signing no-ops to force convergence; coupling as permission to expand an echo into a decision; and replacing signed causal references with local flags.
+
+**Guarantee**
+
+Writing back a projection does not claim its authorship. A local operation authors only a genuine change or an explicit decision, scoped to its decision unit and bound to the versions that decision concerns. Unrelated writes and unseen alternatives cannot be resolved by implication.
+
+#### R-X red test
+
+**The single red test**
+
+R-X: form echo is not resolution; explicit keep is
+
+Use one three-author scenario with two successive assertions, so an implementation cannot pass merely by dropping all same-value writes.
+
+Declare:
+
+```sql
+CREATE TABLE items (
+    id INTEGER PRIMARY KEY,
+    qty INTEGER NOT NULL,
+    unit TEXT NOT NULL,
+    note TEXT
+    -- dai:coupled qty unit
+);
+```
+
+Start A, B, and C from the same committed row:
+
+```
+id = 7
+(qty, unit) = (1, "kg")
+note = ""
+```
+
+*Arrange the conflict*
+
+A writes and signs (2, "kg"). B concurrently writes and signs (3, "kg").
+
+Exchange A and B’s evidence so their coupled unit is pending. Fix the fixture’s clocks/authors so the displayed tuple is (3, "kg").
+
+Independently, C writes and signs (4, "kg") from the common starting state. Withhold C’s batch.
+
+*First assertion: a full-form save changes only the note*
+
+A reads the displayed row. Its application changes only note, but submits:
+
+```sql
+UPDATE items
+SET qty = 3,
+    unit = 'kg',
+    note = 'packed'
+WHERE id = 7;
+```
+
+Save and inspect the authenticated operation, not merely the visible row.
+
+Required:
+
+```
+A's new operation authors note = "packed".
+It authors no qty/unit version.
+It carries no resolution of qty/unit.
+The original tuple alternatives remain pending.
+```
+
+This is the red that defeats pending OR changed, even with per-column flags. Pending qty is unchanged, so treating pending as authority manufactures a tuple edit.
+
+*Second assertion: explicitly keeping that same tuple does log a decision*
+
+Before C’s batch is delivered, obtain the conflict observation token naming A’s (2, "kg") and B’s (3, "kg").
+
+Invoke the explicit resolution operation to keep (3, "kg").
+
+Required:
+
+```
+A new signed resolution exists despite unchanged qty/unit bytes.
+It binds the observed basis and resolves precisely A's and B's alternatives.
+Its chosen value is the complete tuple (3, "kg").
+```
+
+Now deliver C’s withheld (4, "kg") batch and the other batches to fresh readers in every dependency-respecting delivery order, including C before and after the resolution.
+
+Required:
+
+```
+note = "packed"
+Unresolved tuple alternatives:
+    resolution → (3, "kg")
+    C          → (4, "kg")
+```
+
+All readers must agree on canonical state, pending alternatives, and deterministic display. C’s version must not be superseded by the earlier form echo or by a resolution that did not include it.
+
+The decisive distinction is not finer-grained pending flags. It is an authenticated distinction between “I wrote this field back” and “I chose this value.”
+
+### The data interface's runtime rules
+
+What the runtime holds for every document under the ordinary data
+interface (R-O; `src/changesets.ts`). The first three came with Build 1,
+and are set, not held (D259); the last two with Build 1c.
+
+1. **Foreign keys are on from open.**
+2. **A table with no primary key has a ranged key.** The compiler gives it
+   an explicit `_dai_id` column, drawn from the author's range, as its
+   first column, and a table the application makes later is given one when
+   it is adopted. A rowid moved into the range after the insert, as Build 1
+   had it, was recorded by the session under the rowid it had first, and
+   the row never reached the log (X1).
+3. **Seeds run once**, when the document is created.
+4. **The capture is cleared only after the batch is logged.** A save builds
+   its changeset and writes it to the log inside a savepoint, and the
+   session is cleared only once the batch is in the log. A save that fails
+   at any step leaves nothing of itself in the log and every change it held
+   for the next save, which logs everything since the last save that
+   succeeded. *Rejected:* clearing first, which lost every change since the
+   last save, in every table, when one row's bases could not be built
+   (1b-H2).
+5. **Declarations are read strictly** (`src/declarations.ts`).
+   `-- dai:coupled` names two or more of the table's own columns,
+   `-- dai:consequential` one or more, each spelled exactly as declared,
+   separated by spaces, with nothing else on the line, no runtime column
+   (`rowid`, `oid`, `_rowid_`, `_dai_id`), and no column in two coupled
+   groups. The lint and the compiler refuse a `-- dai:` line that does not
+   read exactly, with one message (`declaration`); the runtime ignores one
+   rather than guessing what it meant. *Rejected:* a loose reading, under
+   which a trailing explanation named a column that does not exist,
+   `LAT LNG` coupled nothing on lowercase columns, `rowid` logged a copy's
+   hidden rowid as a cell, and overlapping groups mixed values (1b-H2,
+   1b-M2, 1b-M3, 1b-L3).
 
 ### manifestVersion 3
 
@@ -9855,10 +10253,15 @@ e2e test with an app that cannot be trusted.
 
 #### D257 — The count gate does not cover WebKit
 
-*Status: open, held not fixed. Filed 18 October, from the assessment (C8).*
+*Status: fixed, 19 October (handoff 19 October, "CI shards"). Filed 18
+October, from the assessment (C8).*
 
 **Change:** the count gate covers WebKit, and the floor is raised to what CI
 passes.
+
+Every gating part keeps its count report, and the `count-gate` job sums
+them per project against the floor (`scripts/count-parts.mjs`). The floor
+was taken from run 39343228551: chromium 848, webkit 841, node 703.
 
 #### D258 — WebAuthn `largeBlob` as a single-device freshness witness
 
@@ -9868,6 +10271,517 @@ One bounded experiment: write a checkpoint digest to the owner passkey's
 `largeBlob`, wipe the website data, read it back, and repeat on a second
 iPhone. If it fails, stop: the surviving second client stays the only
 witness (R-G).
+
+### PR #9 review residue (filed 18 October)
+
+#### D259 — The app can undo the three runtime rules on its own copy
+
+*Status: open, stated, not fixed. Filed 18 October, from the review of PR #9
+(PR9-M2).*
+
+The three runtime rules are set, not held:
+- **Foreign keys.** `PRAGMA foreign_keys = OFF` from the application takes
+  effect until the next projection.
+- **The keyless table's ranged key.** As filed, `DROP TRIGGER
+  "_cs_rowid_<t>"` took effect, and the table's next row got rowid 1 on
+  every copy. Since Build 1c the key is a column default (`_dai_id`), not a
+  trigger; recreating the table without the column would undo it.
+- **Seeds run once.** This rests on a `_dai_meta` row the application can
+  delete.
+
+The `_cs_` bookkeeping tables have no guards. A table created through
+`prepare().step()` is never adopted. A trigger whose text contains
+`dai_projecting()`, even in a comment, is never guarded.
+
+This is the dark-session boundary (ruling 10 above). The application writes
+with its user's authority, so what it undoes it undoes on its own copy:
+- the rows it writes go out signed in its own author's name;
+- it cannot forge another author or bypass another copy's verification;
+- its copy's ids, keys and constraints can diverge from what the runtime
+  set.
+
+What another copy admits is decided by that copy. Stated, not fixed.
+**Change:** none for V1.0. Revisit if a host-owned operation is reachable
+this way. **Acceptance:** the eleventh attack review names none.
+
+#### D260 — The V1 walk's update step needs a document id per release
+
+*Status: open, held. Filed 18 October, from Build 1 and the review of PR #9
+(question 7).*
+
+`v1-walk.spec.ts`, "open, write, reopen, update or not, and share", fails at
+the update step on WebKit, the only engine it runs on. It is marked
+`test.fail` with this entry.
+
+The cause is confirmed by trace:
+- `core.ts` mints a new `documentUuid` for each build that does not pass
+  one;
+- `compile.ts` records the predecessor in `supersedes`;
+- batches verify against the mount's document.
+
+So a successor release cannot admit the log its predecessor signed, and the
+merge card refuses it. Three other paths depend on the same behavior:
+succession, rebuild-refused and the reference-link card.
+
+**Change:** successor authority (R-I) and the app/document split (R-K), in
+Build 2. **Acceptance:** the walk passes and `test.fail` comes off.
+
+#### D261 — `projectAdmitted` inside an application transaction loses the write
+
+*Status: open, held. Filed 19 October, from the review of Build 1b (1b-L1).
+Not reachable from the frame today.*
+
+With an application transaction open across admission and projection,
+`inTransaction` skips the save, projection writes over the row the
+application changed, and the save at its commit signs the projected value
+as the author's own: the person's write is lost and nothing is flagged.
+
+The frame cannot reach this: the merge's `BEGIN` throws while the
+application holds a transaction, and `startChanges` runs before application
+code. But `withoutCapture` is written to run inside a transaction, so a
+later caller would reopen PR9-H1.
+
+**Change:** `projectAdmitted` refuses inside a transaction instead of
+skipping the save. **Acceptance:** the review's harness run is refused, and
+the person's write survives.
+
+#### D262 — `settled()` lets some spellings of a query through unsettled
+
+*Status: open, held. Filed 19 October, from the review of Build 1b
+(1b-L2).*
+
+The kit's `settled()` puts the settle expression in front of a view's
+query only when the query starts with `SELECT` or `WITH` and names the
+table unqualified. A leading `--` comment or a parenthesized select is
+returned unchanged, and a `main.`-qualified table name gets the expression
+without reading it. In each case a row whose consequential column is
+pending feeds the view, which R-F amended says it must not.
+
+**Change:** settle what the query reads, not how it is spelled.
+**Acceptance:** each of the three spellings leaves a pending consequential
+row out of a `<dai-rows>` and a `<dai-value>` view.
+
+### Data-interface catalog residue (filed 19 October)
+
+The catalog rows Build 1d left open (handoff 19 October, "Residue, not
+closed here"), the next to take red-first. The row ids are the catalog's.
+
+#### D263 — A crash between the export and the log stores an unlogged row (Q09)
+
+*Status: fixed 19 October (Build 1e): the frame logs what was written while
+the signature was out before it takes the bytes; test 10 of
+`tests/changesets/runtime.spec.ts`. Filed 19 October, from the catalog (Q09)
+and Build 1d's residue.*
+
+Build 1d narrowed Q07's window and did not close it. The save in flight
+exports bytes that already hold an edit made during the signature, before
+the next save logs that edit. A crash in that window stores a row no log row
+carries, and recovery reads it as settled.
+
+**Change:** the saved bytes and their log commit together, or recovery
+finds the unlogged effect and logs or refuses it. **Acceptance:** a vector
+that crashes inside the window, then reopens with no row outside the log.
+
+#### D264 — Imported views over runtime tables are not compared (T11-views)
+
+*Status: fixed 19 October (Build 1e): runtime views are compared at open and
+put back as the runtime writes them; `tests/changesets/sweep.spec.ts`,
+"T11, its views". Filed 19 October, from the catalog (T11) and Build 1d's
+residue.*
+
+`refuseForeignTriggers` compares an imported schema's triggers with the
+runtime's. It does not compare views. An imported document's own text for a
+runtime view (`_cs_log_current`, which the apply reads) is taken as it
+stands. An application trigger that writes a runtime table is refused when
+it runs, so an imported document with one fails the apply or the adoption
+closed, rather than dropping the trigger.
+
+**Change:** compare every runtime view's text at open, as triggers are.
+**Acceptance:** a document whose `_cs_log_current` reads differently is
+refused at open, by name.
+
+#### D265 — Dangerous pragmas are not refused (P03)
+
+*Status: fixed 19 October (Build 1e): the authorizer refuses setting
+`writable_schema`, `schema_version`, `ignore_check_constraints`,
+`legacy_alter_table` and `trusted_schema`; `foreign_keys` stays the
+application's, since SQLite's own procedure for changing a table turns it off
+(D259). `tests/changesets/sweep.spec.ts`, "P03". Filed 19 October, from the
+catalog (P03).*
+
+`PRAGMA writable_schema`, `foreign_keys = OFF`, `ignore_check_constraints`,
+`recursive_triggers` and the like reach the engine from application code.
+The authorizer (Build 1d) denies writes to runtime tables only. D259 states
+that an application undoes these on its own copy; the catalog asks that
+the settings be host-owned and refused at execution.
+
+**Change:** the authorizer refuses the pragmas that weaken an assumption,
+and lets the documented harmless ones through. **Acceptance:** a vector per
+refused pragma, and one harmless pragma that still runs.
+
+#### D266 — A TEMP table can shadow an application table (S07)
+
+*Status: fixed 19 October (Build 1e): every runtime statement names `main.`;
+`tests/changesets/sweep.spec.ts`, "S07". Filed 19 October, from the catalog
+(S07).*
+
+A TEMP table named like an application table takes the apply's unqualified
+writes, so a remote change lands in ephemeral state and is lost at close,
+while the persistent table keeps the old row.
+
+**Change:** the runtime's SQL names `main.` throughout. **Acceptance:** a
+vector with the same name in `main` and `temp`, the apply writing `main`.
+
+#### D267 — A routine write over a pending aggregate settles it (M10)
+
+*Status: closed 21 October, against R-X (Build 1h). Filed 19 October, from
+the catalog (M10).*
+
+**Answered by R-X:** a write records changes, not touches, and is based on
+the version its unit showed (§2, §3). A routine write over a pending value,
+or a trigger-kept increment, is an edit of the value shown; the alternatives
+it never read stay pending until the kit's resolution call names them (§4).
+Vector `counter-over-pending` (scenario "D267 counter over a pending
+total"): T08's total pending between two copies, a third workout on one,
+whose trigger raises the total it showed. Both readers, both directions: the
+raised total and the alternative it never read, `pending`. The acceptance
+below is met by staying pending.
+
+R-F says editing is resolving. So a routine `UPDATE x = x + 1`, or a
+trigger-kept increment, over a pending value resolves it from whichever
+value was shown, and the alternatives it never read are gone.
+
+**Change:** a ruling on how an application reads a pending cell, and on
+which writes acknowledge the alternatives they saw. **Acceptance:** a vector
+where a trigger-kept counter over a pending aggregate stays pending, or is
+refused, per the ruling.
+
+#### D268 — Counters are register conflicts, not sums (M07)
+
+*Status: open, needs design. Filed 19 October, from the catalog (M07) and
+Build 1e's sweep.*
+
+`count = count + 1` on two copies captures two versions of one value. R-T
+rules that intent is not inferred, so the row is pending (the spike's S5b),
+never summed, and the model file teaches COUNTERS-ARE-FLAGGED. No value is
+lost: both versions are in the cells.
+
+**Change:** a declared counter column (`-- dai:counter c`) whose merge is the
+sum of each version's delta from the version it saw, or a ruling that
+counters stay conflicts. **Acceptance:** a vector where two increments from 0
+show 2 under the declaration, and stay pending without it.
+
+#### D269 — Read dependencies and cross-row validation are not checked at merge (M08, T09)
+
+*Status: open, needs design. Filed 19 October, from the catalog (M08, T09)
+and Build 1e's sweep.*
+
+A write that relied on another row's absence (`WHERE NOT EXISTS`, "one active
+item"), and a trigger that validates across rows with RAISE, hold on the copy
+that wrote, and are not checked against the merged state: the merge applies
+merged rows with the application's triggers stood down. CHECK, NOT NULL,
+UNIQUE and foreign keys are checked (R-T). Nothing is lost; the merged state
+can break an invariant only a trigger or the application's own logic held.
+
+**Change:** a declared validation (a query whose rows are violations), run
+over the merged candidate, whose violations are pending. **Acceptance:** two
+copies each set "the active item" offline; after the merge both rows are
+pending under the declaration.
+
+#### D270 — Derived values beyond pending (T08)
+
+*Status: open, needs design. Filed 19 October, from the catalog (T08) and
+Build 1e's sweep.*
+
+A total a trigger keeps is pending after a merge when two copies each wrote
+it (Build 1d, T08), never settled at the stale value. It is not recomputed:
+the changeset carries values, not the rule that made them. The model file
+teaches totals in queries (TOTALS-IN-QUERIES).
+
+**Change:** a declared derived column (`-- dai:derived c AS (query)`)
+recomputed over the merged candidate. **Acceptance:** T08's two workouts give
+2 under the declaration, with no flag.
+
+### Release-transition residue (filed 20 October)
+
+Under R-W the schema changes only through a release. These are what a
+release transition must hold, held for Build 2 (successor authority, R-I).
+Each cites external review 2026-10-20 by its id. Contract E is RW-07 and
+contract F is RW-08, so each is filed with its RW entry.
+
+#### D271 — A prepared statement survives release activation (RW-04)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-04).*
+
+A statement the application prepared under one release is still held when
+the next release activates. It must not execute under the stale schema, or
+with the migration's privileges.
+
+**Change:** activation ends the mount the statement is bound to (R-W).
+**Acceptance:** a statement prepared before activation and stepped after it
+is refused, with nothing written.
+
+#### D272 — An addition activates a dormant `UPDATE OF` trigger (RW-05)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-05).*
+
+SQLite accepts a column that does not exist in a trigger's `UPDATE OF` list.
+A release that adds that column gives an unchanged trigger new behavior.
+
+**Change:** release validation rejects a trigger naming a column the table
+does not have. **Acceptance:** such a release is refused at validation, never
+activated.
+
+#### D273 — Adding a field while another has pending alternatives (RW-06)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-06).*
+
+A release adds a field while an existing field holds pending alternatives.
+Every alternative and every signature survives. The migration makes no
+synthetic edit and resolves nothing implicitly.
+
+**Acceptance:** a pending row across an additive release keeps both
+alternatives, both signatures and its flag, and the log gains no op.
+
+#### D274 — Old-schema DELETE against an edit to a new column (RW-07, contract E)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-07; contract E).*
+
+The changeset applier ignores trailing columns in a before-image. A DELETE
+written under the old schema can therefore land without having seen a
+concurrent edit to a column the new schema added.
+
+**Change:** the causal delete/update policy holds across schemas: the delete's
+`seen` does not cover the new column's version. **Acceptance:** the row is
+kept and flagged `delete-conflict` in both delivery orders.
+
+#### D275 — Two successors append different columns at one ordinal (RW-08, contract F)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (RW-08; contract F).*
+
+Two additive successors each append a different column at the same position.
+- Changes are never mapped by position. Each is bound to its source schema's
+  identity.
+- Incompatible evidence stays recoverable: received is not materialized.
+- Batches from a skewed version are kept as received. The frontier does not
+  advance for an effect that was not materialized.
+
+**Acceptance:** both successors' batches, crossed, keep every value under its
+own column name, or hold it as received; nothing lands in the wrong column.
+
+#### D276 — One authoritative declaration chain (contract A)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract A).*
+
+`schema.sql` → the compiler's descriptor → the signed `schema.json` → the
+verified physical schema. It is checked before the connection reaches
+application code, after a restore, and after an activation. It covers
+indexes, collations, CHECKs, triggers and generated expressions. Connection
+settings (`foreign_keys` and the like) are the host's.
+
+**Acceptance:** a stored database differing from its signed declaration in
+any of those is repaired by the host or refused, before the application runs.
+
+#### D277 — "Additive", narrowly (contract B)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract B).*
+
+Additive means typed fields appended with fixed defaults, and new tables.
+Nothing else is additive: not a new UNIQUE, CHECK or trigger, and not a
+changed default or collation. "Same schema" means the same objects and the
+same behavior, not the same column list.
+
+**Acceptance:** release validation classifies each of those changes as not
+additive.
+
+#### D278 — An unchanged object gains behavior from an addition (contract C)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract C).*
+
+The `UPDATE OF` case (D272) is one instance. Activation revalidates
+dependencies.
+
+**Acceptance:** tests over a widened table for a positional INSERT, `SELECT *`,
+a view's shape and a trigger's inserts.
+
+#### D279 — Pending conflicts migrate as evidence (contract D)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract D).*
+
+A migration carries the evidence, never only the displayed row: both
+alternatives, their provenance, the pending relation, tombstones and blocked
+dependencies. Old signed batches are never rewritten. Absent, NULL, a default
+and an authored value stay distinct.
+
+**Acceptance:** each kind of flag crosses a release with its evidence equal
+before and after.
+
+#### D280 — Activation switches one coherent state (contract G)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract G).*
+
+Activation switches the release, the schema, the materialized database, the
+evidence, the pending set, the baseline and the frontiers atomically, with
+the application's writes quiesced. A crash leaves the old state or the new,
+never a mix. The application never runs with migration privileges. A rollback
+keeps the successor's branch and never drops fields silently.
+
+**Acceptance:** a crash at each step of activation reopens as wholly old or
+wholly new.
+
+#### D281 — Schema installation is not seeding (contract H)
+
+*Status: open, held for Build 2. Filed 20 October, from external review
+2026-10-20 (contract H).*
+
+Installing a schema is separate from seeding. A new column's default is not
+a person's edit.
+
+**Acceptance:** an additive release logs no op for the default it fills.
+
+### R-X residue (filed 20 October)
+
+#### D282 — A delayed form save keeps the projection it read (R-X §7)
+
+*Status: open, held for Build 2. Filed 20 October, from R-X §7.*
+
+A form reads projection P, a remote apply replaces it with Q, and the form
+then saves. Build 1g binds a save to the execution-time baseline: the
+session's old value, which is Q. So an unchanged field from P written back
+reads as an edit reverting Q, signed as the person's, though they only left
+the field alone. A read-modify-write that claims R-X's protection carries
+its observation token, or works against a stable edit snapshot, and a stale
+observation gets defined rebase or conflict handling. It is never silently
+rebound to newer alternatives. Unannotated raw SQL keeps the execution-time
+baseline: the runtime cannot infer an earlier UI observation from bound
+values.
+
+**Change:** the kit's form (and any read-modify-write it offers) binds the
+values it showed to their source versions, and a save whose field differs
+from Q but equals P authors nothing for that field, or is presented as a
+conflict.
+**Acceptance:** a form opened on P, Q applied, the form saved unchanged:
+nothing authored for the field, Q stands, on every copy.
+
+### Build 1g review residue (filed 21 October)
+
+#### D283 — Out-of-order arrival is untested until the store exists
+
+*Status: open, held until the store delivers single batches. Filed 21
+October, from the Build 1g review (question 1, "Not reached").*
+
+A copy's file carries its author's whole log, so every test that exchanges
+files delivers each author's batches together and in order. A batch that
+arrives without a batch it depends on (a basis it names, or, since 1g-M1,
+an author's earlier batch its receipt counts) is reached only by
+`basis.spec.ts`'s one stripped-file test: R-X §3's "not yet here" wait, and
+the order-independence the readers claim for it, are otherwise untested.
+The store (mailbox delivery, batch by batch) is where single batches will
+arrive out of order in practice.
+
+**Change:** once the store delivers single batches, a harness that hands a
+reader each batch alone, in every dependency-respecting order and in orders
+that break dependency, through both readers.
+**Acceptance:** for R-X's fixture and the Build 1g review's scenarios, every
+order gives one state on every reader, a batch whose basis has not arrived
+waits rather than being refused, and a receipt naming a batch not yet here
+is judged when it arrives.
+
+#### D284 — A constraint conflict is resolved by an edit and then a resolution
+
+*Status: open, needs host design. Filed 21 October, from Build 1g's open
+ruling ("a constraint conflict (R-T) alone cannot be observed").*
+
+A proposal R-T set aside is its column's only head: on `spans` (`CHECK
+(start <= finish)`), A's `start = 8` and B's `finish = 5` meet, and A shows
+`(8, 10)` with B's `finish` pending under the constraint. The kit's
+`conflict()` presents a unit with two or more current versions, so it has
+nothing to present there. What resolves it today is two actions: an edit
+that writes an admitted row (M02's `start = 8, finish = 12`), which makes
+the edit and the set-aside proposal two heads of `finish`, and then the
+resolution call over them. A person sees one problem ("these two edits do
+not fit together") and is asked for two steps, and between them the edit
+stands as a save of its own.
+
+**Change:** the host sheet offers a constraint conflict as one action: it
+presents the proposal set aside, what is shown, and the constraint, takes
+the person's admitted row, and logs the edit and the resolution naming the
+set-aside proposal together, as one batch. Whether `conflict()` presents a
+set-aside proposal as an alternative of its own is to rule with it.
+**Acceptance:** on M02's scenario, one action on A leaves an admitted row,
+no pending flag, and the set-aside proposal named in the resolution's
+`resolves`; both readers, both directions.
+
+#### D285 — The in-realm defense against the application is bounded by the realm
+
+*Status: open, decided with Build 2's architecture. Filed 21 October, from
+the Build 1h review (1h-H1, 1h-M2).*
+
+The application shares the database handle, and under the ordinary data
+interface the runtime reads, writes and runs a VACUUM through the engine's
+own entry points, captured before the application has the handle: since
+Build 1j the module's WebAssembly exports and memory, with no function of
+sqlite-wasm's on its path (Build 1i's capture of oo1's functions still reached
+`capi` and the `wasm` helpers by property, review-1i's observation). This
+holds against application code that replaces what it can reach — a handle
+method, a `Stmt.prototype` method, a capi entry, a pointer-stack method, a
+`wasm` helper, a progress handler, a bound array — because the runtime takes
+none of those on a path of its own. What it still shares with the
+application is the realm's built-ins. It is an in-realm defense: the
+application and the runtime run in one realm (the frame), and it rests on the
+runtime capturing its references first and the authorizer trusting only the
+statements the runtime itself prepared. It does not make the database
+unreachable to the application; it makes every reach the application can try
+land on something the runtime no longer depends on.
+
+The durable boundary is to put the database, and the changeset runtime over
+it, behind a worker the application addresses only by message: then no engine
+primitive is in the application's realm at all, and there is nothing to
+capture first because there is nothing the application shares.
+
+**Change:** with Build 2's architecture (the release transition, successor
+authority R-I), the data lives behind a worker; the application holds no
+handle, no capi and no engine reference, and every read and write crosses a
+message boundary.
+**Acceptance:** the application frame has no reference to the handle,
+`Stmt.prototype`, capi or the wasm heap of the database; a merge and a save
+cross a message boundary, and replacing anything in the application's realm
+changes nothing the runtime runs.
+
+### Build 1j (filed 21 October)
+
+#### D286 — Firefox: `returning-document` 382 timed out in Build 1g's CI
+
+*Status: open, a reading (non-gating). Filed 21 October, from Build 1g's CI.
+Becomes a defect if it recurs on `main`.*
+
+Run 39529282914, on `a94d7f48` (Build 1g, PR #9), Firefox job:
+`returning-document.spec.ts:382`, "opening your own copy after they moved
+does not make yours look newer" (chess by link), timed out at 90 s, and its
+after-hook with it, on both attempts. Run locally on Firefox it passed twice,
+11 s each, and it passed in Build 1h's CI (run 39596759441). Chess runs under
+a session policy, so none of the changeset runtime starts for it. It is not
+explained.
+
+It is the case D32 records failing both attempts on Firefox four times in
+September (as `:381`, before a line moved). Firefox is a reading and decides
+no run (D246), so this held nothing.
+
+**Change:** none yet. If it fails on `main`, read the trace against D32's
+signature (a reopened document renders and the automation cannot see its
+frame) before anything else, and file it as a defect there or here.
+**Acceptance:** a run of `main` in which it fails is read and the cause is
+named, or a month of `main`'s Firefox runs passes it.
 
 ### Branch review residue (filed 8 October)
 

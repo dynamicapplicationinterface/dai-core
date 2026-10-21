@@ -1,0 +1,93 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f1f5ee;
+  --card: #ffffff;
+  --ink: #1d2b21;
+  --muted: #647268;
+  --line: #dde6d8;
+  --accent: #2f7a4b;
+  --on-accent: #ffffff;
+  --thirsty: #a85a00;
+  --thirsty-bg: #fdf0dc;
+  --fine: #2f7a4b;
+  --fine-bg: #e3f1e6;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121a14; --card: #1b261e; --ink: #e6eee7; --muted: #9aaa9e; --line: #2b3a2f;
+    --accent: #7cc796; --on-accent: #0f1a12;
+    --thirsty: #f0b35a; --thirsty-bg: #3a2b12; --fine: #8fd3a5; --fine-bg: #1f3526;
+  }
+}
+* { box-sizing: border-box; }
+/* A display rule below would otherwise show what the page hid. */
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-size: 16px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+main {
+  max-width: 600px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
+    calc(36px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+}
+/* The top right corner belongs to the host's menu button. */
+header { display: flex; flex-direction: column; gap: 6px; padding-right: 56px; }
+h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; line-height: 1.1; }
+h2 {
+  margin: 0 0 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.thirsty-count { margin: 0; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+dai-rows { display: grid; gap: 10px; }
+dai-rows:not(:has(*)) { color: var(--muted); }
+
+.plant, .entry, dai-form.add {
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+}
+.plant { padding: 14px 16px; display: grid; gap: 8px; }
+.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.who { display: grid; gap: 2px; min-width: 0; }
+.name { font-size: 18px; overflow-wrap: anywhere; }
+.place { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.badge {
+  flex: none; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.badge.thirsty { background: var(--thirsty-bg); color: var(--thirsty); }
+.badge.fine { background: var(--fine-bg); color: var(--fine); }
+.facts { margin: 0; color: var(--muted); font-size: 14px; }
+.dot { margin: 0 4px; }
+.care { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+button {
+  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--accent); background: transparent; color: var(--accent); font-weight: 600;
+}
+button.primary, dai-form button, dai-save { background: var(--accent); color: var(--on-accent); }
+button.link {
+  border: 0; background: none; color: var(--muted); font-weight: 400; text-decoration: underline;
+  text-underline-offset: 3px; padding: 0 8px;
+}
+.care button.link { margin-left: auto; }
+
+dai-form.add { display: block; padding: 16px; }
+.fields { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 14px; }
+.fields label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+input {
+  font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 10px; min-height: 44px; padding: 8px 12px; width: 100%;
+}
+::placeholder { color: var(--muted); opacity: 0.6; font-style: italic; }
+
+.entry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 8px 6px 16px; }
+.entry .line { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.entry .when { color: var(--muted); font-size: 14px; }
+
+footer { display: flex; justify-content: flex-end; }
+dai-save { display: inline-block; padding: 12px 22px; border-radius: 10px; font-weight: 600; cursor: pointer; }

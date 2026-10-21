@@ -16,7 +16,18 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 145,000 bytes: the file's size on 2 October, 144,342, rounded up to the
+ * 34,000 bytes: Build 1d, the file at 33,754 rounded up. Three data rules
+ * (INSERT-NAMES-COLUMNS, TOTALS-IN-QUERIES, COUNTERS-ARE-FLAGGED) bought
+ * 1,742 bytes. What they buy is an author who names columns in an INSERT,
+ * computes a total in the query that shows it, and expects a counter two
+ * people change at once to be flagged rather than added up (R-T).
+ *
+ * Before that, 33,000 bytes: R-O, Build 1, the file at 32,012 rounded up. One shape: the
+ * shape decision, the shared-table and session constraints, the surface, the
+ * views and the two shared examples are no longer taught, because the author
+ * writes ordinary tables and the host sets the policy. It freed 112,330 bytes.
+ *
+ * Before that, 145,000 bytes: the file's size on 2 October, 144,342, rounded up to the
  * next thousand (identity step 7b). Not a raise: step 7a's rebuild of the
  * examples brought the file down to 143,414 under the 144,370 identity step 6
  * took for D165, and step 7b's two rules (D170's data-dai-write mark, D177's
@@ -43,7 +54,7 @@ import { RECIPE } from "../src/recipe.js";
  * invisible to the person, unreproducible on a desk, and routine with a live
  * opponent.
  */
-const BUDGET_BYTES = 145_000;
+const BUDGET_BYTES = 34_000;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;
@@ -52,6 +63,15 @@ const GROWTH_ALLOWED = 0.02;
 const SHRINK_BEFORE_RESET = 0.1;
 
 const bytesOf = (text: string): number => Buffer.byteLength(text, "utf8");
+
+test("R-X: the model file teaches the kit's resolution call, a form saved whole, and nothing that resolves by writing", () => {
+  expect(RECIPE).toContain("A form may save every field whole");
+  expect(RECIPE, "1g-L4: where a whole save is not an echo").toContain("type a REAL column: untyped, 2.0 reads back as 2");
+  expect(RECIPE).toContain("window.daiKit.conflict(table, [id], [column])");
+  expect(RECIPE).toContain("window.daiKit.resolve(c.token, chosen.ver)");
+  expect(RECIPE, "a pending row is not resolved by writing it").not.toMatch(/until someone writes it again|writing the row again resolves|editing is resolving/i);
+  expect(RECIPE, "R-W refuses ALTER and DROP: never taught to run").not.toContain("Run ALTER and DROP TABLE through exec");
+});
 
 test.describe("the model file's size", () => {
   test("stays within its stated budget, so growth is a decision rather than a discovery", () => {

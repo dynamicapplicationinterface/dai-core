@@ -19,7 +19,7 @@ const RUNNER_URL = "http://localhost:5175/";
 const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocator("iframe");
 
 async function openChess(page: Page): Promise<void> {
-  const built = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const file = join(mkdtempSync(join(tmpdir(), "dai-seat-gate-")), "chess.dai.html");
   writeFileSync(file, built.html, "utf8");
   await page.goto(RUNNER_URL);

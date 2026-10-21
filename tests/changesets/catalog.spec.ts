@@ -1,0 +1,511 @@
+import { expect, test } from "@playwright/test";
+import { base, exchange, item, SCENARIOS } from "./scenarios.js";
+import { boot, Copy, DOC, openBytes, person } from "./copy.js";
+import { CHANGES_DECLARATION, withHiddenKeys } from "../../src/changes-log.js";
+import { rewriteReplicated } from "../../src/replicated.js";
+import * as merge from "../../src/replicated-frame.js";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Any = any;
+const m = merge as Any;
+
+/**
+ * The data-interface catalog's ten priority vectors (`handoff-2026-10-19.md`,
+ * "Data-interface catalog (external review)", section 10), each from the
+ * catalog's own scenario and named by its row ids. The rulings they hold the
+ * runtime to are R-S (the capture-epoch boundary) and R-T (valid
+ * materialization) in docs/backlog.md.
+ */
+
+/** Every value one author's log carries for one row, as [column, value], from the signed payloads. */
+function wroteFor(c: Copy, table: string, key: unknown): [string, unknown][] {
+  return c
+    .written()
+    .map((w) => JSON.parse(w) as [string, string, string, string, unknown])
+    .filter(([t, k]) => t === table && JSON.stringify(JSON.parse(k)[0]) === JSON.stringify(key))
+    .map(([, , col, , val]) => [col, val]);
+}
+
+/**
+ * C07 / Q08. A local edit to column A, a remote edit to column B of the same
+ * row, then a local save. The session records a row's current values when it
+ * is extracted, so a remote value written into a row the session has already
+ * touched becomes part of the local changeset however the session was paused
+ * (SQLite documents it; the catalog reproduced it). Only A may be attributed
+ * to the local author: in its log, and on the other copy.
+ *
+ * Twice: as the merge runs (the local edit saved before the apply), and with
+ * the application holding a transaction when the apply would run (R-S: the
+ * apply waits for the committed boundary, and the epoch is logged first).
+ */
+test("C07/Q08: a remote edit to another column of a locally edited row is never attributed to the local author", async () => {
+  for (const held of [false, true]) {
+    const { a, b } = await base();
+    const bread = item(a, "Bread");
+    b.db.exec({ sql: "UPDATE items SET note = 'B-note' WHERE id = ?", bind: [bread] });
+    const bBytes = await b.bytes();
+
+    // A merges step by step, as the frame does (bootloader.ts, mergeSibling):
+    // capture, verify (an await), admit, apply. The local edit lands after the
+    // frame's capture, so only the runtime's own boundary keeps it out of the apply.
+    a.save();
+    const sib = await openBytes(bBytes);
+    const verifying = m.verifyBatches(sib.rows, m.mergeTablesOf(sib.rows), DOC);
+    if (held) a.db.exec("BEGIN");
+    a.db.exec({ sql: "UPDATE items SET qty = 7 WHERE id = ?", bind: [bread] });
+    const verdicts = await verifying;
+    a.changes.trusted(() => m.mergeVerified(a.rows, sib.rows, { document: DOC, author: a.author.author, verdicts }));
+    sib.db.close();
+    a.changes.projectAdmitted();
+    if (held) {
+      // Nothing of the remote edit is applied while the transaction is the application's.
+      expect(a.db.selectObject("SELECT qty, note FROM items WHERE id = ?", [bread]), `held=${held}: inside the transaction`).toEqual({ qty: 7, note: null });
+      a.db.exec("COMMIT");
+    }
+    a.save();
+
+    const label = held ? "with the application's transaction open" : "as the merge runs";
+    expect(a.db.selectObject("SELECT qty, note FROM items WHERE id = ?", [bread]), label).toEqual({ qty: 7, note: "B-note" });
+    const aWrote = wroteFor(a, "items", bread);
+    expect(aWrote, `${label}: A's log carries A's edit`).toContainEqual(["qty", 7]);
+    expect(aWrote, `${label}: A's log never carries B's value`).not.toContainEqual(["note", "B-note"]);
+    expect(a.flags(), label).toEqual([]);
+
+    await b.mergeFrom(await a.bytes());
+    expect(b.db.selectObject("SELECT qty, note FROM items WHERE id = ?", [bread]), label).toEqual({ qty: 7, note: "B-note" });
+    // On the other copy, each column's one current version is its own author's.
+    const heads = b.rows.all(
+      `SELECT col, author FROM _cs_cell c WHERE tbl = 'items' AND pk = ? AND col IN ('qty', 'note')
+        AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY col`,
+      [JSON.stringify([bread])],
+    );
+    expect(heads, label).toEqual([
+      { col: "note", author: b.changes.authorHex },
+      { col: "qty", author: a.changes.authorHex },
+    ]);
+    expect(a.state(), label).toBe(b.state());
+    a.close();
+    b.close();
+  }
+});
+
+/**
+ * T01. `SQLITE_DBCONFIG_ENABLE_TRIGGER=0` leaves TEMP triggers on, and the
+ * runtime's own stand-down (`dai_projecting()`) is written into the triggers
+ * of the main schema only. A TEMP trigger on a persistent table, and a trigger
+ * in an attached schema, must not run when merged rows are applied (R-S: the
+ * apply runs on a connection carrying no application TEMP triggers), and each
+ * still runs for the application's own writes after it.
+ */
+test("T01: neither a TEMP trigger nor an attached schema's trigger fires while merged rows are applied", async () => {
+  const { a, b } = await base({ trigger: true });
+  // A TEMP trigger is refused as the application makes it (R-W), so the apply's connection never carries one.
+  expect(() => a.db.exec("CREATE TEMP TRIGGER items_temp AFTER INSERT ON main.items BEGIN SELECT 1; END"), "a TEMP trigger").toThrow(/^CHANGES_REFUSED: /);
+  // An attached schema is refused before it can carry a trigger (S06).
+  expect(() => a.db.exec("ATTACH ':memory:' AS aux"), "an attached schema").toThrow(/CHANGES_REFUSED: .*ATTACH/);
+  b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
+  await a.mergeFrom(await b.bytes());
+
+  expect(a.db.selectValue("SELECT title FROM main.items WHERE title = 'Soap'"), "the merged row is applied").toBe("Soap");
+  // The main schema's trigger ran once, on B, and its row came in B's changeset.
+  expect(a.db.selectValue("SELECT count(*) FROM audit x JOIN items i ON i.id = x.item_id WHERE i.title = 'Soap' AND x.what = 'created'")).toBe(1);
+  expect(a.db.selectValues("SELECT name FROM temp.sqlite_schema WHERE name NOT LIKE '\\_cs\\_%' ESCAPE '\\'"), "nothing in temp but the runtime's").toEqual([]);
+  a.close();
+  b.close();
+});
+
+/**
+ * Q01 / Q02. A changeset can be extracted from an open transaction and hold
+ * changes a ROLLBACK then takes away (the catalog's probe). A save asked while
+ * the application holds a transaction or a savepoint publishes nothing; only a
+ * committed outer boundary is eligible (R-S, decided by sqlite3_get_autocommit).
+ * Run through every shape the catalog names: BEGIN then ROLLBACK, BEGIN then
+ * COMMIT, an outer savepoint rolled back, an inner RELEASE under an open outer,
+ * ROLLBACK TO a nested savepoint, and a repeated savepoint name.
+ */
+test("Q01/Q02: a save inside an open transaction or savepoint publishes nothing; only the committed outer boundary is logged", async () => {
+  const { a, b } = await base();
+  const logged = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_log WHERE _r_replica = ?", [a.author.author]));
+  const titles = (): string[] => a.written().filter((w) => JSON.parse(w)[2] === "title").map((w) => JSON.parse(w)[4] as string);
+  const before = logged();
+  let done = 0;
+  const nothing = (label: string): void => {
+    expect(a.save(), `${label}: the save publishes nothing`).toBeNull();
+    expect(logged(), `${label}: the log is unchanged`).toBe(before + done);
+  };
+
+  // BEGIN, save, ROLLBACK: nothing, then and after.
+  a.db.exec("BEGIN; INSERT INTO items (title) VALUES ('rolled-back');");
+  nothing("inside BEGIN");
+  a.db.exec("ROLLBACK");
+  nothing("after ROLLBACK");
+
+  // BEGIN, save, COMMIT: nothing inside; the save after it proceeds.
+  a.db.exec("BEGIN; INSERT INTO items (title) VALUES ('committed');");
+  nothing("inside BEGIN before COMMIT");
+  a.db.exec("COMMIT");
+  expect(a.save(), "after COMMIT the save proceeds").not.toBeNull();
+  done += 1;
+
+  // An outer savepoint is a transaction: rolled back to and released, nothing.
+  a.db.exec("SAVEPOINT outer_sp; INSERT INTO items (title) VALUES ('savepoint-rolled-back');");
+  nothing("inside a savepoint");
+  a.db.exec("ROLLBACK TO outer_sp; RELEASE outer_sp;");
+  nothing("after ROLLBACK TO and RELEASE of the outer savepoint");
+
+  // An inner RELEASE under an open outer is not a committed boundary; ROLLBACK TO a nested savepoint
+  // takes only its own work away.
+  a.db.exec("SAVEPOINT outer_sp; INSERT INTO items (title) VALUES ('outer-kept'); SAVEPOINT inner_sp; INSERT INTO items (title) VALUES ('inner-released'); RELEASE inner_sp;");
+  nothing("after an inner RELEASE, the outer still open");
+  a.db.exec("SAVEPOINT inner_sp; INSERT INTO items (title) VALUES ('inner-rolled-back'); ROLLBACK TO inner_sp; RELEASE inner_sp;");
+  nothing("after ROLLBACK TO a nested savepoint");
+  a.db.exec("RELEASE outer_sp");
+  expect(a.save(), "after the outer RELEASE the save proceeds").not.toBeNull();
+  done += 1;
+
+  // A repeated name: ROLLBACK TO and RELEASE name the innermost.
+  a.db.exec("SAVEPOINT sp; INSERT INTO items (title) VALUES ('repeated-outer'); SAVEPOINT sp; INSERT INTO items (title) VALUES ('repeated-inner'); ROLLBACK TO sp; RELEASE sp;");
+  nothing("after the inner of two savepoints of one name");
+  a.db.exec("RELEASE sp");
+  expect(a.save(), "after the outer of the two").not.toBeNull();
+  done += 1;
+
+  const committed = ["committed", "outer-kept", "inner-released", "repeated-outer"];
+  const never = ["rolled-back", "savepoint-rolled-back", "inner-rolled-back", "repeated-inner"];
+  expect(titles().filter((t) => [...committed, ...never].includes(t)).sort(), "A's log holds what committed, and nothing else").toEqual([...committed].sort());
+  await b.mergeFrom(await a.bytes());
+  const shown = b.db.selectValues(`SELECT title FROM items WHERE title IN (${[...committed, ...never].map(() => "?").join(", ")}) ORDER BY title`, [...committed, ...never]);
+  expect(shown, "the other copy holds what committed, and nothing else").toEqual([...committed].sort());
+  a.close();
+  b.close();
+});
+
+/**
+ * T08 (the catalog's "particularly important" vector). summary.count = 0; A
+ * inserts a workout and its trigger writes count = 1; B inserts another and
+ * its trigger writes count = 1. Both workouts merge, both captured totals
+ * agree on 1, and the true count is 2. Agreement of captured values does not
+ * establish an invariant (R-T): the total may be recomputed, or left pending,
+ * but never settled at 1.
+ *
+ * The mechanism is the smallest R-T allows, and the policy already has it:
+ * pending on the aggregate row. Two concurrent versions of one column are a
+ * conflict even when their values are equal (the spike's S5b), so the summary
+ * row is flagged pending, with both versions named; the person, or the
+ * application, resolves it by writing the total again. No recompute is
+ * declared: the model file teaches totals in queries, not triggers (R-T).
+ */
+test("T08: a trigger-maintained total two inserts both capture as 1 is pending after the merge, never settled at 1", async () => {
+  const s = SCENARIOS["T08 derived total"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  const captured = (c: Copy): unknown[] => wroteFor(c, "summary", 1).filter(([col]) => col === "count").map(([, v]) => v);
+  expect(captured(o.a), "A captured the total as 1").toContain(1);
+  expect(captured(o.b), "B captured the total as 1").toEqual([1]);
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectValue("SELECT count(*) FROM workouts"), "both workouts are there").toBe(2);
+    const count = c.db.selectValue("SELECT count FROM summary WHERE id = 1");
+    const pending = c.flags().find((f: Any) => f.tbl === "summary" && f.kind === "pending");
+    expect(count === 2 || pending !== undefined, `the total is ${count}, recomputed or pending, never settled at 1`).toBe(true);
+    expect(pending, "the mechanism: the aggregate row is pending").toBeDefined();
+    const values = JSON.parse(pending!.detail).find((p: Any) => p.col === "count").values;
+    expect(values.map((v: Any) => v.val), "both captured versions are named").toEqual([1, 1]);
+  }
+  expect(o.converged).toBe(true);
+  expect(o.missing).toEqual([]);
+  o.a.close();
+  o.b.close();
+});
+
+/** Every proposal a pending flag names for one row, as "column=value". */
+function proposed(c: Copy, table: string, pk: string): string[] {
+  const flag = c.flags().find((f: Any) => f.tbl === table && f.pk === pk && f.kind === "pending");
+  if (!flag) return [];
+  return (JSON.parse(flag.detail) as { col: string; values: { val: unknown }[] }[]).flatMap((p) => p.values.map((v) => `${p.col}=${v.val}`));
+}
+
+/**
+ * M02. CHECK (start <= finish) over (0, 10); A sets start = 8, B sets
+ * finish = 5. Each edit is valid alone; the column merge would make (8, 5).
+ * R-T: the combined candidate is validated, and an edit set it refuses is a
+ * constraint conflict, pending, never a settled invalid row. Both proposals
+ * are kept: every value either author wrote is in both copies' cells, and the
+ * row's pending flag names the one not shown.
+ *
+ * The rule (src/changesets.ts, `place`): the row shows the latest valid
+ * candidate, found by setting aside the newest proposals first, each column a
+ * proposal wrote going back to the value before it. Here that is one of
+ * (8, 10) or (0, 5), whichever edit is the earlier by (lc, author) standing:
+ * the earlier keeps, as the earlier-born row keeps a UNIQUE slot. Writing the
+ * row again resolves it.
+ */
+test("M02: two valid edits whose combination fails a CHECK are a pending constraint conflict, never the invalid row", async () => {
+  const s = SCENARIOS["M02 check across columns"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  expect(o.converged, "both copies agree").toBe(true);
+  expect(o.missing, "both proposals are in both copies' cells").toEqual([]);
+  for (const c of [o.a, o.b]) {
+    const row = c.db.selectObject("SELECT start, finish FROM spans WHERE id = 1") as Any;
+    expect(row, "the row is shown, not taken away").toBeDefined();
+    expect(row, "never the invalid combination").not.toEqual({ start: 8, finish: 5 });
+    expect([JSON.stringify({ start: 8, finish: 10 }), JSON.stringify({ start: 0, finish: 5 })]).toContain(JSON.stringify(row));
+    expect(c.flags().map((f: Any) => [f.tbl, f.pk, f.kind]), "pending, and nothing else").toEqual([["spans", "[1]", "pending"]]);
+    const named = new Set([...proposed(c, "spans", "[1]"), `start=${row.start}`, `finish=${row.finish}`]);
+    expect(named.has("start=8") && named.has("finish=5"), `both proposals are shown or named: ${[...named]}`).toBe(true);
+  }
+
+  // Writing the row again is an edit based on what it showed (R-X §3): the proposal set aside is not resolved by it.
+  o.a.db.exec("UPDATE spans SET start = 8, finish = 12 WHERE id = 1");
+  o.a.save();
+  expect(o.a.db.selectObject("SELECT start, finish FROM spans WHERE id = 1")).toEqual({ start: 8, finish: 12 });
+  expect(o.a.flags().map((f: Any) => f.kind), "still pending").toEqual(["pending"]);
+  // Each pending column, kept as shown by the explicit call, resolves it on both copies.
+  for (const e of JSON.parse(o.a.flags()[0]!.detail) as Any[]) {
+    const seen = o.a.changes.observe("spans", [1], [e.col]);
+    if (seen) o.a.changes.resolve(seen.token, seen.shown);
+  }
+  await o.b.mergeFrom(await o.a.bytes());
+  await o.a.mergeFrom(await o.b.bytes());
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectObject("SELECT start, finish FROM spans WHERE id = 1")).toEqual({ start: 8, finish: 12 });
+    expect(c.flags()).toEqual([]);
+  }
+  o.a.close();
+  o.b.close();
+});
+
+/**
+ * M06. A moves 10 from account 1 to account 2 in one transaction; B sets
+ * account 1's balance concurrently, so account 1 is pending. Account 2's +10
+ * is half of A's transfer, and must not be materialized as settled alone.
+ *
+ * The policy: the effect group stays together. The group is a save (one
+ * capture epoch): the changeset does not record the transactions inside it,
+ * so the whole save is the conservative group, as the catalog allows. When a
+ * row a save wrote is pending or held, every other row where that save's
+ * change is still current is flagged pending too, naming the save and the row
+ * it waits on. Resolving the conflict clears the group.
+ */
+test("M06: a transaction one of whose rows becomes pending leaves no other row of it settled alone", async () => {
+  const s = SCENARIOS["M06 effect group"]!;
+  const o = await exchange(s.write, { extra: s.extra });
+  expect(o.converged).toBe(true);
+  expect(o.missing).toEqual([]);
+  for (const c of [o.a, o.b]) {
+    const flagged = c.flags().filter((f: Any) => f.tbl === "accounts").map((f: Any) => [f.pk, f.kind]);
+    expect(flagged, "account 1 is pending, and account 2 with it").toEqual([
+      ["[1]", "pending"],
+      ["[2]", "pending"],
+    ]);
+    const group = JSON.parse(c.flags().find((f: Any) => f.tbl === "accounts" && f.pk === "[2]")!.detail);
+    expect(group, "account 2's flag names A's save and the row it waits on").toEqual([
+      expect.objectContaining({ col: "balance", group: expect.stringMatching(new RegExp(`^${o.a.changes.authorHex}:`)), with: [["accounts", "[1]"]] }),
+    ]);
+  }
+
+  // Resolving account 1 (the explicit call, R-X §4: an edit would not) settles the transfer on both copies.
+  const seen = o.a.changes.observe("accounts", [1], ["balance"]);
+  const kept = seen.alternatives.find((x: Any) => x.values.balance === 90).ver;
+  o.a.changes.resolve(seen.token, kept);
+  await o.b.mergeFrom(await o.a.bytes());
+  await o.a.mergeFrom(await o.b.bytes());
+  for (const c of [o.a, o.b]) {
+    expect(c.db.selectValues("SELECT balance FROM accounts ORDER BY id")).toEqual([90, 10]);
+    expect(c.flags().filter((f: Any) => f.tbl === "accounts")).toEqual([]);
+  }
+  o.a.close();
+  o.b.close();
+});
+
+const FAMILY = `CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id) ON DELETE CASCADE, what TEXT NOT NULL);
+CREATE TABLE gone (id INTEGER PRIMARY KEY, what TEXT NOT NULL);
+CREATE TRIGGER child_gone AFTER DELETE ON child BEGIN INSERT INTO gone (what) VALUES (OLD.what); END;`;
+
+/**
+ * D02. INSERT OR REPLACE over a UNIQUE name deletes the conflicting parent
+ * and inserts a new row; the delete cascades to the parent's child, and the
+ * child's delete fires a trigger. The capture carries every surviving effect
+ * (the parent's delete and insert, the child's delete, the trigger's row), and
+ * the other copy applies each once: no second trigger row, no child, one
+ * parent named x, under the new key.
+ *
+ * Run from both copies, the replaced parent written first by one and replaced
+ * by the other, so whichever author's range sorts first, the new row is
+ * applied once in the order that would put it before the delete of the row it
+ * replaces.
+ */
+test("D02: INSERT OR REPLACE deleting a parent with a cascading child is captured whole and applied once", async () => {
+  for (const replacer of ["b", "a"] as const) {
+    const a = await Copy.open(await person(), undefined, FAMILY);
+    const b = await Copy.open(await person(), await a.bytes());
+    const [owner, other] = replacer === "b" ? [a, b] : [b, a];
+    owner.db.exec("INSERT INTO parent (name) VALUES ('x'); INSERT INTO child (parent_id, what) VALUES (last_insert_rowid(), 'c1');");
+    await other.mergeFrom(await owner.bytes());
+    const was = other.db.selectValue("SELECT id FROM parent WHERE name = 'x'");
+    expect(was, `${replacer}: the parent arrived`).toBeDefined();
+
+    other.db.exec("INSERT OR REPLACE INTO parent (name) VALUES ('x')");
+    const now = other.db.selectValue("SELECT id FROM parent WHERE name = 'x'");
+    expect(now, `${replacer}: REPLACE made a new row`).not.toBe(was);
+    other.save();
+    const ops = [...other.opsSince(1)].map(([row, codes]) => `${row.split("|")[0]} ${[...codes].join("")}`).sort();
+    expect(ops, `${replacer}: the capture carries every surviving effect`).toEqual(
+      expect.arrayContaining([`child D`, `gone I`, `parent D`, `parent I`]),
+    );
+
+    await owner.mergeFrom(await other.bytes());
+    for (const c of [owner, other]) {
+      expect(c.db.selectObjects("SELECT id, name FROM parent"), `${replacer}: one parent named x, the new one`).toEqual([{ id: now, name: "x" }]);
+      expect(c.db.selectValue("SELECT count(*) FROM child"), `${replacer}: the child went with it`).toBe(0);
+      expect(c.db.selectValues("SELECT what FROM gone"), `${replacer}: the trigger's row, once`).toEqual(["c1"]);
+      expect(c.held(), `${replacer}: nothing held`).toEqual([]);
+      expect(c.flags(), `${replacer}: nothing flagged`).toEqual([]);
+    }
+    expect(owner.state()).toBe(other.state());
+    a.close();
+    b.close();
+  }
+});
+
+/**
+ * K06 / K07. AUTOINCREMENT promises an id is never reused, and the rewrite
+ * drops the keyword: the author's range carries the promise instead. What
+ * the runtime guarantees (docs/format.md): an id is unique and never reused
+ * within the author's range, rising there; it is not table-wide AUTOINCREMENT,
+ * so another author's ids can sit above it.
+ *
+ * Here the high ids are remote: B writes a row with an explicit id in A's
+ * range, above A's counter, and its own rows above everything of A's; then B
+ * deletes the high row. A's next ids must be above every id its range has
+ * ever held, live and on a copy restored from A's stored bytes after the high
+ * row was deleted: the high-water mark is the log's, not the live rows'.
+ */
+test("K06/K07: after high remote ids and their deletion, a local id is never reused, live or after a restore", async () => {
+  const a = await Copy.open(await person(), undefined, "CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL)");
+  a.db.exec("INSERT INTO notes (body) VALUES ('one'), ('two'), ('three')");
+  const range = a.changes.index * 2 ** 32;
+  const b = await Copy.open(await person(), await a.bytes());
+  const high = range + 5;
+  b.db.exec({ sql: "INSERT INTO notes (id, body) VALUES (?, 'high, from B')", bind: [high] });
+  b.db.exec("INSERT INTO notes (body) VALUES ('B, in its own range')");
+  await a.mergeFrom(await b.bytes());
+  expect(a.db.selectValue("SELECT body FROM notes WHERE id = ?", [high]), "the explicit id is kept").toBe("high, from B");
+  b.db.exec({ sql: "DELETE FROM notes WHERE id = ?", bind: [high] });
+  await a.mergeFrom(await b.bytes());
+  expect(a.db.selectValue("SELECT count(*) FROM notes WHERE id = ?", [high]), "the high row is gone").toBe(0);
+  const stored = await a.bytes();
+
+  const ever = (c: Copy): number[] =>
+    (c.rows.all("SELECT DISTINCT pk FROM _cs_cell WHERE tbl = 'notes'").map((r) => JSON.parse(String(r["pk"]))[0]) as number[]).filter(
+      (id) => id >= range && id < range + 2 ** 32,
+    );
+  const allocate = (c: Copy, label: string): void => {
+    const before = ever(c);
+    c.db.exec(`INSERT INTO notes (body) VALUES ('${label}')`);
+    const id = Number(c.db.selectValue("SELECT last_insert_rowid()"));
+    expect(id >= range && id < range + 2 ** 32, `${label}: from A's range`).toBe(true);
+    expect(before, `${label}: never an id the range has held`).not.toContain(id);
+    expect(id, `${label}: above the range's high-water mark`).toBeGreaterThan(Math.max(...before));
+  };
+  allocate(a, "live");
+  a.close();
+
+  const restored = await Copy.open(a.author, stored);
+  allocate(restored, "restored");
+  restored.close();
+  b.close();
+});
+
+/**
+ * A document with no session policy, its schema assembled as the compiler
+ * assembles it (src/core.ts, `buildContainer`: the application's schema with
+ * hidden keys, the log's declaration, rewritten), run into a fresh database.
+ */
+async function compiledBytes(): Promise<Uint8Array> {
+  const schema = "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS marks (body TEXT);\n";
+  const sql = rewriteReplicated(withHiddenKeys(schema) + CHANGES_DECLARATION).sql;
+  const sqlite3 = await boot();
+  const db = new sqlite3.oo1.DB(":memory:", "c");
+  m.stageChangeFunctions(db);
+  db.exec(sql);
+  const bytes = sqlite3.capi.sqlite3_js_db_export(db.pointer) as Uint8Array;
+  db.close();
+  return bytes;
+}
+
+/**
+ * T11 / P02, the catalog's tenth priority vector, and P01. A runtime-owned
+ * table is protected from writes and from code: an imported schema that hangs
+ * a trigger on the log (and one that puts other text under a runtime
+ * trigger's name) runs nothing under the runtime's own outbox write, because
+ * the runtime drops what is not its own at open, before any write it trusts.
+ * And the application's writes to runtime tables are refused at execution,
+ * by SQLite's authorizer, on every route the catalog names: direct, quoted,
+ * schema-qualified, prepared, a TEMP trigger, a view's INSTEAD OF trigger, a
+ * trigger on the application's own table. A document assembled as the
+ * compiler does, and a copy the runtime made, have nothing dropped.
+ */
+test("T11/P02: no trigger an imported schema hangs on a runtime table runs under the runtime's writes, and application writes to runtime tables are refused at execution", async () => {
+  // The release declares a view whose INSTEAD OF trigger writes a runtime table: refused when it would run.
+  const { a, b } = await base({ extra: ["CREATE VIEW forge AS SELECT 1 AS x; CREATE TRIGGER forge_in INSTEAD OF INSERT ON forge BEGIN DELETE FROM _cs_cell; END;"] });
+  expect(a.changes.refused, "a copy the runtime made: nothing dropped").toEqual([]);
+  const compiled = await Copy.open(await person(), await compiledBytes());
+  expect(compiled.changes.refused, "a document assembled as the compiler does: nothing dropped").toEqual([]);
+  compiled.close();
+
+  // The imported schema: A's stored bytes, given two triggers outside any runtime.
+  const raw = await openBytes(await a.bytes());
+  raw.db.exec(`CREATE TRIGGER evil AFTER INSERT ON _cs_log BEGIN
+      INSERT OR REPLACE INTO _cs_flag (tbl, pk, kind, detail) VALUES ('items', '[0]', 'held', 'forged');
+      UPDATE items SET note = 'pwned';
+    END;
+    DROP TRIGGER _cs_log__no_update;
+    CREATE TRIGGER _cs_log__no_update BEFORE UPDATE OF _r_batch ON _cs_log BEGIN UPDATE items SET note = 'pwned too'; END;`);
+  const imported = raw.sqlite3.capi.sqlite3_js_db_export(raw.db.pointer) as Uint8Array;
+  raw.db.close();
+  const c = await Copy.open(a.author, imported);
+  expect.soft([...c.changes.refused].sort(), "both are dropped at open").toEqual(["_cs_log__no_update", "evil"]);
+  const triggerSql = (x: Copy, name: string): string => String(x.db.selectValue("SELECT sql FROM sqlite_schema WHERE name = ?", [name]) ?? "").replace(/\s+/g, " ");
+  expect.soft(triggerSql(c, "evil"), "the foreign trigger is gone").toBe("");
+  expect.soft(triggerSql(c, "_cs_log__no_update"), "the runtime's own text is back under its name").toBe(triggerSql(a, "_cs_log__no_update"));
+  c.db.exec("INSERT INTO items (title) VALUES ('after the import')");
+  expect(c.save(), "the runtime's outbox write").not.toBeNull();
+  await c.seal();
+  expect(c.db.selectValues("SELECT note FROM items WHERE note LIKE 'pwned%'"), "nothing the imported triggers wrote").toEqual([]);
+  expect(c.flags(), "no forged flag").toEqual([]);
+  c.close();
+
+  // The application's writes to runtime tables, refused when they execute.
+  const cells = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_cell"));
+  const before = cells();
+  const refused = (sql: string): void => expect(() => a.db.exec(sql), sql).toThrow(/^CHANGES_REFUSED: /);
+  for (const sql of [
+    "INSERT INTO _cs_flag (tbl, pk, kind) VALUES ('items', '[1]', 'pending')",
+    `UPDATE "_cs_log" SET payload = x'00'`,
+    "DELETE FROM main._cs_cell",
+    "UPDATE _dai_replica SET label = 'x'",
+    "DROP TABLE _cs_flag",
+    "ALTER TABLE _cs_flag ADD COLUMN x",
+    "CREATE TRIGGER on_log AFTER INSERT ON _cs_log BEGIN SELECT 1; END",
+    "CREATE TEMP TRIGGER on_log_temp AFTER INSERT ON main._cs_log BEGIN SELECT 1; END",
+    "DROP TRIGGER _cs_log__no_update",
+    "CREATE INDEX on_cell ON _cs_cell (val)",
+    "CREATE TEMP VIEW _cs_log_current AS SELECT 1",
+  ]) {
+    refused(sql);
+  }
+  expect(() => a.db.prepare("DELETE FROM _cs_cell"), "a prepared statement").toThrow(/not authorized/);
+  // A trigger on the application's own table: refused as it is made (1d-L1). A view's INSTEAD OF trigger: when it would run.
+  expect(() => a.db.exec("CREATE TRIGGER items_forge AFTER INSERT ON items BEGIN DELETE FROM _cs_cell; END")).toThrow(/CHANGES_REFUSED/);
+  a.db.exec("INSERT INTO items (title) VALUES ('not forged')");
+  refused("INSERT INTO forge VALUES (1)");
+  expect(cells(), "the runtime's tables are as they were").toBe(before);
+
+  // And the runtime's own writes go on: a save, a seal, a merge.
+  a.db.exec("INSERT INTO items (title) VALUES ('still saved')");
+  expect(a.save()).not.toBeNull();
+  await b.mergeFrom(await a.bytes());
+  expect(b.db.selectValue("SELECT count(*) FROM items WHERE title = 'still saved'")).toBe(1);
+  a.close();
+  b.close();
+});

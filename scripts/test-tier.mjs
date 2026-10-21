@@ -26,10 +26,20 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { keepEvidenceSafely, whyFailed } from "./lib/keep-evidence.mjs";
+import { BROWSER_PARTS, COUNT_JOB } from "./ci-verdict.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPORT = join(repo, "test-results", "count-gate.json");
 const PROJECTS = ["--project=chromium", "--project=node"];
+/**
+ * The CI jobs this tier's suite run stands for (test.yml): Chromium's four
+ * shards and the node job, which run here as one whole run, and the count-gate
+ * job, which holds the sum of CI's parts to the floor this run is held to.
+ */
+const CI_SUITE_JOBS = [
+  ...BROWSER_PARTS.filter((part) => /^browser \((chromium|node),/.test(part)).map((part) => `${part})`),
+  COUNT_JOB,
+];
 
 const [tier, ...rest] = process.argv.slice(2);
 
@@ -237,9 +247,12 @@ if (tier === "push" || process.argv[2] === "push") {
     if (error) console.error(`\ntest-tier push: this run failed, and its results could NOT be kept (${error}). Copy test-results/ by hand before rerunning.`);
     if (!kept && !error) console.error("\ntest-tier push: this run failed, and there was no test-results/ to keep.");
     for (const reason of reasons) console.error(`test-tier push: failed: ${reason}`);
+    if (reasons.length > checksFailed.length) {
+      console.error(`test-tier push: the suite stands for CI's ${CI_SUITE_JOBS.join(", ")}; one of them would refuse this too.`);
+    }
     process.exit(status !== 0 ? status : 1);
   }
-  console.log(`\ntest-tier push: whole run, count gate checked: ${JSON.stringify(report.passed)}`);
+  console.log(`\ntest-tier push: whole run, count gate checked: ${JSON.stringify(report.passed)} (CI: ${CI_SUITE_JOBS.join(", ")})`);
   process.exit(0);
 }
 

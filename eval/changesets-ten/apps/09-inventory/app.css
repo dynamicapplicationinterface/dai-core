@@ -1,0 +1,103 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f1ea;
+  --card: #ffffff;
+  --ink: #232a26;
+  --muted: #69726c;
+  --line: #e1dccf;
+  --accent: #2f6f4f;
+  --warn: #9a5b00;
+  --warn-bg: #fbeed6;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161a17; --card: #1f2520; --ink: #e8ece8; --muted: #9aa39c;
+    --line: #2e3630; --accent: #7cc39c; --warn: #f0b35a; --warn-bg: #3a2c12;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* A display rule below would otherwise show what the page hid. */
+[hidden] { display: none !important; }
+
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { line-height: 1.45; -webkit-font-smoothing: antialiased; }
+
+/* Color runs to every edge; content stays clear of the strips a phone covers. */
+main {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
+    calc(32px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* The top right corner belongs to the host's menu button. */
+header { padding-right: 56px; }
+h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; line-height: 1.1; }
+h2 { margin: 0; font-size: 16px; }
+.summary { margin: 6px 0 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.list { display: block; }
+.list .item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.what { display: grid; gap: 2px; min-width: 0; }
+.what strong { overflow-wrap: anywhere; }
+.place { color: var(--muted); font-size: 14px; }
+.place:empty { display: none; }
+
+.flag {
+  grid-column: 1; justify-self: start;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--warn); background: var(--warn-bg);
+  padding: 2px 8px; border-radius: 999px;
+}
+
+.count { display: flex; align-items: center; gap: 6px; grid-column: 2; grid-row: 1; }
+.qty { min-width: 2.2em; text-align: center; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+button {
+  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--bg);
+}
+button.step { min-width: 44px; padding: 0; font-size: 22px; line-height: 1; background: transparent; color: var(--accent); }
+button.remove {
+  grid-column: 1 / -1; justify-self: start; min-height: 36px; padding: 0 4px;
+  border: 0; background: none; color: var(--muted); font-size: 14px;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.add {
+  display: grid; gap: 12px; padding: 16px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+}
+.add label { display: grid; gap: 6px; color: var(--muted); font-size: 14px; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+input {
+  font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px;
+  min-height: 44px; padding: 8px 12px; width: 100%;
+}
+::placeholder { color: var(--muted); opacity: 0.6; font-style: italic; }
+
+dai-rows[empty], .list:empty { color: var(--muted); }
+
+footer { display: flex; justify-content: flex-end; }
+dai-save {
+  display: inline-block; padding: 12px 22px; border-radius: 10px;
+  background: var(--accent); color: var(--bg); cursor: pointer; font-weight: 600;
+}

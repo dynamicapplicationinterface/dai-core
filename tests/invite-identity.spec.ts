@@ -245,7 +245,7 @@ const AUTHOR_ID = /^[A-Za-z0-9_-]{22}$/;
 
 /** A creator starts a game and shares it with the data in it; a guest opens the link. */
 async function inviteWithData(browser: Browser, iphone: boolean, guestOptions: { relayAfterRelaunch?: boolean } = {}) {
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Velvet Chess",

@@ -208,6 +208,13 @@ show the name, not only the sentence.
 | Reason | Recoverable | Meaning |
 |---|---|---|
 | `REPLICATED_TABLE_IMMUTABLE` | no | A write tried to change or delete a row of a shared table in place. Shared tables are append-only: a change is a new row and a removal a tombstone, both through `window.dai.replicated`. What SQLite says when an application writes one with plain SQL. |
+| `APP_TRANSACTION_OPEN` | yes | A merge arrived while the application held a transaction open. Nothing was written and the application's transaction is untouched; the merge can be asked again once it ends. |
+| `CHANGES_APPLY` | yes | A TEMP trigger the runtime lifted off while merged rows were applied could not be put back. The merged rows stand; the error names the trigger, which is missing until the application creates it again. |
+| `CHANGES_CAPTURE` | no | SQLite's session extension could not record or read back what a save changed. The save fails, is kept and is retried; nothing is written to the log half-captured. |
+| `CHANGES_SAVE_REFUSED` | no | A save failed and no retry can cure it. The document is refused once, in one sentence the host shows as it is: its last saved work is kept, later writes and merges are held, and Save a copy keeps what is on screen. |
+| `CHANGES_REFUSED` | yes | A statement the data interface cannot carry was refused as it ran, before any data was accepted under it. The message carries the rule it broke; nothing was written. |
+| `CHANGES_KEY_UNREWRITABLE` | no | An application table's INTEGER PRIMARY KEY could not be rewritten to take author-ranged ids. Never thrown to the application: the table is kept as a natural key, and its ids are the application's. |
+| `ID_RANGE_EXHAUSTED` | no | This author has used all 4,294,967,295 ids of its range in one document. Ids are never reused, so a further insert that leaves its id to the runtime is refused. |
 | `ROW_REJECTED` | no | A row that breaks the replication rules: a second, different row under an id already used (a replica issues each sequence number once), a row with no session in a session document, a superseded row made current again, or a write before this copy has a replica. |
 | `WRITE_SURFACE_UNAVAILABLE` | no | `window.dai.replicated` is not in place, so a shared table cannot be written. The reason follows in parentheses: the write rules were refused, never arrived, or the host did not say the document is replicated. The document is still readable. |
 | `WRITE_RULES_NOT_DELIVERED` | no | The host said this document has shared tables and then sent no write rules within the wait, so the document opens read-only rather than writing shared rows it cannot check. |

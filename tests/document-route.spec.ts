@@ -43,7 +43,7 @@ test.describe("a document opened at its own address", () => {
   let container: string;
 
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

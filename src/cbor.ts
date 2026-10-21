@@ -26,9 +26,22 @@ export type CborValue =
   | bigint
   | string
   | Uint8Array
+  | Float64
   | null
   | CborValue[]
   | Map<CborValue, CborValue>;
+
+/**
+ * A float64 that a JS number would not keep as one: a whole number, which
+ * JS cannot tell from an integer, or an infinity. A changeset carries SQLite's
+ * storage class exactly (M15), so a REAL 1.0 or a REAL Inf travels as a
+ * float64 and comes back as one, where the decoder is asked for it
+ * (`decode(bytes, { floats: true })`). Nothing else writes or reads one: a
+ * replicated row's REAL keeps the rule its column's type gives it.
+ */
+export class Float64 {
+  constructor(readonly value: number) {}
+}
 
 export class CborError extends Error {
   constructor(message: string) {
@@ -125,6 +138,14 @@ export function encode(value: CborValue): Uint8Array {
     // The shortest form, as for a number, when it fits one exactly.
     if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) return encode(Number(value));
     return value >= 0n ? head64(MAJOR.UNSIGNED, value) : head64(MAJOR.NEGATIVE, -1n - value);
+  }
+
+  if (value instanceof Float64) {
+    if (Number.isNaN(value.value)) throw new CborError("NaN is not encodable.");
+    const out = new Uint8Array(9);
+    out[0] = (MAJOR.SIMPLE << 5) | 27;
+    new DataView(out.buffer).setFloat64(1, value.value, false);
+    return out;
   }
 
   if (typeof value === "number") {
@@ -226,7 +247,7 @@ function readHead(cursor: Cursor): { major: number; value: number | bigint } {
  */
 const MAX_DEPTH = 32;
 
-function decodeAt(cursor: Cursor, depth = 0): CborValue {
+function decodeAt(cursor: Cursor, depth = 0, floats = false): CborValue {
   if (depth > MAX_DEPTH) throw new CborError(`Nested deeper than ${MAX_DEPTH} levels.`);
   // A float64, the one float this encoder writes. Read before the head, whose
   // length forms it would otherwise take it for.
@@ -236,6 +257,7 @@ function decodeAt(cursor: Cursor, depth = 0): CborValue {
     const float = view.getFloat64(0, false);
     cursor.at += 9;
     if (Number.isNaN(float)) throw new CborError("NaN is not a value here.");
+    if (floats && (Number.isInteger(float) || !Number.isFinite(float))) return new Float64(float);
     if (!Number.isFinite(float)) throw new CborError("Infinity is not a value here.");
     return float;
   }
@@ -265,17 +287,17 @@ function decodeAt(cursor: Cursor, depth = 0): CborValue {
     }
     case MAJOR.ARRAY: {
       const items: CborValue[] = [];
-      for (let i = 0; i < value; i++) items.push(decodeAt(cursor, depth + 1));
+      for (let i = 0; i < value; i++) items.push(decodeAt(cursor, depth + 1, floats));
       return items;
     }
     case MAJOR.MAP: {
       const map = new Map<CborValue, CborValue>();
       for (let i = 0; i < value; i++) {
-        const key = decodeAt(cursor, depth + 1);
+        const key = decodeAt(cursor, depth + 1, floats);
         // Deterministic encoding (RFC 8949 §4.2.1) forbids a repeated key, and
         // "last wins" is a reading nobody agreed to; a strict reader refuses.
         if (map.has(key)) throw new CborError("Duplicate map key.");
-        map.set(key, decodeAt(cursor, depth + 1));
+        map.set(key, decodeAt(cursor, depth + 1, floats));
       }
       return map;
     }
@@ -288,7 +310,7 @@ function decodeAt(cursor: Cursor, depth = 0): CborValue {
        * this decoder has no meaning for.
        */
       if (value !== 18) throw new CborError(`Unsupported tag: ${value}`);
-      return decodeAt(cursor, depth + 1);
+      return decodeAt(cursor, depth + 1, floats);
     case MAJOR.SIMPLE:
       if (value === 22) return null;
       throw new CborError(`Unsupported simple value: ${value}`);
@@ -297,10 +319,10 @@ function decodeAt(cursor: Cursor, depth = 0): CborValue {
   }
 }
 
-/** Decodes one value, and refuses anything trailing it. */
-export function decode(bytes: Uint8Array): CborValue {
+/** Decodes one value, and refuses anything trailing it. `floats`: a whole or infinite float64 comes back as a Float64. */
+export function decode(bytes: Uint8Array, options: { floats?: boolean } = {}): CborValue {
   const cursor: Cursor = { bytes, at: 0 };
-  const value = decodeAt(cursor);
+  const value = decodeAt(cursor, 0, options.floats === true);
   if (cursor.at !== bytes.byteLength) {
     // Trailing bytes in a signature envelope are somebody appending to it.
     throw new CborError("Unexpected bytes after the end of the value.");

@@ -65,6 +65,10 @@ Build options:
                           a signature anybody can make is not evidence — only
                           the conformance suite has a reason to pass this
       --no-verify         Build a container that does not demand verification
+      --policy-layer      Build a schema marked -- dai:replicated or with a
+                          session profile, as the documents made before
+                          ordinary tables were. Refused otherwise, as
+                          dai check refuses it
       --quiet             Print only the output path
 
 Check options:
@@ -208,6 +212,7 @@ async function build(parsed: Parsed): Promise<number> {
     thin: flags.thin === true,
     allowTestKey: flags["allow-test-key"] === true,
     sectioned: flags.dai === true,
+    policyLayer: flags["policy-layer"] === true,
   });
 
   const sectioned = flags.dai === true;

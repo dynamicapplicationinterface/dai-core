@@ -182,10 +182,9 @@ jobs:
   # webkit is that case: it alone ran past 25 minutes and was cancelled every
   # round — a cancelled job is no verdict, so webkit was effectively ungated and
   # its reds sat unseen. So webkit is split into `--shard` parts that each
-  # finish well inside the budget and each report a verdict; chromium and firefox
-  # still run whole, one job each. The count gate skips a sharded run (its count
-  # is a fraction by intent) and is carried by the two whole engines, which drop
-  # the same count when a test stops being collected.
+  # finish well inside the budget and each report a verdict. A sharded run's
+  # count is a fraction by intent; the count-gate job holds the sum of the
+  # parts (19 October, below).
   #
   # Two parts became three on 27 September: shard 1 of 2 ran 16 to 24 minutes
   # against this 25-minute wall and was cancelled at it once (run 36289801499,
@@ -216,23 +215,44 @@ jobs:
   # to stop a hang; no verdict of the gate waits on it, and the rule above
   # (split, don't raise) is for the engines that gate. Its job has 60, so the
   # setup keeps the same allowance as the others'.
+  #
+  # Chromium became four parts and a node job on 19 October. The one job that
+  # ran Chromium and the node project together hit its 25-minute wall twice
+  # running (runs 39325432299 and the one on 015364ac before it), at about
+  # 1,400 of 1,579 tests, docs-only commits among them: its time, not a test,
+  # failed it. The node project runs whole in a job of its own; Chromium is
+  # split by `--shard` like WebKit. Each part is held to 15 minutes on the
+  # slowest runner seen; past that, split further.
+  #
+  # The count gate covers every part (C8). A part's count is a fraction by
+  # intent, so each gating part keeps its count report (count-<browser>-<part>)
+  # and the count-gate job below sums them per project against the floor. No
+  # engine is left covered by another's count.
+  #
+  # Firefox runs in a job of its own (`reading`, same name as before), with the
+  # same steps, so the count-gate job, which waits on every gating part, does
+  # not wait 40 minutes on a reading.
   browser:
     runs-on: ubuntu-latest
     # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
     # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
     # whose apt mirror was slow (30 September, D174), and that spent the tests'
     # budget before they began. This is the setup's allowance, not theirs.
-    timeout-minutes: ${{ matrix.browser == 'firefox' && 60 || 45 }}
-    continue-on-error: ${{ matrix.browser == 'firefox' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
+          # The mailbox file is its own job here too: in run 39343228551 the
+          # shard that held it took 17.2 minutes, the other three 4 to 6.
+          - { browser: chromium, part: "1", shard: "1/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: "2", shard: "2/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: "3", shard: "3/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: chromium, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
           # The specs that open no browser are their own project (see
-          # playwright.config.ts) and run once, here, where the count gate
-          # holds them — not once per engine.
-          - { browser: chromium, part: whole, extra: "--project=node" }
-          - { browser: firefox, part: whole }
+          # playwright.config.ts) and run once, here — not once per engine.
+          - { browser: node, part: whole }
           # One file runs in a job of its own (D174); the four parts drop it
           # by its one describe title, and every other file stays in them.
           - { browser: webkit, part: "1", shard: "1/4", extra: '--grep-invert "a game continues over a shared link"' }
@@ -241,7 +261,8 @@ jobs:
           - { browser: webkit, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
           - { browser: webkit, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
 
-    steps:
+    # Anchored: the Firefox job below runs these same steps.
+    steps: &browser-steps
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -263,11 +284,21 @@ jobs:
       # Installing it everywhere keeps the coverage the same on every engine —
       # the alternative, skipping those tests off Chromium, would make "green on
       # three engines" a claim that is not true. --with-deps pulls the system
-      # libraries each needs.
-      - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
+      # libraries each needs. The node job installs Chromium alone.
+      - run: npx playwright install --with-deps ${{ matrix.browser == 'node' && 'chromium' || matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
         timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || 25 }}
+
+      # This part's count, for the count-gate job's sum (scripts/count-parts.mjs),
+      # whatever the tests did. A part that keeps none is red there by name.
+      - if: ${{ !cancelled() && matrix.browser != 'firefox' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-${{ matrix.browser }}-${{ matrix.part }}
+          path: test-results/count-gate.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - if: failure()
         uses: actions/upload-artifact@v4
@@ -294,3 +325,37 @@ jobs:
             test-results/**/error-context.md
           if-no-files-found: ignore
           retention-days: 14
+
+  # Firefox, the reading (D32): the browser job's steps, its own job, under
+  # the name it always had, so scripts/ci-verdict.mjs still prints it apart.
+  reading:
+    name: browser (${{ matrix.browser }}, ${{ matrix.part }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      matrix:
+        include:
+          - { browser: firefox, part: whole }
+    steps: *browser-steps
+
+  # The count gate over every gating browser part (C8): the sum of their kept
+  # counts per project, held to tests/count-floor.json by the rule a whole run
+  # is held to. It needs nothing installed: the script reads JSON with Node's
+  # own modules.
+  count-gate:
+    needs: browser
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: count-*
+          path: count-parts/
+      - run: node scripts/count-parts.mjs count-parts

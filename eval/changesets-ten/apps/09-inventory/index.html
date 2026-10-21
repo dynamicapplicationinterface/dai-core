@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="What you have, how many, and where it is" />
+  <meta name="dai:does" content="Keep a list of what you have, with a count and where it lives" />
+  <meta name="dai:does" content="Add or remove one with a single tap as things come and go" />
+  <meta name="dai:does" content="Flag anything running low so it is never a surprise" />
+  <meta name="theme-color" content="#f4f1ea" />
+  <title>Inventory</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Example rows, so the first open is not empty. A second open adds nothing.
+    INSERT OR IGNORE INTO items (id, name, place, qty, low_at) VALUES
+      (1, 'AA batteries', 'Hall drawer', 6, 2),
+      (2, 'Light bulbs', 'Garage shelf', 1, 2),
+      (3, 'Paper towels', 'Pantry', 4, 1),
+      (4, 'Printer paper', 'Study cabinet', 0, 1);
+  </script>
+
+  <main>
+    <header>
+      <h1>Inventory</h1>
+      <p class="summary">
+        <dai-value query="SELECT count(*) FROM items"></dai-value> items ·
+        <dai-value query="SELECT count(*) FROM items WHERE qty <= low_at"></dai-value> running low
+      </p>
+    </header>
+
+    <dai-rows
+      class="list"
+      query="SELECT id, name, place, qty, qty <= low_at AS low FROM items ORDER BY low DESC, name COLLATE NOCASE"
+      empty="Nothing here yet. Add the first thing you want to keep track of.">
+      <template>
+        <div class="item">
+          <div class="what">
+            <strong data-text="name"></strong>
+            <span class="place" data-text="place"></span>
+          </div>
+          <span class="flag" data-when="low">Low</span>
+          <div class="count">
+            <button type="button" class="step" aria-label="One fewer"
+              data-run="UPDATE items SET qty = max(qty - 1, 0) WHERE id = :id">&minus;</button>
+            <span class="qty" data-text="qty"></span>
+            <button type="button" class="step" aria-label="One more"
+              data-run="UPDATE items SET qty = qty + 1 WHERE id = :id">+</button>
+          </div>
+          <button type="button" class="remove" aria-label="Remove this item"
+            data-run="DELETE FROM items WHERE id = :id">Remove</button>
+        </div>
+      </template>
+    </dai-rows>
+
+    <dai-form class="add" run="INSERT INTO items (name, place, qty, low_at) VALUES (:name, :place, :qty, :low_at)">
+      <h2>Add something</h2>
+      <label>Name <input name="name" required maxlength="80" placeholder="e.g. Trash bags" autocomplete="off" /></label>
+      <label>Where <input name="place" maxlength="60" placeholder="e.g. Under the sink" autocomplete="off" /></label>
+      <div class="pair">
+        <label>How many <input name="qty" type="number" min="0" step="1" value="1" required inputmode="numeric" /></label>
+        <label>Low at <input name="low_at" type="number" min="0" step="1" value="1" required inputmode="numeric" /></label>
+      </div>
+      <button>Add</button>
+    </dai-form>
+
+    <footer>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./dai-kit.js"></script>
+</body>
+</html>

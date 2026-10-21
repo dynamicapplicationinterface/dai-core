@@ -82,7 +82,9 @@ test.describe("a document in the link", () => {
     const link = await inlineLink(small.html, "https://opendai.app/", HOST);
     expect(link).toBe(`https://opendai.app/#a=${await encodeInline(small.html, HOST)}`);
     // The whole point of the compact carrier: a real app in a few kilobytes.
-    expect(link!.length).toBeLessThan(4 * 1024);
+    // Under 4 KB until every document with no session policy carried the
+    // changeset log's rewritten declaration in its page (R-O, Build 1).
+    expect(link!.length).toBeLessThan(8 * 1024);
   });
 
   test("a real app opens from a link with the network switched off", async ({ page, context, browserName }) => {

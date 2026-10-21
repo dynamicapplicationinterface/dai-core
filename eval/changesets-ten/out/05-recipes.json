@@ -1,0 +1,51 @@
+{
+ "name": "05-recipes",
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "✓ All   UPDATE settings SET filter = :val WHERE id = 1",
+  "b": "✓ All   UPDATE settings SET filter = :val WHERE id = 1"
+ },
+ "delete": {
+  "a": "Delete   UPDATE settings SET confirm = :id WHERE id = 1"
+ },
+ "ops": {
+  "a": {
+   "I": 6,
+   "U": 1,
+   "D": 0
+  },
+  "b": {
+   "I": 2,
+   "U": 0,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 10,
+  "b": 10
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
+}

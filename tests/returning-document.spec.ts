@@ -51,7 +51,8 @@ async function board(): Promise<string> {
       "</script>",
     "utf8",
   );
-  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Postal Chess" });
+  // Built as before R-O, with no changeset log: this file is about copies that replace each other whole.
+  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Postal Chess", changesetLog: false });
   const file = join(dir, "chess.dai.html");
   writeFileSync(file, built.html, "utf8");
   return file;

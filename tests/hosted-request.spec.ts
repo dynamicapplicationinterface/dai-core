@@ -24,7 +24,7 @@ test("the hosted request declares authorship and is built from the example as it
   expect(hosted.manifest.requires ?? []).toContain("replicated");
 
   const fresh = parseContainer(
-    (await compileDirectory({ sourceDir: join(repo, "examples", "request"), root: repo, appName: "Request" })).html,
+    (await compileDirectory({ policyLayer: true, sourceDir: join(repo, "examples", "request"), root: repo, appName: "Request" })).html,
   );
   const app = (archive: Record<string, Uint8Array>) => Object.keys(archive).filter((name) => name.startsWith("app/")).sort();
   expect(app(hosted.archive)).toEqual(app(fresh.archive));

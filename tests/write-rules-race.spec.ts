@@ -46,7 +46,7 @@ test.describe("write rules that arrive before the frame is listening", () => {
   let moduleSource: string;
 
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

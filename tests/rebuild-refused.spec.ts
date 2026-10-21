@@ -132,7 +132,9 @@ test.describe("a rebuild under the same id, arriving over somebody's entries", (
     );
 
     const keyFile = await signingKey(source);
-    const one = await compileDirectory({ sourceDir: source, root: repo, appName: "Logbook", signingKey: keyFile });
+    // Built as before R-O: a rebuild of a plain document. With the changeset
+    // log it is offered as a merge and refused as another release.
+    const one = await compileDirectory({ sourceDir: source, root: repo, appName: "Logbook", signingKey: keyFile, changesetLog: false });
     const first = join(source, "logbook.dai.html");
     writeFileSync(first, one.html, "utf8");
 
@@ -161,6 +163,7 @@ test.describe("a rebuild under the same id, arriving over somebody's entries", (
         appName: "Logbook",
         documentUuid: one.manifest.documentUuid,
         signingKey: keyFile,
+        changesetLog: false,
       });
       const path = join(source, "logbook-v2.dai.html");
       writeFileSync(path, two.html, "utf8");

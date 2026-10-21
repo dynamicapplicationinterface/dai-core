@@ -28,7 +28,7 @@ test("a document's code cannot get a header for another document signed", async 
   test.slow();
 
   // A: a shared document this device writes to, so the host has signed for it.
-  const chess = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+  const chess = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
   const dir = mkdtempSync(join(tmpdir(), "dai-sign-scope-"));
   const chessFile = join(dir, "chess.dai.html");
   writeFileSync(chessFile, chess.html, "utf8");
@@ -67,7 +67,7 @@ window.parent.postMessage({ type: "dai:sign", id: "forge", header, seq: 1 }, "*"
 `,
     "utf8",
   );
-  const forger = await compileDirectory({ sourceDir: source, root: repo, appName: "Forger" });
+  const forger = await compileDirectory({ policyLayer: true, sourceDir: source, root: repo, appName: "Forger" });
   const forgerFile = join(dir, "forger.dai.html");
   writeFileSync(forgerFile, forger.html, "utf8");
 

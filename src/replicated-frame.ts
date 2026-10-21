@@ -315,6 +315,23 @@ export {
   type RefusedBatch,
 } from "./replicated-rows.js";
 
+// The ordinary data interface (R-O): capture into the log, projection after a merge.
+export {
+  Changes,
+  CHANGES_DECLARATION,
+  CHANGES_LOG,
+  appTablesOf,
+  authorIndexOf,
+  changesDump,
+  createRows,
+  declaresChanges,
+  rewriteKeySql,
+  stageChangeFunctions,
+  type ChangesOptions,
+  type FlagKind,
+  type SavedChanges,
+} from "./changesets.js";
+
 export {
   authoredSince,
   authoredHead,

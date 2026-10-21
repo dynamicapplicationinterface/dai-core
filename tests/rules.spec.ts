@@ -10,7 +10,7 @@ import { parseBundle } from "../src/bundle.js";
 import { EXAMPLE_APPS } from "../src/generated/examples.js";
 import { FRAME_PUBLIC } from "../src/frame.js";
 import { breaking, lintFiles } from "../src/lint.js";
-import { RECIPE } from "../src/recipe.js";
+import { RECIPE, TAUGHT, TAUGHT_REFUSAL } from "../src/recipe.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { createEntity } from "../src/replicated-rows.js";
 import {
@@ -39,7 +39,7 @@ const read = (path: string): string => readFileSync(resolve(repo, path), "utf8")
  * that line, and a line that moves fails a test.
  */
 
-const ID_SHAPED = /\b(?:IDENTITY|SHAPE|SHARED|SESSION|NO|KIT|STORE|MODULE|ONE|SHARE|SCHEMA|SEED|WRITE|MIGRATE|TIMES|ICON|DESCRIBE|EDGE|TOP|LOOK|HANDOVER)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
+const ID_SHAPED = /\b(?:IDENTITY|IDS|SHAPE|SHARED|SESSION|NO|KIT|STORE|MODULE|ONE|SHARE|SCHEMA|SEED|WRITE|MIGRATE|TIMES|ICON|DESCRIBE|EDGE|TOP|LOOK|HANDOVER|INSERT|TOTALS|COUNTERS|RESOLVE)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
 
 function everyAnchor(): { owner: string; anchor: Anchor }[] {
   return [
@@ -115,44 +115,39 @@ test.describe("every constraint is tied to the code it depends on", () => {
   });
 });
 
-test.describe("the model file carries every constraint", () => {
-  test("every id, rule and reason is in it, word for word", () => {
+/*
+ * One shape (R-O, Build 1): the model file teaches the constraints every
+ * application meets over ordinary tables, and not the shape decision, the
+ * shared-table surface or the session surface, which stay in rules.ts for the
+ * documents built through the policy layer and for the site's pages.
+ */
+test.describe("the model file carries every constraint it teaches", () => {
+  test("every taught id, rule and reason is in it, word for word, and nothing else is", () => {
     for (const c of CONSTRAINTS) {
+      if (!TAUGHT(c)) {
+        expect(RECIPE, `${c.id} is not taught`).not.toContain(`[${c.id}]`);
+        continue;
+      }
       expect(RECIPE, c.id).toContain(`[${c.id}]`);
       expect(RECIPE, `${c.id} rule`).toContain(c.rule);
       expect(RECIPE, `${c.id} why`).toContain(c.why);
     }
   });
 
-  test("every call, view, marker and refusal is in it", () => {
-    for (const s of SURFACE) expect(RECIPE, s.call).toContain(s.call);
-    for (const v of VIEWS) expect(RECIPE, v.name).toContain(`- ${v.name} `);
-    for (const m of MARKERS) expect(RECIPE, m.marker).toContain(m.marker);
-    for (const r of APP_REFUSALS) expect(RECIPE, r.code).toContain(r.code);
+  test("every call and refusal an ordinary-table application meets is in it", () => {
+    for (const s of SURFACE.filter((entry) => entry.shapes.includes("solo"))) expect(RECIPE, s.call).toContain(s.call);
+    for (const r of APP_REFUSALS.filter(TAUGHT_REFUSAL)) expect(RECIPE, r.code).toContain(r.code);
   });
 
-  test("the shape is decided before any constraint, and every shape is named", () => {
-    const shape = RECIPE.indexOf("FIRST, THE SHAPE");
-    const constraints = RECIPE.indexOf("THE CONSTRAINTS");
-    expect(shape).toBeGreaterThan(-1);
-    expect(shape).toBeLessThan(constraints);
-    for (const s of SHAPES) expect(RECIPE, s.id).toContain(s.title.toUpperCase());
+  test("there is no shape to decide: nothing taught is about shared tables or sessions", () => {
+    expect(RECIPE).not.toContain("FIRST, THE SHAPE");
+    for (const s of SHAPES.filter((shape) => shape.id !== "solo")) expect(RECIPE, s.id).not.toContain(s.title.toUpperCase());
+    for (const m of MARKERS) expect(RECIPE, m.marker).not.toContain(m.marker);
+    for (const v of VIEWS) expect(RECIPE, v.name).not.toContain(`- ${v.name} `);
   });
 
-  test("the gaps the old recipe had are stated", () => {
-    // The backlog's L3 exit, as a grep that cannot silently fall behind again.
-    for (const needle of [
-      "_current",
-      "_conflicts",
-      "_r_conflicted",
-      `"${FRAME_PUBLIC.MERGED}"`,
-      'via === "carrier"',
-      "-- dai:profile session max_parties=N",
-      "session.create()",
-      "session.join(session, seat)",
-      "session.close(session)",
-      "contested",
-    ]) {
+  test("what an ordinary-table application needs to know is stated", () => {
+    for (const needle of [`"${FRAME_PUBLIC.MERGED}"`, "last_insert_rowid()", "RETURNING id", "run once, when the document is created"]) {
       expect(RECIPE, needle).toContain(needle);
     }
   });
@@ -161,8 +156,9 @@ test.describe("the model file carries every constraint", () => {
     execFileSync(process.execPath, [join(repo, "scripts", "build-docs.mjs"), "--check"], { cwd: repo });
     const start = RECIPE.indexOf("COMPLETE EXAMPLES");
     const fences = RECIPE.slice(start).split("```text\n").slice(1).map((chunk) => "```text\n" + chunk.slice(0, chunk.indexOf("```") + 3));
-    expect(fences.length).toBe(EXAMPLE_APPS.length);
-    for (const [index, app] of EXAMPLE_APPS.entries()) {
+    const taught = EXAMPLE_APPS.filter((app) => app.shape === "solo");
+    expect(fences.length).toBe(taught.length);
+    for (const [index, app] of taught.entries()) {
       const bundle = parseBundle(`${fences[index]}\n`);
       expect(bundle.name).toBe(app.name);
       for (const [name, text] of Object.entries(app.files)) {
@@ -212,16 +208,18 @@ function filesOf(dir: string): Record<string, string> {
 }
 
 test.describe("the lint holds applications to the shared-table constraints", () => {
-  test("the correct applications pass", () => {
-    for (const dir of ["examples/packing-list", "examples/receipts", "examples/tic-tac-toe", "examples/request", "tests/fixture/chess"]) {
+  test("the correct applications pass; those built through the policy layer are refused for their markers alone (one shape)", () => {
+    expect(breaking(lintFiles(filesOf("examples/packing-list"))).map((f) => `${f.file}: ${f.id}`)).toEqual([]);
+    // Existing documents, kept building and in CI (R-P); a new document authored this way is refused.
+    for (const dir of ["examples/receipts", "examples/tic-tac-toe", "examples/request", "tests/fixture/chess"]) {
       const findings = breaking(lintFiles(filesOf(dir)));
-      expect(findings.map((f) => `${f.file}: ${f.id}`), dir).toEqual([]);
+      expect(findings.map((f) => `${f.file}: ${f.id}`), dir).toEqual(["schema.sql: one-shape"]);
     }
   });
 
-  test("the chess foil fails for exactly the lessons its README names", () => {
+  test("the chess foil fails for exactly the lessons its README names, and for its markers", () => {
     const ids = breaking(lintFiles(filesOf("examples/chess-foil"))).map((f) => f.id).sort();
-    expect(ids).toEqual(["shared-base-read", "shared-no-merge-listener", "shared-raw-write", "shared-table-constraint"]);
+    expect(ids).toEqual(["one-shape", "shared-base-read", "shared-no-merge-listener", "shared-raw-write", "shared-table-constraint"]);
   });
 
   const shared = "-- dai:replicated\nCREATE TABLE IF NOT EXISTS items (name TEXT NOT NULL);\n";

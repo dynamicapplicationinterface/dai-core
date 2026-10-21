@@ -25,7 +25,7 @@ test.describe("a device that lost its key is told it is a new player", () => {
 
   let container: string;
   test.beforeAll(async () => {
-    const built = await compileDirectory({
+    const built = await compileDirectory({ policyLayer: true,
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
       appName: "Velvet Chess",

@@ -1,0 +1,145 @@
+{
+  "scenario": "1h-L1 space seq",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 8256889942966280,
+          "item_id": 8256889942966278,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 8256889942966273,
+          "name": "Food"
+        },
+        {
+          "id": 8256889942966274,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 8256889942966273,
+          "done": 0,
+          "id": 8256889942966275,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 8256889942966274,
+          "done": 0,
+          "id": 8256889942966276,
+          "note": null,
+          "qty": 1,
+          "title": "Tent (A)"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8256889942966277,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8256889942966278,
+          "note": "f4",
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8256889942966279,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [],
+    "held": [],
+    "rejected": [
+      [
+        "4b9f6b180dbd30e239c7d42194b114ed:5",
+        "basis-forged"
+      ]
+    ]
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 8256889942966280,
+          "item_id": 8256889942966278,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 8256889942966273,
+          "name": "Food"
+        },
+        {
+          "id": 8256889942966274,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 8256889942966273,
+          "done": 0,
+          "id": 8256889942966275,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 8256889942966274,
+          "done": 0,
+          "id": 8256889942966276,
+          "note": null,
+          "qty": 1,
+          "title": "Tent (A)"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8256889942966277,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8256889942966278,
+          "note": "f4",
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 8256889942966279,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ]
+    },
+    "flags": [],
+    "held": [],
+    "rejected": [
+      [
+        "4b9f6b180dbd30e239c7d42194b114ed:5",
+        "basis-forged"
+      ]
+    ]
+  }
+}

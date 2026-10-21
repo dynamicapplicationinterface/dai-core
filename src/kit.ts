@@ -145,6 +145,31 @@ function refresh() {
   for (const view of views) view.draw();
 }
 
+/*
+ * A view's query, read over settled rows (R-F amended).
+ *
+ * A column the application declared consequential (-- dai:consequential)
+ * leaves out of what these views read any row whose value in it is pending:
+ * two copies changed it at once and nobody has chosen. The runtime keeps, per
+ * such table, the SQL of its settled rows; each one the query names goes in
+ * front of it as a common table expression under the table's own name, which
+ * SQLite reads in place of the table for that statement alone. The query is
+ * the application's, unchanged, and every other read sees the row.
+ */
+function settled(sql) {
+  if (!db.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE name = '_cs_settle'").length) return sql;
+  const head = /^\\s*(WITH(\\s+RECURSIVE)?\\b)?/i.exec(sql);
+  if (!head[1] && !/^\\s*SELECT\\b/i.test(sql)) return sql;
+  const ctes = [];
+  for (const row of db.selectObjects('SELECT tbl, body FROM _cs_settle')) {
+    const name = String(row.tbl);
+    if (!new RegExp('(^|[^\\\\w"])"?' + name.replace(/[.*+?^$|()[\\]{}\\\\]/g, '\\\\$&') + '"?($|[^\\\\w"])', 'i').test(sql)) continue;
+    ctes.push('"' + name.split('"').join('""') + '" AS (' + row.body + ')');
+  }
+  if (!ctes.length) return sql;
+  return head[1] ? head[0] + ' ' + ctes.join(', ') + ',' + sql.slice(head[0].length) : 'WITH ' + ctes.join(', ') + ' ' + sql;
+}
+
 /**
  * Reads :name parameters out of a statement.
  *
@@ -345,7 +370,7 @@ class DaiRows extends HTMLElement {
 
   draw() {
     if (!this.template) return;
-    const rows = db.selectObjects(this.getAttribute('query'));
+    const rows = db.selectObjects(settled(this.getAttribute('query')));
 
     const empty = this.getAttribute('empty');
     while (this.lastChild && this.lastChild !== this.template) {
@@ -384,7 +409,7 @@ class DaiValue extends HTMLElement {
   }
 
   draw() {
-    const rows = db.selectObjects(this.getAttribute('query'));
+    const rows = db.selectObjects(settled(this.getAttribute('query')));
     const row = rows[0];
     const value = row ? row[Object.keys(row)[0]] : '';
     this.textContent = value === null || value === undefined ? '' : String(value);
@@ -839,10 +864,20 @@ if (shared() && shared().writable) shared().writable().then(function () { sayVoi
 window.addEventListener('dai:new-player', function () { setTimeout(sayNewPlayer, 0); });
 if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
 
+/*
+ * A conflict, kept or chosen (R-X). conflict(table, key, columns) observes one
+ * unit of a row (a column, or every column of its coupled group; [] is the row
+ * itself, against a delete): what it shows, the alternatives, and a token.
+ * resolve(token, ver) keeps or chooses one of those alternatives, saved as it
+ * is made. Writing a shown value back with SQL resolves nothing.
+ */
+function conflict(table, key, columns) { return window.dai.conflict(table, key, columns || []); }
+function resolve(token, ver) { var saved = window.dai.resolve(token, ver); refresh(); return saved; }
+
 // Anything outside these is ordinary JavaScript against window.dai, which is
 // still there. This is a shortcut, not a framework.
 window.daiKit = {
-  db: db, run: run, refresh: refresh,
+  db: db, run: run, refresh: refresh, conflict: conflict, resolve: resolve,
   newSession: newSession, claimSeat: claimSeat, mySeat: mySeat, amCreator: amCreator,
   pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer,
   onSessionVoid: onSessionVoid, onContested: onContested, author: me,

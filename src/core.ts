@@ -15,6 +15,8 @@ import { encode as cborEncode, type CborValue } from "./cbor.js";
 import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { rewriteReplicated } from "./replicated.js";
+import { CHANGES_DECLARATION, withHiddenKeys } from "./changes-log.js";
+import { schemaRefusal } from "./declarations.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
@@ -295,6 +297,21 @@ export interface BuildContainerInput {
    */
   manifestVersion?: 2 | 3;
   /**
+   * false builds a document as every compiler before R-O did: no changeset
+   * log, so its copies replace each other whole. For tests of the documents
+   * that already exist, whose host paths stay in CI (R-P); not an authoring
+   * choice, and not in the model file.
+   */
+  changesetLog?: boolean;
+  /**
+   * true builds a schema marked for the policy layer (-- dai:replicated,
+   * -- dai:profile session): the documents built before R-O, which keep
+   * building and stay in CI (R-P). Every other build refuses the markers with
+   * the lint's one-shape message, so no door builds what dai check refuses
+   * (§4.9). No authoring door sets it.
+   */
+  policyLayer?: boolean;
+  /**
    * Leave the engine out, for a host that already has it (§6.2).
    *
    * The manifest still covers it: every digest is there and the signature is
@@ -534,6 +551,21 @@ export async function buildContainer(
   let session: { max_parties: number; close?: "any" | "creator" } | undefined;
   let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
   if (schemaSql !== undefined) {
+    // Refused here, whichever door built it, with the lint's message (§4.9): a -- dai: declaration that does
+    // not read exactly, which the runtime would ignore (1b-H2), and the policy layer's markers, unless the
+    // build is one of the documents that already use it (one shape).
+    const refused = schemaRefusal(schemaSql, { policyLayer: input.policyLayer });
+    if (refused) throw new Error(refused);
+    /*
+     * A document with no session policy declares no replicated table of its
+     * own: the author writes ordinary tables (R-O). It gets the changeset log
+     * declared for it, so every save's changes travel as the payload of an
+     * ordinary signed batch (src/changesets.ts). A schema that declares
+     * replicated tables keeps the policy layer exactly as it was.
+     */
+    const declared = rewriteReplicated(schemaSql);
+    // A table with no primary key is given one (X1), so each of its rows is keyed from the moment it is inserted.
+    if (declared.tables.length === 0 && !declared.session && input.changesetLog !== false) schemaSql = withHiddenKeys(schemaSql) + CHANGES_DECLARATION;
     const rewritten = rewriteReplicated(schemaSql);
     if (rewritten.tables.length > 0) {
       schemaSql = rewritten.sql;

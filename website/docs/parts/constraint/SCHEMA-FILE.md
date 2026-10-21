@@ -3,9 +3,9 @@
 ::: info SCHEMA-FILE
 **Every table is in schema.sql**
 
-Declare every table in one file named schema.sql, each with CREATE TABLE IF NOT EXISTS. Create no table anywhere else — not in index.html, not in JavaScript.
+Declare every table, index, trigger and view in schema.sql, with CREATE ... IF NOT EXISTS. No CREATE, ALTER or DROP anywhere else: the app is refused with "This change needs a new version of the app; the current version was left unchanged."
 
-**Why.** schema.sql runs first on every open and its shape is sealed with the file; that record is what protects a person's data when a later version changes the application.
+**Why.** The schema belongs to the version: schema.sql runs first on every open and is sealed with the file.
 
-<small>Applies to every shape · not checked by anything · [SCHEMA-FILE in Constraints](/docs/constraints#SCHEMA-FILE)</small>
+<small>Applies to every shape · refused at run time · [SCHEMA-FILE in Constraints](/docs/constraints#SCHEMA-FILE)</small>
 :::

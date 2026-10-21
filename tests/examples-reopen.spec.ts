@@ -154,7 +154,7 @@ test.describe("the replicated examples, on batch format version 2", () => {
   for (const example of EXAMPLES) {
     test(`${example.id}: mounts, writes a row, saves, and reopens with the row present and sealed`, async ({ page }) => {
       test.slow();
-      const built = await compileDirectory({ sourceDir: join(repo, example.dir), root: repo, appName: example.name });
+      const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, example.dir), root: repo, appName: example.name });
       const file = join(mkdtempSync(join(tmpdir(), `dai-reopen-${example.id}-`)), `${example.id}.dai.html`);
       writeFileSync(file, built.html, "utf8");
 

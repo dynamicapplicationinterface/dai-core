@@ -2,10 +2,16 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FullResult, Reporter, TestCase, TestResult } from "@playwright/test/reporter";
+// @ts-expect-error a plain ES module with no types
+import { countComplaints } from "../scripts/lib/count-check.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FLOOR = join(repo, "tests", "count-floor.json");
-/** Written only when the gate checked a whole run; see the end of onEnd. */
+/**
+ * Written at the end of every run, `checked` only when the gate checked a
+ * whole run. A part's report (a shard, a named file) carries what CI's
+ * count-gate job sums across the parts (scripts/count-parts.mjs).
+ */
 export const REPORT = join(repo, "test-results", "count-gate.json");
 
 /**
@@ -73,9 +79,9 @@ export default class CountGate implements Reporter {
       process.argv.some((argument) => argument === "-g" || argument === "--grep") ||
       // A `--shard=i/n` run holds only its slice of the suite, so its passing
       // count is a fraction of the floor by intent — gating it would fail every
-      // shard. The unsharded engines (chromium, firefox) stay gated, and a test
-      // that stops being collected drops their counts too, so the shrink guard
-      // still bites; a sharded engine is covered by them.
+      // shard. CI's sharded engines are gated on the sum of their parts
+      // instead: each part writes its report below, and the count-gate job
+      // adds them up and holds the sum to the same rule (scripts/count-parts.mjs).
       process.argv.some((argument) => argument === "--shard" || argument.startsWith("--shard=")) ||
       process.argv.slice(2).some((argument) => !argument.startsWith("-") && argument.includes("spec"));
 
@@ -100,44 +106,19 @@ export default class CountGate implements Reporter {
       return;
     }
 
-    if (filtered) return;
-
-    const complaints: string[] = [];
-    // A project that ran and has no floor is a project nothing holds: every
-    // test in it could stop being collected and this gate would say nothing.
-    // Adding a project means adding its floor in the same change.
-    for (const project of this.passed.keys()) {
-      if (held[project] === undefined) {
-        complaints.push(
-          `${project}: ran, and has no floor in tests/count-floor.json, so a drop in it would go unseen. ` +
-            "Set one from a whole run with DAI_UPDATE_FLOOR=1.",
-        );
-      }
-    }
-    for (const [project, minimum] of Object.entries(held)) {
-      // `_from` records which CI run the floor was taken from; not a project.
-      if (project.startsWith("_") || typeof minimum !== "number") continue;
-      // A project that did not run this time is not a project that shrank.
-      const ran = this.passed.get(project);
-      if (ran === undefined || ran >= minimum) continue;
-      complaints.push(
-        `${project}: ${ran} passed, and this suite has held at least ${minimum}. ` +
-          "Tests that stop being collected report as success, so a drop is a failure here. " +
-          "If the removal is deliberate, lower the floor in tests/count-floor.json in the same commit.",
-      );
-    }
-    for (const name of this.unexplained) {
-      complaints.push(`skipped with no reason given: ${name} — use test.skip(condition, "why").`);
-    }
+    // The rule itself is shared with the sum of CI's parts (scripts/lib/count-check.mjs).
+    const complaints: string[] = filtered ? [] : countComplaints(Object.fromEntries(this.passed), held, this.unexplained);
 
     // Proof the gate ran, for the push tier (scripts/test-tier.mjs): it
     // deletes this before the run and refuses to pass without it, so a run
     // where the gate silently did not happen — a --reporter flag, a filter —
-    // cannot be mistaken for a checked one.
+    // cannot be mistaken for a checked one. A filtered run's report says it
+    // was not checked, and carries what CI's sum of the parts needs: its
+    // counts and its unexplained skips.
     mkdirSync(dirname(REPORT), { recursive: true });
     writeFileSync(
       REPORT,
-      `${JSON.stringify({ checked: true, passed: Object.fromEntries(this.passed), complaints }, null, 2)}\n`,
+      `${JSON.stringify({ checked: !filtered, passed: Object.fromEntries(this.passed), unexplained: this.unexplained, complaints }, null, 2)}\n`,
       "utf8",
     );
 

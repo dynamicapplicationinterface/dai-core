@@ -1,0 +1,147 @@
+{
+  "scenario": "1e-H3 respelled key",
+  "ab": {
+    "tables": {
+      "audit": [
+        {
+          "id": 5629679922839560,
+          "item_id": 5629679922839558,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 5629679922839553,
+          "name": "Food"
+        },
+        {
+          "id": 5629679922839554,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 5629679922839553,
+          "done": 0,
+          "id": 5629679922839555,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 5629679922839554,
+          "done": 0,
+          "id": 5629679922839556,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 5629679922839557,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 5629679922839558,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 5629679922839559,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ],
+      "people": [
+        {
+          "email": "Bob@X.com",
+          "name": "Robert"
+        }
+      ]
+    },
+    "flags": [],
+    "held": [],
+    "rejected": []
+  },
+  "ba": {
+    "tables": {
+      "audit": [
+        {
+          "id": 5629679922839560,
+          "item_id": 5629679922839558,
+          "what": "packed"
+        }
+      ],
+      "categories": [
+        {
+          "id": 5629679922839553,
+          "name": "Food"
+        },
+        {
+          "id": 5629679922839554,
+          "name": "Gear"
+        }
+      ],
+      "items": [
+        {
+          "category_id": 5629679922839553,
+          "done": 0,
+          "id": 5629679922839555,
+          "note": null,
+          "qty": 1,
+          "title": "Bread"
+        },
+        {
+          "category_id": 5629679922839554,
+          "done": 0,
+          "id": 5629679922839556,
+          "note": null,
+          "qty": 1,
+          "title": "Tent"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 5629679922839557,
+          "note": null,
+          "qty": 1,
+          "title": "Map"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 5629679922839558,
+          "note": null,
+          "qty": 1,
+          "title": "Rope"
+        },
+        {
+          "category_id": null,
+          "done": 0,
+          "id": 5629679922839559,
+          "note": null,
+          "qty": 1,
+          "title": "Stove"
+        }
+      ],
+      "people": [
+        {
+          "email": "Bob@X.com",
+          "name": "Robert"
+        }
+      ]
+    },
+    "flags": [],
+    "held": [],
+    "rejected": []
+  }
+}

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Plan a trip day by day, with the stops in each" />
+  <meta name="dai:does" content="Lay out your trip as days, each with its own list of stops" />
+  <meta name="dai:does" content="Add a time and a note to any stop, and tick it off when you have been" />
+  <meta name="dai:does" content="Keep the whole plan in one file you can open anywhere, offline" />
+  <meta name="theme-color" content="#f5f1e8" />
+  <title>Trip planner</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only, written so a second open adds nothing.
+    INSERT OR IGNORE INTO trip (id, title) VALUES (1, 'Lisbon long weekend');
+    INSERT OR IGNORE INTO days (id, label, on_date) VALUES
+      (1, 'Arrive and wander', ''),
+      (2, 'Alfama and the river', '');
+    INSERT OR IGNORE INTO stops (id, day_id, at_time, name, note, done) VALUES
+      (1, 1, '15:00', 'Check in', 'Rua Augusta, ask about luggage storage', 0),
+      (2, 1, '17:30', 'Miradouro de Santa Luzia', 'Sunset view over the rooftops', 0),
+      (3, 1, '20:00', 'Dinner in Bairro Alto', '', 0),
+      (4, 2, '09:00', 'Tram 28 from Martim Moniz', 'Go early, before the queue', 0),
+      (5, 2, '11:00', 'Castelo de Sao Jorge', '', 0);
+  </script>
+
+  <!-- Nothing to type into until app.js has started. -->
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden inert>
+    <header>
+      <input id="trip-title" class="trip-title" aria-label="Trip name" maxlength="60" autocomplete="off" />
+      <p id="summary" class="summary" aria-live="polite"></p>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="days" class="days" aria-label="Days"></section>
+
+    <p id="empty" class="empty" hidden>No days yet. Add the first day below, then add stops to it.</p>
+
+    <form id="add-day" class="panel" autocomplete="off">
+      <h2>Add a day</h2>
+      <div class="fields">
+        <label>What is the day about
+          <input id="day-label" required maxlength="80" placeholder="e.g. Museums and lunch" />
+        </label>
+        <label>Date <span class="optional">· optional</span>
+          <input id="day-date" type="date" />
+        </label>
+      </div>
+      <div class="actions"><button type="submit">Add day</button></div>
+    </form>
+
+    <form id="add-stop" class="panel" autocomplete="off" hidden>
+      <h2>Add a stop</h2>
+      <div class="fields">
+        <label>Day
+          <select id="stop-day" required></select>
+        </label>
+        <label>Time <span class="optional">· optional</span>
+          <input id="stop-time" type="time" />
+        </label>
+        <label class="wide">Stop
+          <input id="stop-name" required maxlength="80" placeholder="e.g. Pastéis de Belém" />
+        </label>
+        <label class="wide">Note <span class="optional">· optional</span>
+          <input id="stop-note" maxlength="200" placeholder="e.g. Book ahead" />
+        </label>
+      </div>
+      <div class="actions"><button type="submit">Add stop</button></div>
+    </form>
+
+    <footer>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

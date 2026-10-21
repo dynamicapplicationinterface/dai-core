@@ -127,7 +127,7 @@ const EXAMPLES: Example[] = [
  * pick.
  */
 async function documentWith(example: Example, version: number): Promise<{ file: string; session: Uint8Array }> {
-  const built = await compileDirectory({
+  const built = await compileDirectory({ policyLayer: true,
     sourceDir: join(repo, example.dir),
     root: repo,
     appName: example.name,
