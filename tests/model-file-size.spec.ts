@@ -64,6 +64,14 @@ const SHRINK_BEFORE_RESET = 0.1;
 
 const bytesOf = (text: string): number => Buffer.byteLength(text, "utf8");
 
+test("R-X: the model file teaches the kit's resolution call, a form saved whole, and nothing that resolves by writing", () => {
+  expect(RECIPE).toContain("A form may save every field whole");
+  expect(RECIPE).toContain("window.daiKit.conflict(table, [id], [column])");
+  expect(RECIPE).toContain("window.daiKit.resolve(c.token, chosen.ver)");
+  expect(RECIPE, "a pending row is not resolved by writing it").not.toMatch(/until someone writes it again|writing the row again resolves|editing is resolving/i);
+  expect(RECIPE, "R-W refuses ALTER and DROP: never taught to run").not.toContain("Run ALTER and DROP TABLE through exec");
+});
+
 test.describe("the model file's size", () => {
   test("stays within its stated budget, so growth is a decision rather than a discovery", () => {
     const bytes = bytesOf(RECIPE);

@@ -548,7 +548,125 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     }
     expect(await value(app, "PRAGMA schema_version"), "the schema did not move").toBe(before);
   });
+
+  /*
+   * R-X through the real page: a kit control that saves the whole row (the
+   * shown qty and unit with the typed note) authors the note alone and
+   * resolves nothing; the page's Keep button, calling the kit, resolves the
+   * coupled tuple, and the other copy reads it resolved.
+   */
+  test("12. R-X: a whole-row form save over a pending tuple authors only what changed; the kit's resolve keeps the shown tuple on both copies", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-cs-resolve-"));
+    const file = await buildKitStock(scratch);
+    const pageA = await device(browser);
+    const pageB = await device(browser);
+    const a = await firstOpen(pageA, file);
+    await expect(a.locator("#edit input.qty")).toHaveCount(1, { timeout: 60_000 });
+    const uuid = await uuidOf(pageA);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM items")[0]?.["n"], { timeout: 60_000 }).toBe(1);
+    const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
+
+    const b = await firstOpen(pageB, a1);
+    await expect(b.locator("#edit input.qty")).toHaveCount(1, { timeout: 60_000 });
+    await typeInto(a, "qty", "2");
+    await typeInto(b, "qty", "3");
+    const uuidB = await uuidOf(pageB);
+    await expect.poll(async () => query(await stored(pageB, uuidB), "SELECT qty FROM items")[0]?.["qty"], { timeout: 60_000 }).toBe(3);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT qty FROM items")[0]?.["qty"], { timeout: 60_000 }).toBe(2);
+    const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
+    await pageA.setInputFiles("#file", b1);
+    await expect(pageA.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await pageA.locator("#card-open").click();
+    const pending = "SELECT json_group_array(json_extract(j.value, '$.col')) AS cols FROM _cs_flag f, json_each(f.detail) j WHERE f.tbl = 'items' AND f.kind = 'pending'";
+    await expect.poll(async () => query(await stored(pageA, uuid), pending)[0]?.["cols"], { timeout: 60_000, message: "the tuple is pending" }).toBe('["qty","unit"]');
+
+    // The person types a note; the control writes the row back whole, its shown qty and unit with it.
+    const logged = (): number => Number(query(readStored, "SELECT count(*) AS n FROM _cs_log")[0]?.["n"] ?? 0);
+    let readStored = await stored(pageA, uuid);
+    const before = logged();
+    await typeInto(a, "note", "packed");
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT note FROM items")[0]?.["note"], { timeout: 60_000 }).toBe("packed");
+    readStored = await stored(pageA, uuid);
+    expect(logged(), "one batch").toBe(before + 1);
+    const last = query(readStored, "SELECT payload FROM _cs_log ORDER BY _r_lc DESC, _r_seq DESC LIMIT 1")[0]!["payload"] as Uint8Array;
+    const ops = (cborDecode(last) as any)[1] as any[];
+    expect(ops.map((op) => [...(op[3] as Map<string, unknown>).keys()]), "the note alone: no qty/unit version").toEqual([["note"]]);
+    expect(ops[0][7], "and no resolution").toBeUndefined();
+    expect(query(readStored, pending)[0]?.["cols"], "still pending").toBe('["qty","unit"]');
+
+    // The page's Keep button calls the kit.
+    await a.locator("#keep").click();
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM _cs_flag WHERE tbl = 'items'")[0]?.["n"], { timeout: 60_000, message: "resolved" }).toBe(0);
+    const row = "SELECT qty || unit || note AS r FROM items";
+    const shown = query(await stored(pageA, uuid), row)[0]?.["r"];
+    expect(["2kgpacked", "3kgpacked"]).toContain(shown);
+    const a2 = await saveOut(pageA, join(scratch, "a2.dai.html"));
+    await pageB.setInputFiles("#file", a2);
+    await expect(pageB.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await pageB.locator("#card-open").click();
+    await expect.poll(async () => query(await stored(pageB, uuidB), row)[0]?.["r"], { timeout: 60_000, message: "the same tuple and note" }).toBe(shown);
+    expect(query(await stored(pageB, uuidB), "SELECT count(*) AS n FROM _cs_flag WHERE tbl = 'items'")[0]?.["n"], "resolved on the other copy").toBe(0);
+    await expect(b.locator("#edit input.qty")).toHaveCount(1);
+  });
 });
+
+/** A stock row written with the kit: a coupled (qty, unit), a note, and a Keep button that calls the kit (R-X). */
+async function buildKitStock(scratch: string): Promise<string> {
+  const src = join(scratch, "src");
+  mkdirSync(src, { recursive: true });
+  writeFileSync(
+    join(src, "schema.sql"),
+    `CREATE TABLE IF NOT EXISTS items (
+  id INTEGER PRIMARY KEY,
+  qty INTEGER NOT NULL,
+  unit TEXT NOT NULL,
+  note TEXT
+  -- dai:coupled qty unit
+);
+`,
+  );
+  writeFileSync(
+    join(src, "index.html"),
+    `<!doctype html>
+<html><head><meta charset="utf-8"><title>Stock</title></head>
+<body>
+<p id="app">ready</p>
+<script type="application/sql">
+INSERT INTO items (qty, unit, note) VALUES (1, 'kg', '');
+</script>
+<dai-rows id="edit" query="SELECT id, qty, unit, note FROM items"><template>
+<input class="qty" data-run="UPDATE items SET qty = :typed WHERE id = :id">
+<input class="note" data-run="UPDATE items SET qty = :qty, unit = :unit, note = :typed WHERE id = :id">
+</template></dai-rows>
+<button id="keep">Keep what is shown</button>
+<script type="module" src="./dai-kit.js"></script>
+<script type="module" src="app.js"></script>
+</body></html>
+`,
+  );
+  writeFileSync(
+    join(src, "app.js"),
+    `window.addEventListener("dai:kit-merged", () => window.daiKit.refresh());
+document.getElementById("keep").addEventListener("click", () => {
+  const id = window.daiKit.db.selectValue("SELECT id FROM items");
+  const c = window.daiKit.conflict("items", [id], ["qty", "unit"]);
+  if (c) window.daiKit.resolve(c.token, c.shown);
+});
+`,
+  );
+  const built = await compileDirectory({ sourceDir: src, root: repo, appName: "Stock" });
+  const file = join(scratch, "stock.dai.html");
+  writeFileSync(file, built.html, "utf8");
+  return file;
+}
+
+/** Types into one of the kit's own controls, as a person would. */
+async function typeInto(app: FrameLocator, control: string, text: string): Promise<void> {
+  const input = app.locator(`#edit input.${control}`);
+  await input.fill(text);
+  await input.press("Enter");
+  await input.blur();
+}
 
 /** A budget written with the kit, and one listener: its amount is declared consequential. */
 async function buildKitBudget(scratch: string): Promise<string> {

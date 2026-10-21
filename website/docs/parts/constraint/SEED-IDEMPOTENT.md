@@ -5,7 +5,7 @@
 
 Put a few example rows in a &lt;script type="application/sql"&gt; block in index.html so the application is not an empty shell on first open. The block is run once, when the document is created, never again: write plain INSERTs, and leave the ids out. Never seed from schema.sql, and never write rows from JavaScript on open.
 
-**Why.** A seed is part of creating the document. Every write is a change that reaches every copy, so a seed that ran on every open would put back a row its person had deleted, on every copy (the changeset spike's packing and reading lists).
+**Why.** A seed is part of creating the document. Every write is a change that reaches every copy, so a seed that ran on every open would put back a row its person had deleted, on every copy.
 
 <small>Applies to every shape · refused at run time · [SEED-IDEMPOTENT in Constraints](/docs/constraints#SEED-IDEMPOTENT)</small>
 :::

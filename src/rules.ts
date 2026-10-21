@@ -285,7 +285,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     rule:
       "Put a few example rows in a <script type=\"application/sql\"> block in index.html so the application is not an empty shell on first open. The block is run once, when the document is created, never again: write plain INSERTs, and leave the ids out. Never seed from schema.sql, and never write rows from JavaScript on open.",
     why:
-      "A seed is part of creating the document. Every write is a change that reaches every copy, so a seed that ran on every open would put back a row its person had deleted, on every copy (the changeset spike's packing and reading lists).",
+      "A seed is part of creating the document. Every write is a change that reaches every copy, so a seed that ran on every open would put back a row its person had deleted, on every copy.",
     enforced: ["runtime"],
     anchors: [{ file: "src/runtime/bootloader.ts", contains: "const runSeedsOnce = (db: Any): void =>" }],
   },
@@ -339,11 +339,25 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "qty = qty + 1 on two copies at once is not summed: the row is pending, both numbers kept, until someone writes it again. For something several people add to, insert a row per addition and count the rows.",
+      "qty = qty + 1 on two copies at once is not summed: the row is pending, both numbers kept, until someone chooses (RESOLVE-BY-CALL). For something several people add to, insert a row per addition and count the rows.",
     why:
       "A change travels as the value it left, not the arithmetic; summing would guess at intent, and a flag never loses.",
     enforced: ["runtime"],
     anchors: [{ file: "src/changesets.ts", contains: "Two concurrent versions are a conflict even when their values are equal" }],
+  },
+  {
+    id: "RESOLVE-BY-CALL",
+    title: "Resolve conflicts by the kit's call",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "A form may save every field whole: a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).",
+    why: "A write cannot tell a choice from a field left alone; the call records the choice against what was shown.",
+    enforced: ["prose"],
+    anchors: [
+      { file: "src/kit.ts", contains: "function resolve(token, ver)" },
+      { file: "src/changesets.ts", contains: "resolve(token: string, choice: string): SavedChanges" },
+    ],
   },
   {
     id: "NO-REFUSED-SQL",
@@ -351,7 +365,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "Refused as it runs: virtual tables; ATTACH; rowid on an INTEGER-keyed table; a NULL key; names starting _dai, _cs_ or dai_; triggers writing those tables; PRAGMA writable_schema. Run ALTER and DROP TABLE through exec; rebuild a table (create, copy, drop, rename) in one transaction.",
+      "Refused as it runs: virtual tables; ATTACH; rowid on an INTEGER-keyed table; a NULL key; names starting _dai, _cs_ or dai_; triggers writing those tables; PRAGMA writable_schema.",
     why: "Each would be kept here and lost elsewhere; refused, nothing is written.",
     enforced: ["runtime"],
     anchors: [{ file: "src/changesets.ts", contains: "export const REFUSED = {" }],
@@ -373,9 +387,9 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "Until the application's script has finished starting — the database open, the handlers attached, the first draw done — show nothing a person can type into or submit. Put the interactive part of the page in an element marked both hidden and inert, `<main id=\"app\" hidden inert>`, beside a short line such as \"Opening…\". `inert` is what keeps it out of reach: `hidden` alone is undone by any style rule that sets `display` on that element, while an inert element takes no focus, typing or clicks whatever the CSS says. Run the whole start-up — `openDatabase()`, the first draw — inside try/catch. On success, hide the line and remove both attributes. On failure, replace the line with what went wrong and what the person can do next: never leave \"Opening…\" showing over a start-up that has already ended. Do not wait for an event to learn that start-up failed — the frame's `dai:error` message is posted outward to the host, is never delivered to the application, and nothing acts on it today; the application's own catch is the only place that knows. A page built only from the kit's elements is already safe: they are not `<form>` elements, so a button inside them submits nothing before the kit has started. A `<form>` of your own is not.",
+      "Until the application's script has finished starting — the database open, the handlers attached, the first draw done — show nothing a person can type into or submit. Put the interactive part of the page in an element marked both hidden and inert, `<main id=\"app\" hidden inert>`, beside a short line such as \"Opening…\". `inert` is what keeps it out of reach: `hidden` alone is undone by any style rule that sets `display` on that element, while an inert element takes no focus, typing or clicks whatever the CSS says. Run the whole start-up — `openDatabase()`, the first draw — inside try/catch. On success, hide the line and remove both attributes. On failure, replace the line with what went wrong and what the person can do next: never leave \"Opening…\" showing over a start-up that has already ended. Do not wait for an event to learn that start-up failed: `dai:error` goes to the host, never to the application, and its own catch is the only place that knows. A page built only from the kit's elements is already safe: they are not `<form>` elements, so a button inside them submits nothing before the kit has started. A `<form>` of your own is not.",
     why:
-      "The script's start-up waits on `await window.dai.openDatabase()`, which waits for the host's write rules. A form on screen before then takes a person's typing while the application cannot yet handle it. Pressing Enter or its button then either makes the browser submit the form itself and replace the page, or does nothing at all — and the script's own start-up resets the form a moment later. Which of the two happens varies between browsers and between one opening and the next; either way what they typed is gone, with nothing to say why. Both blind runs copied examples that showed their forms early.",
+      "The start-up waits on `await window.dai.openDatabase()`, which waits for the host's write rules. A form shown before then takes typing the application cannot handle yet: Enter either submits the form and replaces the page, or does nothing, and the start-up resets the form a moment later. Either way what was typed is gone, with nothing to say why.",
     enforced: ["prose"],
     anchors: [
       { file: "tests/fixture/chess/app.js", contains: "$('boot-notice').hidden=true;$('app').hidden=false;" },

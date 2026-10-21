@@ -3,7 +3,7 @@
 ::: info NO-REFUSED-SQL
 **What the runtime refuses**
 
-Refused as it runs: virtual tables; ATTACH; rowid on an INTEGER-keyed table; a NULL key; names starting \_dai, \_cs\_ or dai\_; triggers writing those tables; PRAGMA writable\_schema. Run ALTER and DROP TABLE through exec; rebuild a table (create, copy, drop, rename) in one transaction.
+Refused as it runs: virtual tables; ATTACH; rowid on an INTEGER-keyed table; a NULL key; names starting \_dai, \_cs\_ or dai\_; triggers writing those tables; PRAGMA writable\_schema.
 
 **Why.** Each would be kept here and lost elsewhere; refused, nothing is written.
 
