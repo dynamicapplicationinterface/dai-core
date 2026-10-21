@@ -262,9 +262,14 @@ def apply_log(db: sqlite3.Connection) -> None:
     spell: dict[tuple[str, str, str], str] = {}
     sup: set[tuple[str, str, str, str]] = set()
     seen: dict[tuple[str, str], dict[str, set[str]]] = {}
-    rows = db.execute(
-        f"SELECT lower(hex(_r_replica)), _r_seq, _r_lc, payload FROM {q(LOG)} ORDER BY _r_lc, lower(hex(_r_replica)), _r_seq"
+    raw = db.execute(
+        f"SELECT lower(hex(_r_replica)), _r_seq, _r_lc, payload, lower(hex(_r_batch)) FROM {q(LOG)} ORDER BY _r_lc, lower(hex(_r_replica)), _r_seq"
     ).fetchall()
+    rows = [(a, s, lc, p) for a, s, lc, p, _ in raw]
+    # The batch digest and clock the chain carries at each (author, seq): what a receipt is checked against (1h-M1).
+    batch_at: dict[tuple[str, int], tuple[object, int]] = {(a, int(s)): (d, int(lc)) for a, s, lc, _, d in raw}
+    # A signer's payload at each of its seqs, for the backwards check (1h-M1).
+    payload_at: dict[tuple[str, int], object] = {(a, int(s)): p for a, s, _, p, _ in raw}
     # Every admitted version, with its clock; and the versions already judged, applied or refused (R-X §3).
     known = {f"{author}:{seq}": int(lc) for author, seq, lc, _ in rows}
     judged_vers: set[str] = set()
@@ -280,6 +285,36 @@ def apply_log(db: sqlite3.Connection) -> None:
         wait = False
         if not isinstance(received, dict):
             return "basis-forged"
+        # The receipt binds possession (1h-M1): each entry is [seq, digest], checked against the batch the
+        # reader holds. A digest that differs, or a batch whose clock is not below the signer's, is a forgery;
+        # an entry not yet held leaves the batch waiting, so a seq the signer never received never takes effect.
+        rec_wait = False
+        for entry in received.values():
+            if not (isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], int) and not isinstance(entry[0], bool) and isinstance(entry[1], str)):
+                return "receipt-forged"
+        for by, entry in received.items():
+            s, digest = entry
+            # An author's s-th batch has a clock no lower than s, and the signer could only receive it before
+            # signing (below its own clock): a receipt naming a seq at or above the signer's clock is impossible.
+            if int(s) >= lc:
+                return "receipt-forged"
+            held = batch_at.get((by, int(s)))
+            if held is not None and held[0] is not None:
+                if held[0] != digest or held[1] >= lc:
+                    return "receipt-forged"
+            else:
+                rec_wait = True
+        prev = max((k for k in payload_at if k[0] == author and k[1] < seq), default=None)
+        if prev is not None:
+            prev_decoded = cbor_decode(payload_at[prev])  # type: ignore[arg-type]
+            prev_rec = prev_decoded[2] if isinstance(prev_decoded, list) and len(prev_decoded) > 2 else {}
+            if isinstance(prev_rec, dict):
+                for by, pe in prev_rec.items():
+                    before = pe[0] if isinstance(pe, list) and pe and isinstance(pe[0], int) else None
+                    cur = received.get(by)
+                    now = cur[0] if isinstance(cur, list) and cur and isinstance(cur[0], int) else None
+                    if before is not None and (now is None or now < before):
+                        return "receipt-forged"
 
         def had(v: object) -> bool:
             by, _, n = str(v).rpartition(":")
@@ -287,8 +322,8 @@ def apply_log(db: sqlite3.Connection) -> None:
                 return False
             if by == author:
                 return int(n) < seq
-            up_to = received.get(by)
-            return isinstance(up_to, int) and not isinstance(up_to, bool) and int(n) <= up_to
+            entry = received.get(by)
+            return isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], int) and not isinstance(entry[0], bool) and int(n) <= entry[0]
 
         for op in ops:
             if not isinstance(op, list) or len(op) < 7 or not isinstance(op[3], dict) or not isinstance(op[5], dict):
@@ -338,7 +373,7 @@ def apply_log(db: sqlite3.Connection) -> None:
                 if all(unchanged(c, val) for c, val in new.items()):
                     return "basis-unchanged"
             wait = wait or op_wait
-        return "wait" if wait else None
+        return "wait" if (wait or rec_wait) else None
 
     for author, seq, lc, payload in rows:
         ver = f"{author}:{seq}"

@@ -47,6 +47,8 @@ const VECTORS: Record<string, string> = {
   "delete-set-aside": "1g-H1 delete over a set-aside proposal",
   "unreceived-basis": "1g-M1 unreceived basis",
   "unreceived-seen": "1g-M1 unreceived seen",
+  "receipt-digest": "1h-M1 receipt digest",
+  "receipt-clock": "1h-M1 receipt clock",
   "counter-over-pending": "D267 counter over a pending total",
 };
 

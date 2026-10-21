@@ -103,6 +103,37 @@ export function forging(c: Copy, change: (op: Any[]) => void): void {
 }
 
 /**
+ * One save of `c` whose basis and whose receipt are both altered before it is
+ * logged and signed (R-X §3, 1h-M1): a copy that signs a receipt it did not
+ * earn. `bases` alters each op as `forging` does; `receipt` is handed the map
+ * the runtime built and returns the one to sign.
+ */
+export function forgingFull(c: Copy, opts: { bases?: (op: Any[]) => void; receipt?: (r: Map<string, Any>) => Map<string, Any> | void }): void {
+  const changes = c.changes as Any;
+  const builtBases = changes.withBases;
+  const builtReceived = changes.received;
+  if (opts.bases) {
+    changes.withBases = (op: Any): Any => {
+      const out = builtBases.call(changes, op);
+      opts.bases!(out);
+      return out;
+    };
+  }
+  if (opts.receipt) {
+    changes.received = (): Map<string, Any> => {
+      const r = builtReceived.call(changes) as Map<string, Any>;
+      return opts.receipt!(r) ?? r;
+    };
+  }
+  try {
+    c.save();
+  } finally {
+    changes.withBases = builtBases;
+    changes.received = builtReceived;
+  }
+}
+
+/**
  * 1g-M1's arrangement: F opens from the base and saves four notes, so its
  * clock is past A's next; A retitles Tent; F, which never received A's batch,
  * retitles it too, and `forge` writes A's version into its title op. B
@@ -113,6 +144,7 @@ export async function unreceived(
   b: Copy,
   forge?: (op: Any[], aVer: string) => void,
   act = "UPDATE items SET title = 'Tent (F)' WHERE title = 'Tent'",
+  receipt?: (r: Map<string, Any>, aVer: string) => void,
 ): Promise<void> {
   const f = await Copy.open(await person(), await a.bytes(), a.schema);
   for (const note of ["f1", "f2", "f3", "f4"]) {
@@ -123,8 +155,14 @@ export async function unreceived(
   a.save();
   const aVer = `${a.changes.authorHex}:${a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author])}`;
   f.db.exec(act);
-  if (forge) forging(f, (op) => op[0] === "items" && (op[3].has("title") || op[2] === "D") && forge(op, aVer));
-  else f.save();
+  if (forge || receipt) {
+    forgingFull(f, {
+      bases: forge ? (op) => void (op[0] === "items" && (op[3].has("title") || op[2] === "D") && forge(op, aVer)) : undefined,
+      receipt: receipt ? (r) => void receipt(r, aVer) : undefined,
+    });
+  } else {
+    f.save();
+  }
   await b.mergeFrom(await f.bytes());
   f.close();
 }
@@ -526,6 +564,22 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
   "1g-M1 unreceived resolves": { write: (a, b) => unreceived(a, b, (op, v) => (op[7] = new Map([["title", [v]]]))) },
   // 1g-M1: F deletes Tent, and its delete names A's title version, never received, among what it saw.
   "1g-M1 unreceived seen": { write: (a, b) => unreceived(a, b, (op, v) => op[6].push(v), "DELETE FROM items WHERE title = 'Tent'") },
+  // 1h-M1: F names A's title version in its basis and raises its receipt to that seq with a forged digest; the
+  // reader holds A's batch at that seq, and the digests differ.
+  "1h-M1 receipt digest": {
+    write: (a, b) =>
+      unreceived(a, b, (op, v) => op[5].set("title", [...op[5].get("title"), v]), undefined, (r, v) => {
+        const at = v.lastIndexOf(":");
+        r.set(v.slice(0, at), [Number(v.slice(at + 1)), "00000000000000000000000000000000"]);
+      }),
+  },
+  // 1h-M1: the same, but the receipt names a seq at or above F's own clock, which no batch it could have received reaches.
+  "1h-M1 receipt clock": {
+    write: (a, b) =>
+      unreceived(a, b, (op, v) => op[5].set("title", [...op[5].get("title"), v]), undefined, (r, v) => {
+        r.set(v.slice(0, v.lastIndexOf(":")), [999, "00000000000000000000000000000000"]);
+      }),
+  },
   // 1g-L2 (F2a): F's op writes back the qty it showed, based on that version, and names nothing it resolves.
   "1g-L2 resolution without resolves": {
     extra: ["CREATE TABLE gear (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL)", "INSERT INTO gear (id, qty) VALUES (7, 1)"],

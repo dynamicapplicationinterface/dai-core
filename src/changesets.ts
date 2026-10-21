@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS _cs_refused (ver TEXT PRIMARY KEY, reason TEXT NOT NU
  * (1g-L3); or an edit that changes nothing it was based on and resolves
  * nothing (`basis-unchanged`, 1g-L2).
  */
-export type BasisRefusal = "basis-missing" | "basis-forged" | "basis-unchanged";
+export type BasisRefusal = "basis-missing" | "basis-forged" | "basis-unchanged" | "receipt-forged";
 
 /**
  * What a resolution is refused with (R-X §4, §5), as the application reads it:
@@ -2287,13 +2287,67 @@ export class Changes {
   private basisVerdict(ops: Op[], lc: number, known: Map<string, number>, author: string, seq: number, received: unknown): BasisRefusal | "wait" | null {
     let wait = false;
     if (received !== undefined && !(received instanceof Map)) return "basis-forged";
+    const rec = received instanceof Map ? (received as Map<string, unknown>) : undefined;
+    /*
+     * The receipt binds possession, not just order (1h-M1). Each entry is
+     * `[seq, digest]`: the signer's highest applied seq of that author, and
+     * that author's batch digest at it, which only a copy that received the
+     * batch can carry. Checked against the batch the reader holds: a digest
+     * that differs, or a batch whose clock is not below the signer's own
+     * (it could not have been received before the signer signed), is a
+     * forgery; an entry the reader does not yet hold leaves the batch
+     * waiting, so a seq the signer never received never takes effect.
+     */
+    let recWait = false;
+    if (rec) {
+      for (const [, entry] of rec) {
+        if (!Array.isArray(entry) || entry.length !== 2 || !Number.isInteger(entry[0]) || typeof entry[1] !== "string") return "receipt-forged";
+      }
+      for (const [by, entry] of rec) {
+        const [s, digest] = entry as [number, string];
+        // An author's s-th batch has a clock no lower than s, and the signer could only receive it before
+        // signing (below its own clock): a receipt naming a seq at or above the signer's clock is impossible,
+        // refused without holding that batch (1h-M1).
+        if (s >= lc) return "receipt-forged";
+        const held = this.engine.object(
+          `SELECT lower(hex(_r_batch)) AS d, _r_lc AS lc FROM ${q(CHANGES_LOG)} WHERE lower(hex(_r_replica)) = ? AND _r_seq = ?`,
+          [by, s],
+        ) as Any;
+        if (held && held.d != null) {
+          // The batch the reader holds at that seq must be the one named, and older than the signer's own.
+          if (String(held.d) !== digest || Number(held.lc) >= lc) return "receipt-forged";
+        } else {
+          recWait = true;
+        }
+      }
+      // A signer's receipt for an author cannot go backwards between its batches: the batch before this one (its
+      // own, highest below this seq) could not have claimed a higher seq for anyone (1h-M1).
+      const prevPayload = this.engine.value(
+        `SELECT payload FROM ${q(CHANGES_LOG)} WHERE lower(hex(_r_replica)) = ? AND _r_seq < ? ORDER BY _r_seq DESC LIMIT 1`,
+        [author, seq],
+      );
+      if (prevPayload instanceof Uint8Array) {
+        try {
+          const prev = (cborDecode(prevPayload, { floats: true }) as unknown as [number, Op[], unknown])[2];
+          if (prev instanceof Map) {
+            for (const [by, pe] of prev as Map<string, unknown>) {
+              const before = Array.isArray(pe) ? Number((pe as unknown[])[0]) : NaN;
+              const now = Array.isArray(rec.get(by)) ? Number((rec.get(by) as unknown[])[0]) : NaN;
+              if (Number.isInteger(before) && (!Number.isInteger(now) || now < before)) return "receipt-forged";
+            }
+          }
+        } catch {
+          /* The previous batch's payload is this copy's own stored bytes; an unreadable one is not a forgery to charge here. */
+        }
+      }
+    }
     const had = (v: string): boolean => {
       const at = v.lastIndexOf(":");
       const [by, n] = [v.slice(0, at), Number(v.slice(at + 1))];
       if (!Number.isInteger(n)) return false;
       if (by === author) return n < seq;
-      const upTo = (received as Map<string, unknown> | undefined)?.get(by);
-      return typeof upTo === "number" && n <= upTo;
+      const entry = rec?.get(by);
+      return Array.isArray(entry) && n <= Number(entry[0]);
     };
     for (const op of ops) {
       const [table, k, code, n, , b, seen] = op;
@@ -2347,21 +2401,28 @@ export class Changes {
       }
       wait ||= waiting;
     }
-    return wait ? "wait" : null;
+    return wait || recWait ? "wait" : null;
   }
 
   /**
-   * What this copy had received when it signs a batch (1g-M1): for each other
-   * author, the highest seq of theirs it applied. A copy applies one author's
-   * batches in their order, so that seq names every batch of theirs it holds.
-   * Carried in the payload, signed with it, as its third field.
+   * What this copy had received when it signs a batch (1g-M1, 1h-M1): for each
+   * other author, the highest seq of theirs it applied, and the digest of that
+   * author's batch at that seq — the batch id the chain already carries
+   * (`_cs_log._r_batch`). A copy applies one author's batches in order, so the
+   * seq names every batch of theirs it holds, and the digest is what only a
+   * copy that received that batch can carry. Both, signed in the payload's
+   * third field, are `[seq, digest]` per author.
    */
-  private received(): Map<string, number> {
-    const out = new Map<string, number>();
+  private received(): Map<string, [number, string]> {
+    const out = new Map<string, [number, string]>();
     for (const r of this.engine.all(
-      "SELECT substr(ver, 1, instr(ver, ':') - 1) AS a, max(CAST(substr(ver, instr(ver, ':') + 1) AS INTEGER)) AS s FROM _cs_ingested i WHERE NOT EXISTS (SELECT 1 FROM _cs_refused r WHERE r.ver = i.ver) GROUP BY a ORDER BY a",
+      `SELECT m.a AS a, m.s AS s, lower(hex(l._r_batch)) AS d FROM
+         (SELECT substr(ver, 1, instr(ver, ':') - 1) AS a, max(CAST(substr(ver, instr(ver, ':') + 1) AS INTEGER)) AS s
+          FROM _cs_ingested i WHERE NOT EXISTS (SELECT 1 FROM _cs_refused r WHERE r.ver = i.ver) GROUP BY a) m
+         JOIN ${q(CHANGES_LOG)} l ON lower(hex(l._r_replica)) = m.a AND l._r_seq = m.s
+       ORDER BY a`,
     ) as Any[]) {
-      if (r.a !== this.authorHex) out.set(String(r.a), Number(r.s));
+      if (r.a !== this.authorHex && r.d != null) out.set(String(r.a), [Number(r.s), String(r.d)]);
     }
     return out;
   }
