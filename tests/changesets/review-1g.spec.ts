@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { Copy, person } from "./copy.js";
-import { SCENARIOS, base, exchange, item, unreceived } from "./scenarios.js";
+import { Copy, boot, person, statementsOf } from "./copy.js";
+import { SCENARIOS, SCHEMA, base, exchange, item, unreceived } from "./scenarios.js";
 import { lastSeq, opsAfter, pendingOf } from "./rx.js";
 
 /**
@@ -114,4 +114,71 @@ test("1g-H1: a delete does not settle a proposal the CHECK set aside; it stays p
   }
   o.a.close();
   o.b.close();
+});
+
+const databases = (db: Any): string[] => db.selectValues("SELECT name FROM pragma_database_list ORDER BY name");
+const CHAIN = "ATTACH '' AS t; CREATE TABLE t.x (y); INSERT INTO t.x VALUES ('in window')";
+/** Runs `f`, keeping any error it throws: what the application saw, if anything. */
+const tried = (f: () => unknown): unknown => {
+  try {
+    return f();
+  } catch (e) {
+    return e;
+  }
+};
+
+test("1g-M2: the VACUUM allowance is the VACUUM statement's alone; application code inside the exec gets none, by three routes", async () => {
+  const { a, b } = await base();
+  const proto = Object.getPrototypeOf(a.db).exec;
+  const inner = (): unknown => tried(() => proto.call(a.db, CHAIN));
+  let n = 0;
+  a.db.createFunction("app_f", () => (inner(), 1), { arity: 0 });
+  const routes: [string, () => unknown][] = [
+    ["a {sql} getter read twice", () => a.db.exec({ get sql() { return n++ === 0 ? "VACUUM" : CHAIN; } })],
+    ["a row callback", () => a.db.exec({ sql: "VACUUM; SELECT 1", callback: () => void inner() })],
+    ["an application function", () => a.db.exec("SELECT app_f(); VACUUM")],
+    ["an application function VACUUM INTO evaluates", () => a.db.exec("VACUUM INTO app_f() || ''")],
+  ];
+  for (const [route, run] of routes) {
+    tried(run);
+    expect(databases(a.db), `${route}: nothing attached`).toEqual(["main", "temp"]);
+    expect(() => a.db.exec("INSERT INTO t.x VALUES ('after')"), `${route}: no table outside the document`).toThrow();
+  }
+  // VACUUM itself still runs, alone and in a script, by exec and by a prepared statement.
+  a.db.exec("VACUUM");
+  a.db.exec("UPDATE items SET qty = 2 WHERE title = 'Map'; VACUUM; UPDATE items SET qty = 3 WHERE title = 'Map'");
+  const s = a.db.prepare("VACUUM");
+  s.step();
+  s.finalize();
+  expect(a.db.selectValue("SELECT qty FROM items WHERE title = 'Map'")).toBe(3);
+  expect(a.save()?.ops, "the script's writes are saved").toBe(1);
+  expect(databases(a.db)).toEqual(["main", "temp"]);
+  a.close();
+  b.close();
+});
+
+test("1g-M3: an admitted CREATE ... IF NOT EXISTS admits its own statement, as the type the release declares; no trigger is made in main, and the copies converge", async () => {
+  const { a, b } = await base();
+  const categories = statementsOf(await boot(), SCHEMA).find((x) => /CREATE TABLE IF NOT EXISTS categories/.test(x))!;
+  const trigger = "CREATE TRIGGER categories AFTER INSERT ON audit BEGIN UPDATE items SET note = 'by app trigger'; END";
+  const proto = Object.getPrototypeOf(a.db).exec;
+  let n = 0;
+  const routes: [string, () => unknown][] = [
+    ["a {sql} getter read twice", () => a.db.exec({ get sql() { return n++ === 0 ? categories : trigger; } })],
+    ["a row callback", () => a.db.exec({ sql: `${categories} SELECT 1`, callback: () => void tried(() => proto.call(a.db, trigger)) })],
+  ];
+  for (const [route, run] of routes) {
+    tried(run);
+    expect(a.db.selectValues("SELECT name FROM sqlite_schema WHERE type = 'trigger' AND name = 'categories'"), `${route}: no trigger made`).toEqual([]);
+  }
+  // The admitted no-op itself still runs.
+  a.db.exec(categories);
+  b.db.exec("INSERT INTO audit (item_id, what) SELECT id, 'checked' FROM items WHERE title = 'Map'");
+  await a.mergeFrom(await b.bytes());
+  await b.mergeFrom(await a.bytes());
+  expect(a.db.selectValues("SELECT DISTINCT note FROM items"), "no application trigger fired under the apply").toEqual([null]);
+  expect(a.changes.dirty).toBe(false);
+  expect(a.state(), "converged").toBe(b.state());
+  a.close();
+  b.close();
 });

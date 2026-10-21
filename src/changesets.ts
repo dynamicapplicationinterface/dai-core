@@ -653,8 +653,8 @@ export class Changes {
   private started = false;
   /** The release's declared objects, `type|name`, each as its canonical text (R-W). */
   private readonly declared: Map<string, string>;
-  /** While an admitted CREATE ... IF NOT EXISTS runs: the names the authorizer lets it name (R-W). */
-  private admitting = new Set<string>();
+  /** While an admitted CREATE ... IF NOT EXISTS runs, that statement alone: the name it may make, as the type the release declares (R-W, 1g-M3). */
+  private admitting = new Map<string, string>();
   /** The statements the application prepared on this mount, finalized when it closes (R-W). */
   private readonly appStatements = new Set<Any>();
   /** How deep `place` is in making room for a row (M04): a ring of moves ends, its last row decided as before. */
@@ -848,7 +848,13 @@ export class Changes {
       capi.SQLITE_CREATE_VTABLE,
       capi.SQLITE_DROP_VTABLE,
     ]);
-    const admittable = new Set([capi.SQLITE_CREATE_TABLE, capi.SQLITE_CREATE_VIEW, capi.SQLITE_CREATE_INDEX, capi.SQLITE_CREATE_TRIGGER]);
+    // The four a verified IF NOT EXISTS names, each as the type it makes: a name is admitted for its declared type alone (1g-M3).
+    const admittable = new Map<number, string>([
+      [capi.SQLITE_CREATE_TABLE, "table"],
+      [capi.SQLITE_CREATE_VIEW, "view"],
+      [capi.SQLITE_CREATE_INDEX, "index"],
+      [capi.SQLITE_CREATE_TRIGGER, "trigger"],
+    ]);
     this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, db: unknown, trigger: unknown): number => {
       const target = writes.has(code) || named.has(code) ? a1 : onTable.has(code) ? a2 : null;
       const app = this.depth === 0;
@@ -872,7 +878,7 @@ export class Changes {
         const engines = typeof a1 === "string" && /^sqlite_/i.test(a1) && code !== capi.SQLITE_ALTER_TABLE;
         // Any schema but VACUUM's own, while the application's VACUUM runs: no other database is attached (1f-M1).
         const ours = !engines && (schema == null || schema === "main" || schema === "temp" || !this.vacuuming);
-        const admitted = schema === "main" && admittable.has(code) && typeof a1 === "string" && this.admitting.has(folded(a1));
+        const admitted = schema === "main" && typeof a1 === "string" && admittable.get(code) !== undefined && this.admitting.get(folded(a1)) === admittable.get(code);
         if (ours && !admitted) return deny(REFUSED.schema);
       }
       if (app) {
@@ -969,10 +975,13 @@ export class Changes {
       this.deniedBecause = null;
       const text = textOf(args[0]);
       if (text === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
-      const vacuum = vacuums(this.sqlite3, text);
+      // SQLite prepares the first statement, so its allowance is the statement's: the text read, never the
+      // caller's object, which a getter could answer differently a second time (1g-M2).
+      const first = this.pieces(text)[0];
+      const vacuum = first?.vacuum === true;
       let stmt: Any;
       try {
-        stmt = this.admitted(text, () => prepare(...args));
+        stmt = this.allowed(first?.admit ?? null, false, () => prepare(text, ...args.slice(1)));
       } catch (e) {
         throw this.explained(e);
       }
@@ -1024,63 +1033,124 @@ export class Changes {
       if (this.depth > 0) return exec(...args);
       const text = textOf(args[0]);
       if (text === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
-      const vacuum = vacuums(this.sqlite3, text);
+      const opts = (typeof args[0] === "string" ? args[1] : args[0]) as Record<string, Any> | undefined;
       // A script is read whole first: one refused statement refuses it before any of it runs (R-V).
-      return this.admitted(text, () =>
-        this.statement(handle, () => {
-          this.vacuuming = vacuum;
-          try {
-            return exec(...args);
-          } finally {
-            this.vacuuming = false;
-          }
-        }),
-      );
+      const pieces = this.pieces(text);
+      return this.statement(handle, () => this.running(handle, exec, text, opts, pieces));
     };
   }
 
   /**
-   * Runs `run` once the SQL it prepares is read (R-W): refused if it holds a
-   * schema statement other than a verified no-op, else run with the names of
-   * those no-ops admitted to the authorizer.
+   * Runs the application's exec as SQLite should read it (1g-M2, 1g-M3):
+   * the text the runtime read, never the caller's object. A script none of
+   * whose statements earns an allowance runs as one exec. Otherwise each
+   * statement that earns one (a bare VACUUM, an admitted CREATE ... IF NOT
+   * EXISTS) runs alone, with the allowance on for it and no callback, bound
+   * value or result row of the application's, so no application code runs
+   * while it holds; the statements between run with the caller's options,
+   * its bound values going to the first that takes them and its result
+   * options to the first that has columns, as one exec would.
    */
-  private admitted<T>(text: string | null, run: () => T): T {
-    const names = text !== null && /\b(?:CREATE|ALTER|DROP|ATTACH|DETACH)\b/i.test(text) ? this.schemaStatements(text) : null;
-    if (!names?.size) return run();
+  private running(handle: Any, exec: (...a: Any[]) => Any, text: string, opts: Record<string, Any> | undefined, pieces: Piece[]): Any {
+    const over = (sql: string, own: Record<string, unknown>): Any => {
+      const o = Object.create(opts && typeof opts === "object" ? opts : null);
+      for (const [k, v] of Object.entries({ ...own, sql })) Object.defineProperty(o, k, { value: v, enumerable: true, writable: true });
+      return o;
+    };
+    if (!pieces.some((p) => p.vacuum || p.admit)) return exec(over(text, {}));
+    const rv = opts?.["returnValue"];
+    const rowMode = opts?.["rowMode"];
+    const callback = opts?.["callback"];
+    const rows: unknown[] | undefined = Array.isArray(opts?.["resultRows"])
+      ? opts!["resultRows"]
+      : rv === "resultRows" || (!callback && !rv && rowMode !== undefined)
+        ? []
+        : undefined;
+    const saved: unknown[] | undefined = Array.isArray(opts?.["saveSql"]) ? opts!["saveSql"] : rv === "saveSql" ? [] : undefined;
+    let bind = opts?.["bind"];
+    let result = Boolean(callback || rows || opts?.["columnNames"]);
+    const segments: { sql: string; piece: Piece | null }[] = [];
+    for (const p of pieces) {
+      const last = segments[segments.length - 1];
+      if (p.vacuum || p.admit) segments.push({ sql: p.sql, piece: p });
+      else if (last && !last.piece) last.sql += p.sql;
+      else segments.push({ sql: p.sql, piece: null });
+    }
+    for (const { sql, piece } of segments) {
+      if (piece) {
+        this.allowed(piece.admit, piece.vacuum, () => exec({ sql, ...(saved ? { saveSql: saved } : {}) }));
+        continue;
+      }
+      const names: string[] = Array.isArray(opts?.["columnNames"]) ? opts!["columnNames"] : [];
+      const takes = bind !== undefined && bind !== null && parameterized(sql);
+      exec(
+        over(sql, {
+          bind: takes ? bind : undefined,
+          callback: result ? callback : undefined,
+          resultRows: result ? rows : undefined,
+          columnNames: result ? names : undefined,
+          rowMode: result ? rowMode : undefined,
+          saveSql: saved,
+          returnValue: undefined,
+        }),
+      );
+      if (takes) bind = undefined;
+      if (result && names.length > 0) result = false;
+    }
+    return rv === "resultRows" || (rows && !callback && !rv) ? rows : rv === "saveSql" ? saved : handle;
+  }
+
+  /** Runs `run` with one statement's allowance on, and only while it runs: an admitted name as its type, or VACUUM's database. */
+  private allowed<T>(admit: [string, string] | null, vacuum: boolean, run: () => T): T {
     const was = this.admitting;
-    this.admitting = names;
+    if (admit) this.admitting = new Map([admit]);
+    this.vacuuming = vacuum;
     try {
       return run();
     } finally {
+      this.vacuuming = false;
       this.admitting = was;
     }
   }
 
   /**
-   * The schema statements in the application's SQL (R-W), each refused but a
+   * The application's SQL, read (R-W), as its statements and the allowance
+   * each earns alone (1g-M2, 1g-M3). Every schema statement is refused but a
    * CREATE TABLE, INDEX, TRIGGER or VIEW ... IF NOT EXISTS, in main, whose
    * canonical text is the release's own definition of that name, and whose
-   * object exists as that type. Then SQLite does nothing, and it is admitted.
-   * An object the release declares that the mount lacks is a damaged mount,
-   * never made again here. Returns the admitted names, folded.
+   * object exists as that type. Then SQLite does nothing, and that statement
+   * is admitted to make that name as that type. An object the release
+   * declares that the mount lacks is a damaged mount, never made again here.
+   * A bare VACUUM (no INTO) earns its own database. A script with neither is
+   * one piece, unsplit.
    */
-  private schemaStatements(text: string): Set<string> {
-    const admitted = new Set<string>();
+  private pieces(text: string): Piece[] {
+    if (!/\b(?:CREATE|ALTER|DROP|ATTACH|DETACH|VACUUM)\b/i.test(text)) return [{ sql: text, vacuum: false, admit: null }];
+    const out: Piece[] = [];
     for (const statement of splitStatements(this.sqlite3, text)) {
+      const tokens = sqlTokens(statement);
       // Only the document's own database is kept (S06): SQLite's own temporary one, named '', included (1e-L2).
-      if (["attach", "detach"].includes(sqlTokens(statement)[0] ?? "")) throw new Error(`CHANGES_REFUSED: ${REFUSED.attach}`);
+      if (["attach", "detach"].includes(tokens[0] ?? "")) throw new Error(`CHANGES_REFUSED: ${REFUSED.attach}`);
+      const vacuum = tokens[0] === "vacuum" && tokens.length <= 2 && tokens[1] !== "into";
       const create = createOf(statement);
-      if (create === undefined) continue;
+      if (create === undefined) {
+        out.push({ sql: statement, vacuum, admit: null });
+        continue;
+      }
       if (create === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
       const want = this.declared.get(`${create.type}|${create.name}`);
       const have = create.type === "table" ? createOf(withHiddenKeys(statement))?.canonical : create.canonical;
       if (want === undefined || have !== want) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
-      const stored = this.trusted(() => this.db.selectValue("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE", [create.name]));
-      if (stored == null) throw new Error(`CHANGES_REFUSED: ${MOUNT_DAMAGED}`);
-      if (stored !== create.type) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
-      admitted.add(create.name);
+      const stored = this.trusted(() =>
+        this.db.selectValue("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE AND type = ?", [create.name, create.type]),
+      );
+      if (stored == null) {
+        const other = this.trusted(() => this.db.selectValue("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE", [create.name]));
+        throw new Error(`CHANGES_REFUSED: ${other == null ? MOUNT_DAMAGED : REFUSED.schema}`);
+      }
+      out.push({ sql: statement, vacuum: false, admit: [create.name, create.type] });
     }
-    return admitted;
+    return out;
   }
 
   /**
@@ -2635,9 +2705,18 @@ function textOf(sql: unknown): string | null {
   return null;
 }
 
-/** Whether SQL the application runs holds a VACUUM, which attaches and detaches a database of its own as it runs. */
-const vacuums = (sqlite3: Any, text: string | null): boolean =>
-  text !== null && /\bvacuum\b/i.test(text) && splitStatements(sqlite3, text).some((s) => sqlTokens(s)[0] === "vacuum");
+/** One statement of the application's SQL, and the allowance it earns alone (1g-M2, 1g-M3). */
+interface Piece {
+  sql: string;
+  /** A bare VACUUM, which attaches and detaches a database of its own as it runs. */
+  vacuum: boolean;
+  /** An admitted CREATE ... IF NOT EXISTS: the name, folded, and the type it may make. */
+  admit: [string, string] | null;
+}
+
+/** Whether SQL takes a bound value: a ?, ?NNN, :name, @name or $name outside its strings and comments. */
+const parameterized = (sql: string): boolean =>
+  sqlTokens(sql).some((t, i, all) => t === "?" || ((t === ":" || t === "@") && /^[\p{L}\p{N}_]/u.test(all[i + 1] ?? "")) || /^\$[\p{L}\p{N}_]/u.test(t));
 
 /** A script cut into its statements where SQLite itself would end each one (sqlite3_complete), trigger bodies whole. */
 function splitStatements(sqlite3: Any, text: string): string[] {
