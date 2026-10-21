@@ -1550,7 +1550,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // merge is refused before it writes, never folded into the application's
       // transaction or rolled back with it (R-S). Asked of SQLite, not of our
       // own bookkeeping.
-      if (sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
+      if (changes ? changes.inTransaction : sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       liveDb.exec("BEGIN");
       // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
       // ROLLBACK with no transaction open would replace it (1d-L2).
@@ -1858,7 +1858,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // As a file merge (R-S, P3): refused before it writes while the application holds a transaction, or
       // once the document is refused.
       if (changes && changes.refusal) throw new Error("CHANGES_SAVE_REFUSED");
-      if (sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
+      if (changes ? changes.inTransaction : sqlite3 && !sqlite3.capi.sqlite3_get_autocommit(liveDb.pointer)) throw new Error("APP_TRANSACTION_OPEN");
       const into = frameRows(liveDb);
       liveDb.exec("BEGIN");
       // Once committed, a failure after it has nothing to roll back, and its own error is the one said: a
@@ -2658,6 +2658,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   /** Extracts the live database as bytes, ready to be written back. */
   const exportDatabase = (db: Any): Uint8Array => {
     if (!sqlite3) throw new Error("SQLite is not initialized.");
+    // A changeset document is serialized by its runtime's own engine, never through a capi entry the application can replace (1i).
+    if (changes && db === liveDb && typeof changes.serialize === "function") return changes.serialize() as Uint8Array;
     return sqlite3.capi.sqlite3_js_db_export(db.pointer) as Uint8Array;
   };
 

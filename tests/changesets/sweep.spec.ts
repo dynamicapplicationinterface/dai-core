@@ -437,15 +437,16 @@ test("Q06: two saves with no edit between log nothing; one edit after logs one c
 
 test("Q11: a session that cannot start over takes its save's batch back; retried, its changes are logged once", async () => {
   const { a, b } = await base();
-  const capi = a.sqlite3.capi;
-  const create = capi.sqlite3session_create;
+  // The fault goes in at the engine entry points the runtime calls, captured with the module (1i), not at capi.
+  const native = (a.changes as Any).native;
+  const exports = native.c;
   a.db.exec("UPDATE items SET qty = 7 WHERE title = 'Map'");
   const seq = Number(a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author]));
-  capi.sqlite3session_create = () => 7;
+  native.c = { ...exports, sqlite3session_create: () => 7 };
   try {
     expect(() => a.save()).toThrow(/^CHANGES_CAPTURE \(sqlite3session_create rc=7\)/);
   } finally {
-    capi.sqlite3session_create = create;
+    native.c = exports;
   }
   // The new session is made before the logged one goes, inside the save's savepoint (1f-L3): nothing was logged,
   // the capture holds the change still, and no refusal is needed.

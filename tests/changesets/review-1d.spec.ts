@@ -248,21 +248,22 @@ test("1d-H2: an integer key above 2^53 is saved, merged and edited exactly", asy
  */
 test("1d-H2: a save that cannot succeed refuses the document once, holds later writes, and wedges nothing", async () => {
   const { a, b } = await base();
-  const capi = a.sqlite3.capi;
-  const extract = capi.sqlite3session_changeset;
+  // The fault goes in at the engine entry points the runtime calls, captured with the module (1i), not at capi.
+  const native = (a.changes as unknown as { native: { c: Record<string, unknown> } }).native;
+  const exports = native.c;
   const logged = (): number => Number(a.db.selectValue("SELECT count(*) FROM _cs_log WHERE _r_replica = ?", [a.author.author]));
   a.db.exec("UPDATE items SET qty = 5 WHERE title = 'Bread'");
   a.save();
   const before = logged();
   a.db.exec("UPDATE items SET qty = 9 WHERE title = 'Bread'");
-  capi.sqlite3session_changeset = () => 17;
+  native.c = { ...exports, sqlite3session_changeset: () => 17 };
   let thrown: unknown;
   try {
     a.save();
   } catch (e) {
     thrown = e;
   } finally {
-    capi.sqlite3session_changeset = extract;
+    native.c = exports;
   }
   expect(String(thrown), "the refusal, by its code and its sentence").toMatch(/^Error: CHANGES_SAVE_REFUSED: .+/);
   expect(a.changes.refusal, "one sentence").toMatch(/^[^.]+\.$/);
