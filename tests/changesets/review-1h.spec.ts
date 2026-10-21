@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { Copy, boot, person, statementsOf, openBytes, DOC } from "./copy.js";
-import { SCHEMA, base, item, forgingFull } from "./scenarios.js";
+import { SCHEMA, SCENARIOS, base, exchange, item, forgingFull } from "./scenarios.js";
 import * as merge from "../../src/replicated-frame.js";
 
 /**
@@ -366,3 +366,24 @@ test("1h-M1: a receipt going backwards between two of a signer's batches is refu
   a.close();
   f.close();
 });
+
+/* ------------------------------------------------------------ 1h-L1: one seq grammar */
+
+for (const [label, scenario] of [
+  ["a Unicode digit", "1h-L1 non-ascii seq"],
+  ["leading whitespace", "1h-L1 space seq"],
+] as const) {
+  test(`1h-L1: a version seq written with ${label} is refused basis-forged by both copies, the same word`, async () => {
+    const o = await exchange(SCENARIOS[scenario]!.write);
+    expect(o.converged, "converged").toBe(true);
+    const reasons = rejected(o.a);
+    expect(reasons.map(([, r]) => r), "refused basis-forged").toEqual(["basis-forged"]);
+    expect(rejected(o.b), "the same on the copy that carried it").toEqual(reasons);
+    for (const c of [o.a, o.b]) {
+      expect(c.db.selectValue("SELECT title FROM items WHERE title LIKE 'Tent%'"), "A's edit stands").toBe("Tent (A)");
+      expect(c.rows.all("SELECT 1 FROM _cs_cell WHERE ver = ?", [reasons[0]![0]]), "F's version in no cell").toEqual([]);
+    }
+    o.a.close();
+    o.b.close();
+  });
+}

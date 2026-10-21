@@ -580,6 +580,11 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
         r.set(v.slice(0, v.lastIndexOf(":")), [999, "00000000000000000000000000000000"]);
       }),
   },
+  // 1h-L1: F's title basis names a version whose seq is a Unicode digit — a grammar one reader would take and the
+  // other would not; both now refuse it, the same word.
+  "1h-L1 non-ascii seq": { write: (a, b) => unreceived(a, b, (op, v) => op[5].set("title", [`${v.slice(0, v.lastIndexOf(":"))}:١`])) },
+  // 1h-L1: the same, with a leading space before the digit.
+  "1h-L1 space seq": { write: (a, b) => unreceived(a, b, (op, v) => op[5].set("title", [`${v.slice(0, v.lastIndexOf(":"))}: 1`])) },
   // 1g-L2 (F2a): F's op writes back the qty it showed, based on that version, and names nothing it resolves.
   "1g-L2 resolution without resolves": {
     extra: ["CREATE TABLE gear (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL)", "INSERT INTO gear (id, qty) VALUES (7, 1)"],

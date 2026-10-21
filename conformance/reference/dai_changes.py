@@ -317,9 +317,12 @@ def apply_log(db: sqlite3.Connection) -> None:
                         return "receipt-forged"
 
         def had(v: object) -> bool:
-            by, _, n = str(v).rpartition(":")
-            if not n.isdigit():
+            # One grammar for a version in both readers (1h-L1): lowercase hex, a colon, then ASCII digits with
+            # no leading zero and no whitespace. isdigit() would take a Unicode digit and Number() would take
+            # " 1", so the readers would disagree; anything but this grammar is refused by both, same word.
+            if not re.fullmatch(r"[0-9a-f]+:[1-9][0-9]*", str(v)):
                 return False
+            by, _, n = str(v).rpartition(":")
             if by == author:
                 return int(n) < seq
             entry = received.get(by)

@@ -164,6 +164,8 @@ type Op =
   | [string, unknown[], "I" | "U" | "D", Map<string, unknown>, Map<string, unknown>, Map<string, string[]>, string[]]
   | [string, unknown[], "I" | "U" | "D", Map<string, unknown>, Map<string, unknown>, Map<string, string[]>, string[], Map<string, string[]>];
 
+/** A version string, in the one grammar both readers read (1h-L1): lowercase hex, a colon, then ASCII digits with no leading zero. */
+const VERSION = /^[0-9a-f]+:[1-9][0-9]*$/;
 const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s: string): Uint8Array => Uint8Array.from(s.match(/../g) ?? [], (x) => parseInt(x, 16));
 const q = (name: string): string => `"${String(name).split('"').join('""')}"`;
@@ -2342,9 +2344,12 @@ export class Changes {
       }
     }
     const had = (v: string): boolean => {
+      // One grammar for a version in both readers (1h-L1): lowercase hex, a colon, then ASCII digits with no
+      // leading zero and no whitespace. Number() would take " 1" and isdigit() would take a Unicode digit, and
+      // the two readers would then disagree; anything but this grammar is refused by both, with the same word.
+      if (!VERSION.test(v)) return false;
       const at = v.lastIndexOf(":");
       const [by, n] = [v.slice(0, at), Number(v.slice(at + 1))];
-      if (!Number.isInteger(n)) return false;
       if (by === author) return n < seq;
       const entry = rec?.get(by);
       return Array.isArray(entry) && n <= Number(entry[0]);

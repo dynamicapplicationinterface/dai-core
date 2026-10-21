@@ -49,6 +49,8 @@ const VECTORS: Record<string, string> = {
   "unreceived-seen": "1g-M1 unreceived seen",
   "receipt-digest": "1h-M1 receipt digest",
   "receipt-clock": "1h-M1 receipt clock",
+  "bad-seq-unicode": "1h-L1 non-ascii seq",
+  "bad-seq-space": "1h-L1 space seq",
   "counter-over-pending": "D267 counter over a pending total",
 };
 
