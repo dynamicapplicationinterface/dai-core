@@ -384,6 +384,8 @@ class SessionCapture {
   constructor(
     private readonly sqlite3: Any,
     private readonly db: Any,
+    /** The captured engine: the filter and the column names are read through it, never the application's handle (1h-H1). */
+    private readonly engine: Engine,
     /** A table the session leaves alone for now: one made since the last save, or the target of a schema change as it runs. */
     private readonly excluded: (table: string) => boolean = () => false,
   ) {
@@ -409,7 +411,7 @@ class SessionCapture {
     this.filter ||= wasm.installFunction("ipp", (_ctx: number, zTab: number) => {
       const name = wasm.cstrToJs(zTab) as string;
       if (internalNamed(name) || this.excluded(name)) return 0;
-      return this.db.selectValue("SELECT 1 FROM pragma_table_info(?, 'main') WHERE pk > 0", [name]) == null ? 0 : 1;
+      return this.engine.value("SELECT 1 FROM pragma_table_info(?, 'main') WHERE pk > 0", [name]) == null ? 0 : 1;
     });
     capi.sqlite3session_table_filter(session, this.filter, 0);
     const rc = capi.sqlite3session_attach(session, null);
@@ -568,7 +570,7 @@ class SessionCapture {
   /** The changeset's column names. */
   private namesOf(table: string, n: number): string[] {
     if (!this.columns.has(table)) {
-      const cols = (this.db.selectObjects(`SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid`, [table]) as Any[]).map((c) => String(c.name));
+      const cols = (this.engine.all(`SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid`, [table]) as Any[]).map((c) => String(c.name));
       this.columns.set(table, cols);
     }
     return this.columns.get(table)!.slice(0, n);
@@ -608,6 +610,290 @@ export function stageChangeFunctions(db: Any): void {
   db.createFunction("dai_leave", () => null, { arity: 0, deterministic: false });
 }
 
+/* --------------------------------------------------------------- engine */
+
+/**
+ * The runtime's own hands on the database (1h-H1, 1h-M2).
+ *
+ * The application shares this handle, and nothing it can reach is trusted. It
+ * may replace any method of the handle, any method of `Stmt.prototype`, or any
+ * `capi` entry point, and it does so after it is given the handle; a runtime
+ * that read or wrote through those would run the application's code with the
+ * authorizer off. So, before the application has the handle, the runtime
+ * captures the engine primitives it needs and prepares, binds, steps and reads
+ * only through those captured originals (`Reflect.apply`). The application's
+ * later replacements are never on a path the runtime takes.
+ *
+ * Trust is a statement the runtime prepared through this private path, never a
+ * window of application-reachable JavaScript: `trust.on` is raised for exactly
+ * the captured prepare and step that drive one of the runtime's own
+ * statements, which is what the authorizer reads. Between those calls no
+ * application code runs, because the runtime calls none.
+ */
+/**
+ * Trust is scoped to the connection, not to an engine: every engine over one
+ * handle (the runtime's own, and any `createRows` view of the same handle)
+ * raises the same flag, which is the one the handle's authorizer reads.
+ */
+const trustByDb = new Map<number, { on: number }>();
+function trustOf(dbPtr: number): { on: number } {
+  let t = trustByDb.get(dbPtr);
+  if (!t) {
+    t = { on: 0 };
+    trustByDb.set(dbPtr, t);
+  }
+  return t;
+}
+
+class Engine {
+  private readonly dbPtr: number;
+  private readonly prepareV3: Any;
+  private readonly wrap: Any;
+  private readonly complete: Any;
+  private readonly errmsg: Any;
+  private readonly rcStr: Any;
+  private readonly ptrSize: number;
+  private readonly wasm: Any;
+  private readonly S: { step: Any; reset: Any; bind: Any; get: Any; names: Any; finalize: Any; clearBindings: Any };
+  private readonly cache = new Map<string, Any>();
+  /** Raised for exactly the captured prepare and step the runtime drives: the authorizer's one measure of its own work. */
+  readonly trust: { on: number };
+
+  constructor(
+    private readonly sqlite3: Any,
+    private readonly db: Any,
+  ) {
+    const capi = sqlite3.capi;
+    this.dbPtr = db.pointer;
+    this.trust = trustOf(this.dbPtr);
+    this.prepareV3 = capi.sqlite3_prepare_v3;
+    this.wrap = sqlite3.oo1.Stmt.wrapHandle;
+    this.complete = capi.sqlite3_complete;
+    this.errmsg = capi.sqlite3_errmsg;
+    this.rcStr = capi.sqlite3_js_rc_str;
+    this.ptrSize = sqlite3.wasm.ptr.size;
+    this.wasm = sqlite3.wasm;
+    const sp = sqlite3.oo1.Stmt.prototype;
+    // reset is called with false and the bindings cleared through the captured clearBindings: oo1's reset(true)
+    // would reach `this.clearBindings()` by dynamic dispatch, a method the application could have replaced (1h-H1).
+    this.S = { step: sp.step, reset: sp.reset, bind: sp.bind, get: sp.get, names: sp.getColumnNames, finalize: sp.finalize, clearBindings: sp.clearBindings };
+  }
+
+  private resetStmt(stmt: Any): void {
+    Reflect.apply(this.S.reset, stmt, [false]);
+    Reflect.apply(this.S.clearBindings, stmt, []);
+  }
+
+  private throwRc(rc: number): never {
+    throw Object.assign(new Error(`${this.rcStr(rc)}: sqlite3 result code ${rc}: ${this.errmsg(this.dbPtr)}`), { resultCode: rc });
+  }
+
+  /** One statement, prepared through the captured prepare alone: the private path that makes it the runtime's own. */
+  private prep(sql: string): Any {
+    const stack = this.wasm.pstack.pointer;
+    try {
+      const pp = this.wasm.pstack.alloc(this.ptrSize);
+      this.trust.on += 1;
+      let rc: number;
+      try {
+        rc = this.prepareV3(this.dbPtr, sql, -1, 0, pp, 0);
+      } finally {
+        this.trust.on -= 1;
+      }
+      if (rc) this.throwRc(rc);
+      const p = this.wasm.peekPtr(pp);
+      if (!p) throw new Error("CHANGES_CAPTURE (the runtime prepared empty SQL)");
+      return this.wrap(this.db, p, true);
+    } finally {
+      this.wasm.pstack.restore(stack);
+    }
+  }
+
+  /** A step of the runtime's own statement, trusted for its duration (a re-prepare at step is the runtime's too). */
+  stepStmt(stmt: Any): boolean {
+    this.trust.on += 1;
+    try {
+      return Reflect.apply(this.S.step, stmt, []) as boolean;
+    } finally {
+      this.trust.on -= 1;
+    }
+  }
+
+  private bindTo(stmt: Any, bind: unknown): void {
+    if (bind === undefined || bind === null) return;
+    if (Array.isArray(bind) && bind.length === 0) return;
+    Reflect.apply(this.S.bind, stmt, [bind]);
+  }
+
+  private rowOf(stmt: Any, names: string[]): Record<string, unknown> {
+    const o: Record<string, unknown> = Object.create(null);
+    for (let i = 0; i < names.length; i += 1) o[names[i]!] = Reflect.apply(this.S.get, stmt, [i]);
+    return o;
+  }
+
+  /** A script cut where SQLite itself would end each statement (sqlite3_complete), trigger bodies whole. */
+  private split(text: string): string[] {
+    const out: string[] = [];
+    let start = 0;
+    for (let i = text.indexOf(";"); i >= 0; i = text.indexOf(";", i + 1)) {
+      const piece = text.slice(start, i + 1);
+      if (this.complete(piece)) {
+        out.push(piece);
+        start = i + 1;
+      }
+    }
+    if (text.slice(start).trim()) out.push(text.slice(start));
+    return out;
+  }
+
+  /** The application's exec shape, run through the captured engine: a string or `{sql, bind}`, one or many statements. */
+  exec(arg: Any): void {
+    const sql = typeof arg === "string" ? arg : String(arg.sql);
+    const bind = typeof arg === "string" ? undefined : (arg as { bind?: unknown }).bind;
+    let bound = false;
+    for (const piece of this.split(sql)) {
+      const stmt = this.prep(piece);
+      try {
+        if (!bound && bind !== undefined && stmt.parameterCount) {
+          this.bindTo(stmt, bind);
+          bound = true;
+        }
+        while (this.stepStmt(stmt)) {
+          /* run the statement to completion */
+        }
+      } finally {
+        Reflect.apply(this.S.finalize, stmt, []);
+      }
+    }
+  }
+
+  all(sql: string, bind?: unknown): Record<string, unknown>[] {
+    const stmt = this.prep(sql);
+    const out: Record<string, unknown>[] = [];
+    try {
+      this.bindTo(stmt, bind);
+      const names = Reflect.apply(this.S.names, stmt, [[]]) as string[];
+      while (this.stepStmt(stmt)) out.push(this.rowOf(stmt, names));
+    } finally {
+      Reflect.apply(this.S.finalize, stmt, []);
+    }
+    return out;
+  }
+
+  value(sql: string, bind?: unknown): unknown {
+    const stmt = this.prep(sql);
+    try {
+      this.bindTo(stmt, bind);
+      return this.stepStmt(stmt) ? Reflect.apply(this.S.get, stmt, [0]) : undefined;
+    } finally {
+      Reflect.apply(this.S.finalize, stmt, []);
+    }
+  }
+
+  values(sql: string, bind?: unknown): unknown[] {
+    const stmt = this.prep(sql);
+    const out: unknown[] = [];
+    try {
+      this.bindTo(stmt, bind);
+      while (this.stepStmt(stmt)) out.push(Reflect.apply(this.S.get, stmt, [0]));
+    } finally {
+      Reflect.apply(this.S.finalize, stmt, []);
+    }
+    return out;
+  }
+
+  object(sql: string, bind?: unknown): Record<string, unknown> | undefined {
+    const stmt = this.prep(sql);
+    try {
+      this.bindTo(stmt, bind);
+      if (!this.stepStmt(stmt)) return undefined;
+      return this.rowOf(stmt, Reflect.apply(this.S.names, stmt, [[]]) as string[]);
+    } finally {
+      Reflect.apply(this.S.finalize, stmt, []);
+    }
+  }
+
+  /** A kept statement for a hot path, reset after each use (the runtime's inserts and head reads). */
+  private cached(sql: string): Any {
+    let s = this.cache.get(sql);
+    if (!s) {
+      s = this.prep(sql);
+      this.cache.set(sql, s);
+    }
+    return s;
+  }
+
+  runCached(sql: string, bind: unknown[]): void {
+    const s = this.cached(sql);
+    try {
+      this.bindTo(s, bind);
+      while (this.stepStmt(s)) {
+        /* run to completion */
+      }
+    } finally {
+      this.resetStmt(s);
+    }
+  }
+
+  /** Each row of a kept statement, as [col -> value]; for the head reads. */
+  eachCached(sql: string, bind: unknown[], fn: (get: (i: number) => unknown) => void): void {
+    const s = this.cached(sql);
+    try {
+      this.bindTo(s, bind);
+      while (this.stepStmt(s)) fn((i) => Reflect.apply(this.S.get, s, [i]));
+    } finally {
+      this.resetStmt(s);
+    }
+  }
+
+  close(): void {
+    for (const s of this.cache.values()) {
+      try {
+        Reflect.apply(this.S.finalize, s, []);
+      } catch {
+        /* Finalized with its database. */
+      }
+    }
+    this.cache.clear();
+  }
+}
+
+/**
+ * A `Rows` view over a handle, reading and writing only through the captured
+ * engine (1h-H1): the shape the authorship layer and the host read a document
+ * through, proof against an application that has replaced the handle's methods.
+ */
+export function createRows(sqlite3: Any, db: Any): Rows {
+  const engine = new Engine(sqlite3, db);
+  return {
+    all: (sql, params = []) =>
+      engine.all(sql, params.length ? params.slice() : undefined).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, plain(v)]))),
+    run: (sql, params = []) => engine.exec({ sql, bind: params.length ? params.slice() : undefined }),
+  };
+}
+
+/* ----------------------------------------------- progress handler (1h-M2) */
+
+/** The captured progress-handler installer, and what each connection's handler is, recorded through it. */
+let realProgressHandler: Any = null;
+const progressByDb = new Map<number, [number, Any, number] | null>();
+
+/**
+ * Once per process, replace `capi.sqlite3_progress_handler` with a recorder
+ * over the captured original (1h-M2): the application installs its handler
+ * through this, so the runtime knows what to restore after it clears the
+ * handler for a step of its own. A later replacement of the capi entry by the
+ * application installs no C-level handler of its own, so it fires nothing.
+ */
+function hookProgress(capi: Any): void {
+  if (realProgressHandler) return;
+  realProgressHandler = capi.sqlite3_progress_handler;
+  capi.sqlite3_progress_handler = (p: number, n: number, fn: Any, data: number): Any => {
+    progressByDb.set(p, n && fn ? [n, fn, data] : null);
+    return realProgressHandler(p, n, fn, data);
+  };
+}
+
 /* --------------------------------------------------------------- changes */
 
 export interface ChangesOptions {
@@ -643,11 +929,12 @@ export class Changes {
   private frames: { rowid: number | null; id: unknown }[] = [];
   private readonly keysCache = new Map<string, Keys | null>();
   private readonly declaredCache = new Map<string, Declared>();
-  private readonly stmts = new Map<string, Any>();
   private capture!: SessionCapture;
-  /** How deep the runtime's own calls are: a write to a runtime table is admitted only inside one (T11, P01). */
+  /** How deep the runtime's own operations nest: for counting its writes apart (D08) and clearing the progress handler once (1h-M2); not for authorization, which the engine's trust decides. */
   private depth = 0;
   private authorizer: unknown = null;
+  /** The captured authorizer setter: the application cannot replace what sets or clears the runtime's authorizer (1h-H1). */
+  private engineSetAuthorizer!: Any;
   /** Triggers on runtime tables an imported schema carried, dropped at open (T11). */
   readonly refused: string[] = [];
   /** Set once a save has failed in a way no retry cures (P3): the sentence the person reads. Later writes are held. */
@@ -656,14 +943,12 @@ export class Changes {
   private started = false;
   /** The release's declared objects, `type|name`, each as its canonical text (R-W). */
   private readonly declared: Map<string, string>;
-  /** While an admitted CREATE ... IF NOT EXISTS runs, that statement alone: the name it may make, as the type the release declares (R-W, 1g-M3). */
+  /** While the application prepares an admitted CREATE ... IF NOT EXISTS, that statement alone: the name it may make, as the type the release declares (R-W, 1g-M3). No application code runs during a prepare, so this window carries none. */
   private admitting = new Map<string, string>();
   /** The statements the application prepared on this mount, finalized when it closes (R-W). */
   private readonly appStatements = new Set<Any>();
   /** How deep `place` is in making room for a row (M04): a ring of moves ends, its last row decided as before. */
   private roomDepth = 0;
-  /** While the application's own VACUUM runs: the one database it attaches is admitted (1f-M1). */
-  private vacuuming = false;
   /** The observations issued and not yet used, by token (R-X §4). */
   private readonly observations = new Map<string, Observation>();
   /** Rows the runtime wrote on this connection, and the application's last statement's count (D08). */
@@ -685,6 +970,8 @@ export class Changes {
   private readonly probed = new Set<string>();
   /** Each table's key collations (`keyCollations`). */
   private readonly collCache = new Map<string, string[]>();
+  /** The runtime's captured hands on the database: it reads, writes and runs only through these (1h-H1, 1h-M2). */
+  private readonly engine: Engine;
   private readonly exec: (sql: Any) => unknown;
   /** The Rows view the authorship layer writes the log through. */
   readonly rows: Rows;
@@ -697,16 +984,20 @@ export class Changes {
     this.author = options.author;
     this.authorHex = hex(options.author);
     this.index = authorIndexOf(options.author);
-    this.exec = options.rawExec ?? db.exec.bind(db);
+    // Captured before the application has the handle: the runtime reads, writes and runs only through these (1h-H1, 1h-M2).
+    this.engine = new Engine(sqlite3, db);
+    this.exec = (sql) => this.engine.exec(sql);
     this.declared = declarationsOf(sqlite3, options.schema ?? "");
     this.rows = {
       all: (sql, params = []) =>
-        (db.selectObjects(sql, params.length ? params.slice() : undefined) as Record<string, unknown>[]).map((r) =>
-          Object.fromEntries(Object.entries(r).map(([k, v]) => [k, plain(v)])),
-        ),
-      run: (sql, params = []) => void this.exec({ sql, bind: params.length ? params.slice() : undefined }),
+        this.engine.all(sql, params.length ? params.slice() : undefined).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, plain(v)]))),
+      run: (sql, params = []) => this.engine.exec({ sql, bind: params.length ? params.slice() : undefined }),
     };
     const capi = sqlite3.capi;
+    // The application installs a progress handler through capi; its callback fires on every step, the runtime's
+    // own among them, and could clear the authorizer from under a save (1h-M2). Record what the application
+    // sets, through the captured installer, so a trusted window clears it and puts it back.
+    hookProgress(capi);
     db.createFunction("dai_id", () => this.nextId(), { arity: 1, deterministic: false });
     db.createFunction("dai_uuid", () => crypto.randomUUID(), { arity: 0, deterministic: false });
     // A row's identity, as the runtime's tables key it: what the kit's query views compare a row with its flags by (1d-H5).
@@ -762,7 +1053,7 @@ export class Changes {
       // Foreign keys are enforced from open: the runtime never set it before, so a declared REFERENCES was decoration.
       if (capi.sqlite3_get_autocommit(db.pointer)) this.exec("PRAGMA foreign_keys = ON");
       // A table is captured once it is adopted, its key rewritten first: the release's tables, at open (R-W).
-      this.capture = new SessionCapture(sqlite3, db, (t) => this.started && !this.adopted.has(t));
+      this.capture = new SessionCapture(sqlite3, db, this.engine, (t) => this.started && !this.adopted.has(t));
       this.adoptTables();
       this.counter = this.highestOwnCounter();
     });
@@ -780,7 +1071,9 @@ export class Changes {
     const before = outer ? Number(this.sqlite3.capi.sqlite3_total_changes(this.db.pointer)) : 0;
     this.depth += 1;
     try {
-      return f();
+      // The outermost runtime operation steps many of its own statements; a progress handler would run the
+      // application's code between those steps, so it is cleared for the whole window and put back after (1h-M2).
+      return outer ? this.withProgressCleared(f) : f();
     } finally {
       this.depth -= 1;
       if (outer) {
@@ -792,6 +1085,18 @@ export class Changes {
           this.runtimeLast = Number(this.sqlite3.capi.sqlite3_changes(this.db.pointer));
         }
       }
+    }
+  }
+
+  /** Clears the application's progress handler for the duration of `f`, and puts it back (1h-M2). A no-op when none is set. */
+  private withProgressCleared<T>(f: () => T): T {
+    const rec = progressByDb.get(this.db.pointer);
+    if (!rec || !realProgressHandler) return f();
+    realProgressHandler(this.db.pointer, 0, 0, 0);
+    try {
+      return f();
+    } finally {
+      realProgressHandler(this.db.pointer, rec[0], rec[1], rec[2]);
     }
   }
 
@@ -858,12 +1163,24 @@ export class Changes {
       [capi.SQLITE_CREATE_INDEX, "index"],
       [capi.SQLITE_CREATE_TRIGGER, "trigger"],
     ]);
+    // The action codes the authorizer compares against, captured: the application can replace a capi.SQLITE_*
+    // constant, and a comparison that read it live would then misclassify an action it should refuse (1h-H1).
+    const ALTER = capi.SQLITE_ALTER_TABLE;
+    const ATTACH = capi.SQLITE_ATTACH;
+    const DETACH = capi.SQLITE_DETACH;
+    const PRAGMA = capi.SQLITE_PRAGMA;
+    const READ = capi.SQLITE_READ;
+    const DENY = capi.SQLITE_DENY;
+    const OK = capi.SQLITE_OK;
+    const trust = this.engine.trust;
     this.authorizer = (_p: unknown, code: number, a1: unknown, a2: unknown, db: unknown, trigger: unknown): number => {
       const target = writes.has(code) || named.has(code) ? a1 : onTable.has(code) ? a2 : null;
-      const app = this.depth === 0;
+      // Trusted means the runtime itself prepared or stepped this statement, through its captured engine (1h-H1):
+      // never a window of application-reachable JavaScript, which is why there is no depth counter here.
+      const app = trust.on === 0;
       const deny = (why: string): number => {
         this.deniedBecause = why;
-        return capi.SQLITE_DENY;
+        return DENY;
       };
       // A document refused under P3 holds every later write: nothing more is accepted that no save could log.
       if (this.refusal && app && target !== null) return deny(this.refusal);
@@ -873,44 +1190,43 @@ export class Changes {
        * the statement before it is prepared, and this is the same rule where
        * SQLite itself prepares. The one admission is a CREATE ... IF NOT EXISTS
        * `watch` verified as the release's own definition of an object that
-       * exists. A schema of SQLite's own (VACUUM's) is not the document's.
+       * exists, prepared with the admission set (`allowed`). A VACUUM and an
+       * admitted CREATE run through the engine, trusted, so the application
+       * never reaches this branch during one (1h-M2).
        */
       if (app && schemaActions.has(code)) {
-        const schema = code === capi.SQLITE_ALTER_TABLE ? a1 : db;
+        const schema = code === ALTER ? a1 : db;
         // SQLite's own objects (ANALYZE's sqlite_stat1), by SQLite's own reserved spelling: no application statement makes one.
-        const engines = typeof a1 === "string" && /^sqlite_/i.test(a1) && code !== capi.SQLITE_ALTER_TABLE;
-        // Any schema but VACUUM's own, while the application's VACUUM runs: no other database is attached (1f-M1).
-        const ours = !engines && (schema == null || schema === "main" || schema === "temp" || !this.vacuuming);
+        const engines = typeof a1 === "string" && /^sqlite_/i.test(a1) && code !== ALTER;
+        const ours = !engines && (schema == null || schema === "main" || schema === "temp");
         const admitted = schema === "main" && typeof a1 === "string" && admittable.get(code) !== undefined && this.admitting.get(folded(a1)) === admittable.get(code);
         if (ours && !admitted) return deny(REFUSED.schema);
       }
       if (app) {
         // A virtual table is not carried (C04): written where an imported document holds one.
         if (writes.has(code) && typeof a1 === "string" && db !== "temp" && this.virtualSet.has(folded(a1))) return deny(REFUSED.virtual);
-        // Only the document's own database is kept (S06, 1f-M1): every ATTACH and DETACH, whatever its argument
-        // (an expression's is null), by any route. The one admitted is VACUUM's own temporary database, '', and
-        // its detach, while the application's VACUUM runs.
-        if (code === capi.SQLITE_ATTACH || code === capi.SQLITE_DETACH) {
-          if (!(this.vacuuming && (code === capi.SQLITE_DETACH || a1 === ""))) return deny(REFUSED.attach);
-        }
+        // Only the document's own database is kept (S06): every ATTACH and DETACH, whatever its argument (an
+        // expression's is null), by any route. A VACUUM's own ATTACH runs trusted (1h-M2), never here.
+        if (code === ATTACH || code === DETACH) return deny(REFUSED.attach);
         // The settings the runtime's assumptions rest on are the runtime's (P03): set, not read.
-        if (code === capi.SQLITE_PRAGMA && typeof a2 === "string" && typeof a1 === "string" && RUNTIME_PRAGMAS.has(a1.toLowerCase())) return deny(REFUSED.pragma);
+        if (code === PRAGMA && typeof a2 === "string" && typeof a1 === "string" && RUNTIME_PRAGMAS.has(a1.toLowerCase())) return deny(REFUSED.pragma);
         // Under a ranged key the rowid is not the key, as it was where the key was the rowid's alias (K11).
-        if (code === capi.SQLITE_READ && a2 === "ROWID" && typeof a1 === "string" && db !== "temp" && this.rangedSet.has(folded(a1))) {
+        if (code === READ && a2 === "ROWID" && typeof a1 === "string" && db !== "temp" && this.rangedSet.has(folded(a1))) {
           if (!(typeof trigger === "string" && runtimeNamed(trigger))) return deny(REFUSED.rowid);
         }
       }
-      if (typeof target !== "string" || !runtimeNamed(target)) return capi.SQLITE_OK;
+      if (typeof target !== "string" || !runtimeNamed(target)) return OK;
       // The document's own schemas: VACUUM copies every table through a schema of its own, which is not one.
-      if (typeof db === "string" && db !== "main" && db !== "temp") return capi.SQLITE_OK;
+      if (typeof db === "string" && db !== "main" && db !== "temp") return OK;
       if (typeof trigger === "string" && trigger.length > 0) {
         // Found by preparing, never running, the writes that would fire it (1d-L1).
         if (this.probing && !own.has(trigger)) this.probed.add(trigger);
-        return own.has(trigger) && this.depth > 0 ? capi.SQLITE_OK : deny(REFUSED.runtimeTables);
+        return own.has(trigger) && !app ? OK : deny(REFUSED.runtimeTables);
       }
-      return this.depth > 0 ? capi.SQLITE_OK : deny(REFUSED.runtimeTables);
+      return !app ? OK : deny(REFUSED.runtimeTables);
     };
-    capi.sqlite3_set_authorizer(this.db.pointer, this.authorizer, 0);
+    this.engineSetAuthorizer = capi.sqlite3_set_authorizer;
+    this.engineSetAuthorizer(this.db.pointer, this.authorizer, 0);
   }
 
   /**
@@ -920,9 +1236,9 @@ export class Changes {
    */
   private refreshAuthorized(): void {
     this.virtualSet = new Set(
-      (this.db.selectValues("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'virtual'") as string[]).map(folded),
+      (this.engine.values("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'virtual'") as string[]).map(folded),
     );
-    this.rangedSet = new Set((this.db.selectValues("SELECT tbl FROM _cs_keys WHERE kind = 'ranged'") as string[]).map(folded));
+    this.rangedSet = new Set((this.engine.values("SELECT tbl FROM _cs_keys WHERE kind = 'ranged'") as string[]).map(folded));
   }
 
   /**
@@ -936,7 +1252,7 @@ export class Changes {
     // A runtime view, as T11 holds triggers (D264): the apply reads _cs_log_current, so a view an imported
     // document carries under a runtime name is the runtime's text or it goes, put back as the runtime writes it.
     const views = runtimeObjects(this.sqlite3).views;
-    for (const v of this.db.selectObjects("SELECT name, sql FROM main.sqlite_schema WHERE type = 'view'") as Any[]) {
+    for (const v of this.engine.all("SELECT name, sql FROM main.sqlite_schema WHERE type = 'view'") as Any[]) {
       if (!runtimeNamed(String(v.name))) continue;
       const want = views.get(String(v.name));
       if (want && spaced(String(v.sql)) === spaced(want)) continue;
@@ -946,7 +1262,7 @@ export class Changes {
     }
     const expected = runtimeTriggers(this.sqlite3);
     for (const schema of ["main", "temp"]) {
-      for (const t of this.db.selectObjects(`SELECT name, tbl_name, sql FROM ${schema}.sqlite_schema WHERE type = 'trigger'`) as Any[]) {
+      for (const t of this.engine.all(`SELECT name, tbl_name, sql FROM ${schema}.sqlite_schema WHERE type = 'trigger'`) as Any[]) {
         if (!runtimeNamed(String(t.tbl_name))) continue;
         const want = schema === "main" ? expected.get(String(t.name)) : undefined;
         if (want && spaced(String(t.sql)) === spaced(want)) continue;
@@ -984,7 +1300,7 @@ export class Changes {
       const vacuum = first?.vacuum === true;
       let stmt: Any;
       try {
-        stmt = this.allowed(first?.admit ?? null, false, () => prepare(text, ...args.slice(1)));
+        stmt = this.allowed(first?.admit ?? null, () => prepare(text, ...args.slice(1)));
       } catch (e) {
         throw this.explained(e);
       }
@@ -998,16 +1314,16 @@ export class Changes {
       stmt.step = (): Any => {
         this.counting();
         this.deniedBecause = null;
-        this.vacuuming = vacuum;
         let row: Any;
         try {
-          row = step();
+          // A VACUUM the application steps itself attaches and rebuilds; it is stepped through the captured
+          // engine (trusted, its progress handler cleared), so no replaced step, prepare or handler runs while
+          // it does (1h-M2). Every other statement is the application's, stepped as it is.
+          row = vacuum ? this.withProgressCleared(() => this.engine.stepStmt(stmt)) : step();
         } catch (e) {
           // A statement SQLite prepares again at its step (the schema moved) is authorized again, and a refusal
           // there reads as one at prepare does (1f-L1).
           throw this.explained(e);
-        } finally {
-          this.vacuuming = false;
         }
         this.counted();
         if (this.depth === 0 && this.deferred && !this.inTransaction) this.projectAdmitted();
@@ -1032,8 +1348,12 @@ export class Changes {
     };
     const exec = handle.exec.bind(handle);
     handle.exec = (...args: Any[]): Any => {
-      // The runtime's own calls (its reads go through exec too) run as they are.
-      if (this.depth > 0) return exec(...args);
+      // The runtime's own writes through the handle (the frame's, inside `trusted`) go through the captured
+      // engine, trusted (1h-H1): never the application's replacement of this method or of Stmt.prototype.step.
+      if (this.depth > 0) {
+        const sql = typeof args[0] === "string" ? { sql: args[0], ...(args[1] ?? {}) } : args[0];
+        return this.engine.exec(sql);
+      }
       const text = textOf(args[0]);
       if (text === null) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
       const opts = (typeof args[0] === "string" ? args[1] : args[0]) as Record<string, Any> | undefined;
@@ -1081,7 +1401,13 @@ export class Changes {
     }
     for (const { sql, piece } of segments) {
       if (piece) {
-        this.allowed(piece.admit, piece.vacuum, () => exec({ sql, ...(saved ? { saveSql: saved } : {}) }));
+        // The allowance runs through the captured engine, trusted, with none of the caller's arrays, callbacks
+        // or bound values, and (for a VACUUM) its progress handler cleared: no application code runs while it
+        // does (1h-M2). Its text joins the caller's saveSql afterwards, never iterated inside the trusted run.
+        const run = (): void => this.engine.exec(sql);
+        if (piece.vacuum) this.withProgressCleared(run);
+        else run();
+        if (saved) saved.push(sql.trim());
         continue;
       }
       const names: string[] = Array.isArray(opts?.["columnNames"]) ? opts!["columnNames"] : [];
@@ -1103,15 +1429,13 @@ export class Changes {
     return rv === "resultRows" || (rows && !callback && !rv) ? rows : rv === "saveSql" ? saved : handle;
   }
 
-  /** Runs `run` with one statement's allowance on, and only while it runs: an admitted name as its type, or VACUUM's database. */
-  private allowed<T>(admit: [string, string] | null, vacuum: boolean, run: () => T): T {
+  /** Runs `run` with one statement's admission on, and only while it runs: the name it may make, as the type the release declares. A prepare runs no application code, so this window carries none (1g-M3). */
+  private allowed<T>(admit: [string, string] | null, run: () => T): T {
     const was = this.admitting;
     if (admit) this.admitting = new Map([admit]);
-    this.vacuuming = vacuum;
     try {
       return run();
     } finally {
-      this.vacuuming = false;
       this.admitting = was;
     }
   }
@@ -1145,10 +1469,10 @@ export class Changes {
       const have = create.type === "table" ? createOf(withHiddenKeys(statement))?.canonical : create.canonical;
       if (want === undefined || have !== want) throw new Error(`CHANGES_REFUSED: ${REFUSED.schema}`);
       const stored = this.trusted(() =>
-        this.db.selectValue("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE AND type = ?", [create.name, create.type]),
+        this.engine.value("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE AND type = ?", [create.name, create.type]),
       );
       if (stored == null) {
-        const other = this.trusted(() => this.db.selectValue("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE", [create.name]));
+        const other = this.trusted(() => this.engine.value("SELECT type FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE", [create.name]));
         throw new Error(`CHANGES_REFUSED: ${other == null ? MOUNT_DAMAGED : REFUSED.schema}`);
       }
       out.push({ sql: statement, vacuum: false, admit: [create.name, create.type] });
@@ -1233,14 +1557,14 @@ export class Changes {
   private highestOwnCounter(): number {
     const base = this.index * SPAN;
     let high = 0;
-    for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys WHERE kind IN ('ranged', 'hidden')") as Any[]) {
+    for (const { tbl, pk } of this.engine.all("SELECT tbl, pk FROM _cs_keys WHERE kind IN ('ranged', 'hidden')") as Any[]) {
       const col = q(pk);
-      const m = this.db.selectValue(`SELECT max(${col}) FROM main.${q(tbl)} WHERE ${col} >= ? AND ${col} < ?`, [base, base + SPAN]);
+      const m = this.engine.value(`SELECT max(${col}) FROM main.${q(tbl)} WHERE ${col} >= ? AND ${col} < ?`, [base, base + SPAN]);
       if (m != null) high = Math.max(high, Number(m) - base);
     }
     // Every id the range has held is in the cells, deleted rows included, whoever wrote it: a row another
     // copy wrote into this range with an explicit id and then deleted is a high-water mark too (K06, K07).
-    const cells = this.db.selectValues(
+    const cells = this.engine.values(
       "SELECT DISTINCT c.pk FROM _cs_cell c JOIN _cs_keys k ON k.tbl = c.tbl AND k.kind IN ('ranged', 'hidden')",
     ) as string[];
     for (const text of cells) {
@@ -1324,7 +1648,7 @@ export class Changes {
     this.declaredCache.clear();
     this.settleViews();
     this.capture?.schemaChanged();
-    this.adopted = new Set(this.db.selectValues("SELECT tbl FROM _cs_keys") as string[]);
+    this.adopted = new Set(this.engine.values("SELECT tbl FROM _cs_keys") as string[]);
     this.refreshAuthorized();
     this.refuseRuntimeWriters();
   }
@@ -1340,14 +1664,14 @@ export class Changes {
    * trigger (R-W).
    */
   private refuseRuntimeWriters(): void {
-    const triggered = new Set(this.db.selectValues("SELECT DISTINCT tbl_name FROM sqlite_temp_schema WHERE type = 'trigger' UNION SELECT DISTINCT tbl_name FROM sqlite_schema WHERE type = 'trigger'") as string[]);
+    const triggered = new Set(this.engine.values("SELECT DISTINCT tbl_name FROM sqlite_temp_schema WHERE type = 'trigger' UNION SELECT DISTINCT tbl_name FROM sqlite_schema WHERE type = 'trigger'") as string[]);
     const tables = appTablesOf(this.rows).filter((t) => triggered.has(t));
     if (tables.length === 0) return;
     this.probing = true;
     this.probed.clear();
     try {
       for (const t of tables) {
-        const cols = this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [t]) as string[];
+        const cols = this.engine.values("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [t]) as string[];
         for (const sql of [
           `INSERT INTO main.${q(t)} DEFAULT VALUES`,
           `UPDATE main.${q(t)} SET ${cols.map((c) => `${q(c)} = ${q(c)}`).join(", ")}`,
@@ -1370,7 +1694,7 @@ export class Changes {
     this.probed.clear();
     if (found.length === 0) return;
     for (const name of found) {
-      const schema = this.db.selectValue("SELECT 'temp' FROM sqlite_temp_schema WHERE type = 'trigger' AND name = ?", [name]) ?? "main";
+      const schema = this.engine.value("SELECT 'temp' FROM sqlite_temp_schema WHERE type = 'trigger' AND name = ?", [name]) ?? "main";
       this.paused(() => this.exec(`DROP TRIGGER IF EXISTS ${schema}.${q(name)}`));
       this.refused.push(name);
     }
@@ -1384,8 +1708,8 @@ export class Changes {
    * (guardTriggers), so the order triggers fire in does not matter (1b-L4).
    */
   private slotEveryInsert(): void {
-    for (const { tbl } of this.db.selectObjects("SELECT tbl FROM _cs_keys WHERE kind IN ('uuid', 'natural', 'hidden')") as Any[]) {
-      const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
+    for (const { tbl } of this.engine.all("SELECT tbl FROM _cs_keys WHERE kind IN ('uuid', 'natural', 'hidden')") as Any[]) {
+      const sql = String(this.engine.value("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
       if (!sql || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
       this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${tbl}`)} AFTER INSERT ON ${q(tbl)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.rowid); END`);
     }
@@ -1401,8 +1725,8 @@ export class Changes {
    * a runtime trigger, before insert and before an update of its columns.
    */
   private refuseNullKeys(): void {
-    for (const { tbl, pk } of this.db.selectObjects("SELECT tbl, pk FROM _cs_keys WHERE kind = 'natural'") as Any[]) {
-      const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
+    for (const { tbl, pk } of this.engine.all("SELECT tbl, pk FROM _cs_keys WHERE kind = 'natural'") as Any[]) {
+      const sql = String(this.engine.value("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
       const cols = String(pk).split(",").filter(Boolean);
       if (!sql || !cols.length || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
       const when = cols.map((c) => `NEW.${q(c)} IS NULL`).join(" OR ");
@@ -1428,7 +1752,7 @@ export class Changes {
    */
   private guardTriggers(): void {
     const apps = new Set(appTablesOf(this.rows));
-    for (const { name, tbl_name, sql } of this.db.selectObjects(
+    for (const { name, tbl_name, sql } of this.engine.all(
       "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL",
     ) as Any[]) {
       if (!apps.has(tbl_name)) continue;
@@ -1463,7 +1787,7 @@ export class Changes {
    */
   private rebuild(table: string, column: string, kind: "ranged" | "uuid" | "hidden", type?: string): boolean {
     const exec = this.exec;
-    const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]));
+    const sql = String(this.engine.value("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]));
     let rewritten: string;
     try {
       rewritten = kind === "hidden" ? withHiddenKeys(sql) : rewriteKeySql(sql, table, column, kind, type);
@@ -1472,14 +1796,14 @@ export class Changes {
     }
     if (rewritten === sql) return false;
     // The ordinary columns, by name: a generated column takes no value (C05), and SELECT * would hand it one.
-    const cols = (this.db.selectValues("SELECT name FROM pragma_table_xinfo(?, 'main') WHERE hidden = 0 ORDER BY cid", [table]) as string[]).map(q).join(", ");
-    const others = this.db.selectValues(
+    const cols = (this.engine.values("SELECT name FROM pragma_table_xinfo(?, 'main') WHERE hidden = 0 ORDER BY cid", [table]) as string[]).map(q).join(", ");
+    const others = this.engine.values(
       "SELECT sql FROM sqlite_schema WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL",
       [table],
     ) as string[];
     const old = `_cs_old_${table}`;
     const inTxn = !this.sqlite3.capi.sqlite3_get_autocommit(this.db.pointer);
-    const fk = this.db.selectValue("PRAGMA foreign_keys");
+    const fk = this.engine.value("PRAGMA foreign_keys");
     this.keepingLastInsert(() => this.paused(() => {
       if (!inTxn) exec("PRAGMA foreign_keys = OFF");
       exec("PRAGMA legacy_alter_table = ON");
@@ -1508,8 +1832,8 @@ export class Changes {
     let d = this.declaredCache.get(table);
     if (!d) {
       // Read strictly, against the columns SQLite reports: a line that does not read exactly is ignored (1b-H2).
-      const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]) ?? "");
-      d = declaredIn(sql, this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]);
+      const sql = String(this.engine.value("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]) ?? "");
+      d = declaredIn(sql, this.engine.values("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]);
       this.declaredCache.set(table, d);
     }
     return d;
@@ -1536,7 +1860,7 @@ export class Changes {
           `WHERE f.tbl = ${sqlText(table)} AND f.kind = 'pending' AND json_extract(j.value, '$.col') IN (${cols.map(sqlText).join(", ")}))`,
       );
     }
-    const have = new Map((this.db.selectObjects("SELECT tbl, body FROM _cs_settle") as Any[]).map((r) => [String(r.tbl), String(r.body)]));
+    const have = new Map((this.engine.all("SELECT tbl, body FROM _cs_settle") as Any[]).map((r) => [String(r.tbl), String(r.body)]));
     if (want.size === have.size && [...want].every(([t, b]) => have.get(t) === b)) return;
     this.exec("DELETE FROM _cs_settle");
     for (const [tbl, body] of want) this.exec({ sql: "INSERT INTO _cs_settle (tbl, body) VALUES (?, ?)", bind: [tbl, body] });
@@ -1544,7 +1868,7 @@ export class Changes {
 
   keysOf(table: string): Keys | null {
     if (!this.keysCache.has(table)) {
-      const row = this.db.selectObject("SELECT kind, pk FROM _cs_keys WHERE tbl = ?", [table]) as Any;
+      const row = this.engine.object("SELECT kind, pk FROM _cs_keys WHERE tbl = ?", [table]) as Any;
       this.keysCache.set(table, row ? { kind: row.kind, pk: row.pk ? String(row.pk).split(",") : [] } : null);
     }
     return this.keysCache.get(table)!;
@@ -1626,7 +1950,7 @@ export class Changes {
        * apply does; PRAGMA foreign_keys is a no-op inside a transaction, so it
        * is set before the savepoint opens.
        */
-      const fk = Number(this.db.selectValue("PRAGMA foreign_keys")) === 1;
+      const fk = Number(this.engine.value("PRAGMA foreign_keys")) === 1;
       if (fk) this.exec("PRAGMA foreign_keys = OFF");
       try {
         this.exec("SAVEPOINT cs_save");
@@ -1652,12 +1976,12 @@ export class Changes {
           // A save over a flagged or held row may have resolved it: decide it again.
           const marked = touched.filter(
             ([t, pk]) =>
-              this.db.selectValue("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? UNION SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [t, pk, t, pk]) !=
+              this.engine.value("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? UNION SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [t, pk, t, pk]) !=
               null,
           );
           // And a held or kept-referenced row is decided again at every save, as at every projection: a save that
           // removed a kept row's last reference lets its delete stand here, as it will on every copy (1f-M3).
-          const kept = this.db.selectValue("SELECT 1 FROM _cs_held UNION ALL SELECT 1 FROM _cs_flag WHERE kind = 'kept-referenced' LIMIT 1") != null;
+          const kept = this.engine.value("SELECT 1 FROM _cs_held UNION ALL SELECT 1 FROM _cs_flag WHERE kind = 'kept-referenced' LIMIT 1") != null;
           if (marked.length || kept) this.withoutCapture(() => this.project(marked));
           // The baseline advances inside the same savepoint, last: a capture that cannot start over takes the
           // batch back with it, and the save is retried with everything it held (1f-L3, P3 not reached).
@@ -1753,39 +2077,21 @@ export class Changes {
     return new Error(`CHANGES_SAVE_REFUSED: ${SAVE_REFUSED}`, { cause: e });
   }
 
-  private stmt(sql: string): Any {
-    let s = this.stmts.get(sql);
-    if (!s) {
-      s = this.db.prepare(sql);
-      this.stmts.set(sql, s);
-    }
-    return s;
-  }
-
   private runCached(sql: string, bind: unknown[]): void {
-    const s = this.stmt(sql);
-    try {
-      s.bind(bind).step();
-    } finally {
-      s.reset(true);
-    }
+    this.engine.runCached(sql, bind);
   }
 
   /** Every current version of one row, by column ("" is existence). */
   private rowHeads(table: string, pk: string): Map<string, { ver: string; val: unknown }[]> {
-    const s = this.stmt(
-      "SELECT col, ver, val FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY col, ver",
-    );
     const heads = new Map<string, { ver: string; val: unknown }[]>();
-    try {
-      s.bind([table, pk]);
-      while (s.step()) {
-        const col = String(s.get(0));
-        heads.set(col, [...(heads.get(col) ?? []), { ver: String(s.get(1)), val: s.get(2) }]);
-      }
-    } finally {
-      s.reset(true);
-    }
+    this.engine.eachCached(
+      "SELECT col, ver, val FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY col, ver",
+      [table, pk],
+      (get) => {
+        const col = String(get(0));
+        heads.set(col, [...(heads.get(col) ?? []), { ver: String(get(1)), val: get(2) }]);
+      },
+    );
     return heads;
   }
 
@@ -1814,7 +2120,7 @@ export class Changes {
       const missing = [...new Set(groups.flat())].filter((c) => !n.has(c));
       if (missing.length) {
         const where = this.whereKey(op.table);
-        const now = this.db.selectObject(
+        const now = this.engine.object(
           `SELECT ${missing.map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ")} FROM main.${q(op.table)} WHERE ${where}`,
           k.map(compared),
         ) as Any;
@@ -1938,7 +2244,7 @@ export class Changes {
     const touched: [string, string][] = [];
     if (fresh.length === 0) return { changesets: 0, rows: 0 };
     const known = new Map(
-      (this.db.selectObjects(`SELECT lower(hex(_r_replica)) || ':' || _r_seq AS ver, _r_lc AS lc FROM ${q(`${CHANGES_LOG}_current`)}`) as Any[]).map((r) => [String(r.ver), Number(r.lc)]),
+      (this.engine.all(`SELECT lower(hex(_r_replica)) || ':' || _r_seq AS ver, _r_lc AS lc FROM ${q(`${CHANGES_LOG}_current`)}`) as Any[]).map((r) => [String(r.ver), Number(r.lc)]),
     );
     let applied = 0;
     this.withoutCapture(() => {
@@ -2011,10 +2317,10 @@ export class Changes {
         if (!Array.isArray(vers)) return "basis-forged";
         if (vers.some((v) => !had(String(v)))) return "basis-forged";
         for (const v of vers) {
-          const at = this.db.selectValue("SELECT lc FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, String(v)]);
+          const at = this.engine.value("SELECT lc FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, String(v)]);
           if (at != null) {
             if (Number(at) >= lc) return "basis-forged";
-          } else if (this.db.selectValue("SELECT 1 FROM _cs_ingested WHERE ver = ?", [String(v)]) != null) return "basis-forged";
+          } else if (this.engine.value("SELECT 1 FROM _cs_ingested WHERE ver = ?", [String(v)]) != null) return "basis-forged";
           else if ((known.get(String(v)) ?? -Infinity) >= lc) return "basis-forged";
           else wait = true;
         }
@@ -2031,7 +2337,7 @@ export class Changes {
           if (vers.length !== 1) return false;
           const v = bound(val);
           return (
-            this.db.selectValue(
+            this.engine.value(
               `SELECT 1 FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ? AND val IS ${v.at} AND typeof(val) = typeof(${v.at})`,
               [table, pk, c, String(vers[0]), v.value, v.value],
             ) != null
@@ -2052,7 +2358,7 @@ export class Changes {
    */
   private received(): Map<string, number> {
     const out = new Map<string, number>();
-    for (const r of this.db.selectObjects(
+    for (const r of this.engine.all(
       "SELECT substr(ver, 1, instr(ver, ':') - 1) AS a, max(CAST(substr(ver, instr(ver, ':') + 1) AS INTEGER)) AS s FROM _cs_ingested i WHERE NOT EXISTS (SELECT 1 FROM _cs_refused r WHERE r.ver = i.ver) GROUP BY a ORDER BY a",
     ) as Any[]) {
       if (r.a !== this.authorHex) out.set(String(r.a), Number(r.s));
@@ -2062,7 +2368,7 @@ export class Changes {
 
   /** The admitted changesets refused for their basis (R-X §3), by version. */
   refusedChanges(): { ver: string; reason: BasisRefusal }[] {
-    return this.db.selectObjects("SELECT ver, reason FROM _cs_refused ORDER BY ver") as Any[];
+    return this.engine.all("SELECT ver, reason FROM _cs_refused ORDER BY ver") as Any[];
   }
 
   private paused<T>(f: () => T): T {
@@ -2107,7 +2413,7 @@ export class Changes {
     table: string,
     pk: string,
   ): { deleted: boolean; contested: boolean; values: Record<string, unknown>; pending: Any[]; shownBy: Record<string, Any>; cells: Any[] } | null {
-    const heads = this.db.selectObjects(
+    const heads = this.engine.all(
       "SELECT col, ver, val, typeof(val) AS t, lc, author FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver)",
       [table, pk],
     ) as Any[];
@@ -2118,7 +2424,7 @@ export class Changes {
     const data = heads.filter((h) => h.col !== "");
     const seen = new Set(
       dels.length
-        ? (this.db.selectValues(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [
+        ? (this.engine.values(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [
             table,
             pk,
             ...dels,
@@ -2140,7 +2446,7 @@ export class Changes {
       if (hs.length > 1) pending.push({ col, values: hs.map((h) => ({ ver: h.ver, val: shown(h.val) })) });
     }
     const cells = () =>
-      this.db.selectObjects("SELECT col, ver, val, typeof(val) AS t, lc, author FROM _cs_cell WHERE tbl = ? AND pk = ? AND col <> ''", [table, pk]) as Any[];
+      this.engine.all("SELECT col, ver, val, typeof(val) AS t, lc, author FROM _cs_cell WHERE tbl = ? AND pk = ? AND col <> ''", [table, pk]) as Any[];
     return { deleted, contested: !deleted && dels.length > 0, values, pending, shownBy, get cells() { return cells(); } };
   }
 
@@ -2185,7 +2491,7 @@ export class Changes {
   }
 
   private birthOf(table: string, pk: string): { lc: number; author: string; ver: string } | null {
-    return (this.db.selectObject(
+    return (this.engine.object(
       "SELECT lc, author, ver FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = '' AND val = 1 ORDER BY lc, author, ver LIMIT 1",
       [table, pk],
     ) ?? null) as Any;
@@ -2211,7 +2517,7 @@ export class Changes {
   private respells(table: string): boolean {
     const keys = this.keysOf(table)?.pk ?? [];
     const untyped = keys.some((c) => {
-      const type = String(this.db.selectValue("SELECT type FROM pragma_table_info(?, 'main') WHERE name = ?", [table, c]) ?? "").toUpperCase();
+      const type = String(this.engine.value("SELECT type FROM pragma_table_info(?, 'main') WHERE name = ?", [table, c]) ?? "").toUpperCase();
       return !/INT|CHAR|CLOB|TEXT|REAL|FLOA|DOUB/.test(type) && (type === "" || type.includes("BLOB"));
     });
     return untyped || this.keyCollations(table).some((c) => c !== "BINARY");
@@ -2225,10 +2531,10 @@ export class Changes {
     let colls = this.collCache.get(table);
     if (!colls) {
       const keys = this.keysOf(table)?.pk ?? [];
-      const index = this.db.selectValue("SELECT name FROM pragma_index_list(?, 'main') WHERE origin = 'pk'", [table]) as string | undefined;
+      const index = this.engine.value("SELECT name FROM pragma_index_list(?, 'main') WHERE origin = 'pk'", [table]) as string | undefined;
       const by = new Map<string, string>(
         index
-          ? (this.db.selectObjects("SELECT name, coll FROM pragma_index_xinfo(?, 'main') WHERE key = 1", [index]) as Any[]).map((r) => [String(r.name), String(r.coll).toUpperCase()])
+          ? (this.engine.all("SELECT name, coll FROM pragma_index_xinfo(?, 'main') WHERE key = 1", [index]) as Any[]).map((r) => [String(r.name), String(r.coll).toUpperCase()])
           : [],
       );
       colls = keys.map((c) => by.get(c) ?? "BINARY");
@@ -2255,7 +2561,7 @@ export class Changes {
   private project(touched: [string, string][]): void {
     const set = new Map(touched.map(([t, pk]) => [`${t}|${pk}`, [t, pk] as [string, string]]));
     // A held row, or one kept because something referred to it, is decided again every time.
-    for (const r of this.db.selectObjects("SELECT tbl, pk FROM _cs_held UNION SELECT tbl, pk FROM _cs_flag WHERE kind = 'kept-referenced'") as Any[]) {
+    for (const r of this.engine.all("SELECT tbl, pk FROM _cs_held UNION SELECT tbl, pk FROM _cs_flag WHERE kind = 'kept-referenced'") as Any[]) {
       set.set(`${r.tbl}|${r.pk}`, [r.tbl, r.pk]);
     }
     const items = [...set.values()].sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1));
@@ -2290,20 +2596,20 @@ export class Changes {
     const contends = (ver: string, at: string): void => {
       sources.set(ver, (sources.get(ver) ?? new Set()).add(at));
     };
-    for (const f of this.db.selectObjects("SELECT tbl, pk, detail FROM _cs_flag WHERE kind = 'pending'") as Any[]) {
+    for (const f of this.engine.all("SELECT tbl, pk, detail FROM _cs_flag WHERE kind = 'pending'") as Any[]) {
       const entries = (f.detail ? JSON.parse(f.detail) : []) as Any[];
       const mine = entries.filter((e) => e.group === undefined);
       const at = JSON.stringify([f.tbl, f.pk]);
       own.set(at, mine);
       for (const e of mine) for (const v of e.constraint ? e.values.slice(0, 1) : e.values) contends(v.ver, at);
     }
-    for (const h of this.db.selectObjects("SELECT tbl, pk FROM _cs_held") as Any[]) {
+    for (const h of this.engine.all("SELECT tbl, pk FROM _cs_held") as Any[]) {
       const at = JSON.stringify([h.tbl, h.pk]);
       for (const [col, hs] of this.rowHeads(h.tbl, h.pk)) if (col !== "") for (const v of hs) contends(v.ver, at);
     }
     const grouped = new Map<string, Any[]>();
     for (const [ver, from] of sources) {
-      const wrote = this.db.selectObjects(
+      const wrote = this.engine.all(
         `SELECT tbl, pk, col, val FROM _cs_cell c WHERE ver = ? AND col <> ''
           AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY tbl, pk, col`,
         [ver],
@@ -2311,7 +2617,7 @@ export class Changes {
       const waits = [...from].sort().map((at) => JSON.parse(at));
       for (const w of wrote) {
         const at = JSON.stringify([w.tbl, w.pk]);
-        if (from.has(at) || this.db.selectValue("SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [w.tbl, w.pk]) != null) continue;
+        if (from.has(at) || this.engine.value("SELECT 1 FROM _cs_held WHERE tbl = ? AND pk = ?", [w.tbl, w.pk]) != null) continue;
         grouped.set(at, [...(grouped.get(at) ?? []), { col: w.col, group: ver, with: waits, values: [{ ver, val: shown(w.val) }] }]);
       }
     }
@@ -2355,7 +2661,7 @@ export class Changes {
 
   /** The version a shown value came from: as recorded, else (a row projected before `_cs_shown`) its column's later head. */
   private shownVersion(table: string, pk: string, col: string): string | null {
-    const v = this.db.selectValue("SELECT ver FROM _cs_shown WHERE tbl = ? AND pk = ? AND col = ?", [table, pk, col]);
+    const v = this.engine.value("SELECT ver FROM _cs_shown WHERE tbl = ? AND pk = ? AND col = ?", [table, pk, col]);
     if (v != null) return String(v);
     return (this.stateOf(table, pk)?.shownBy[col]?.ver as string | undefined) ?? null;
   }
@@ -2370,7 +2676,7 @@ export class Changes {
     const keys = this.keysOf(table)?.pk ?? [];
     if (keys.length && keys.every((c) => c in values)) return keys.map((c) => values[c]);
     const born = this.birthOf(table, pk);
-    const spelled = born ? this.db.selectValue("SELECT k FROM main._cs_spell WHERE tbl = ? AND pk = ? AND ver = ?", [table, pk, born.ver]) : null;
+    const spelled = born ? this.engine.value("SELECT k FROM main._cs_spell WHERE tbl = ? AND pk = ? AND ver = ?", [table, pk, born.ver]) : null;
     return keyValues(typeof spelled === "string" ? spelled : pk);
   }
 
@@ -2378,7 +2684,7 @@ export class Changes {
     const state = this.stateOf(table, pk);
     if (!state) return;
     // A table this copy does not have holds the rows, flagged, until a release makes it here (S05, R-W).
-    if (this.db.selectValue("SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = ? COLLATE NOCASE", [table]) == null) {
+    if (this.engine.value("SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = ? COLLATE NOCASE", [table]) == null) {
       if (state.deleted) return;
       this.hold(table, pk, `no such table: ${table}`, state.values);
       return;
@@ -2470,14 +2776,14 @@ export class Changes {
    */
   /** Whether two rows' values take one slot of a UNIQUE index: its terms, and its WHERE, as SQLite evaluates them. */
   private collides(table: string, index: { terms: string[]; where: string | null }, x: Record<string, unknown>, y: Record<string, unknown>): boolean {
-    const all = (this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]).filter((c) => c in x && c in y);
+    const all = (this.engine.values("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[]).filter((c) => c in x && c in y);
     const bx = all.map((c) => bound(x[c]));
     const by = all.map((c) => bound(y[c]));
     const same = index.terms.map((t) => `((SELECT ${t} FROM x) IS (SELECT ${t} FROM y))`);
     if (index.where) same.push(`(SELECT ${index.where} FROM x)`, `(SELECT ${index.where} FROM y)`);
     return (
       Number(
-        this.db.selectValue(
+        this.engine.value(
           `WITH x(${all.map(q).join(", ")}) AS (VALUES (${bx.map((v) => v.at).join(", ")})), ` +
             `y(${all.map(q).join(", ")}) AS (VALUES (${by.map((v) => v.at).join(", ")})) SELECT ${same.join(" AND ")}`,
           [...bx, ...by].map((v) => v.value),
@@ -2488,20 +2794,20 @@ export class Changes {
 
   private occupantOf(table: string, pk: string, values: Record<string, unknown>): { pk: string; index: { terms: string[]; where: string | null } } | null {
     const keys = this.keysOf(table)!;
-    const all = this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[];
+    const all = this.engine.values("SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", [table]) as string[];
     const row = { ...Object.fromEntries(keys.pk.map((c, i) => [c, keyValues(pk)[i]])), ...values };
     const mine = all.filter((c) => c in row);
     const bound_ = mine.map((c) => bound(row[c]));
-    for (const idx of this.db.selectObjects("SELECT name FROM pragma_index_list(?, 'main') WHERE \"unique\" = 1 AND origin <> 'pk'", [table]) as Any[]) {
+    for (const idx of this.engine.all("SELECT name FROM pragma_index_list(?, 'main') WHERE \"unique\" = 1 AND origin <> 'pk'", [table]) as Any[]) {
       const index = uniqueIndex(
-        this.db.selectValue("SELECT sql FROM main.sqlite_schema WHERE type = 'index' AND name = ?", [idx.name]) as string | null,
-        (this.db.selectValues("SELECT name FROM pragma_index_info(?, 'main') ORDER BY seqno", [idx.name]) as (string | null)[]).map((c) => (c == null ? null : q(c))),
+        this.engine.value("SELECT sql FROM main.sqlite_schema WHERE type = 'index' AND name = ?", [idx.name]) as string | null,
+        (this.engine.values("SELECT name FROM pragma_index_info(?, 'main') ORDER BY seqno", [idx.name]) as (string | null)[]).map((c) => (c == null ? null : q(c))),
       );
       if (!index) continue;
       const cols = all.filter((c) => index.terms.some((t) => mentions(t, c)));
       if (cols.some((c) => !(c in row))) continue;
       const where = index.where ? ` AND (${index.where}) AND (SELECT ${index.where} FROM mine)` : "";
-      const hit = this.db.selectObject(
+      const hit = this.engine.object(
         `WITH mine(${mine.map(q).join(", ")}) AS (VALUES (${bound_.map((v) => v.at).join(", ")})) ` +
           `SELECT ${keys.pk.map((c) => `${q(c)}, typeof(${q(c)}) AS ${q(`_cs_t_${c}`)}`).join(", ")} FROM main.${q(table)} ` +
           `WHERE ${index.terms.map((t) => `(${t}) IS (SELECT ${t} FROM mine)`).join(" AND ")}${where}`,
@@ -2518,12 +2824,12 @@ export class Changes {
   /** A row a live row still points at stays, flagged, until nothing refers to it (to a fixpoint). */
   private keepReferenced(): void {
     for (let round = 0; round < 16; round++) {
-      const orphans = this.db.selectObjects("SELECT * FROM pragma_foreign_key_check") as Any[];
+      const orphans = this.engine.all("SELECT * FROM pragma_foreign_key_check") as Any[];
       let revived = 0;
       for (const o of orphans) {
-        const fk = this.db.selectObjects(`SELECT "from", "to", "table" FROM pragma_foreign_key_list(?, 'main') WHERE id = ? ORDER BY seq`, [o.table, o.fkid]) as Any[];
+        const fk = this.engine.all(`SELECT "from", "to", "table" FROM pragma_foreign_key_list(?, 'main') WHERE id = ? ORDER BY seq`, [o.table, o.fkid]) as Any[];
         if (!fk.length || o.rowid == null) continue;
-        const child = this.db.selectObject(
+        const child = this.engine.object(
           `SELECT ${fk.map((f) => `${q(f.from)}, typeof(${q(f.from)}) AS ${q(`_cs_t_${f.from}`)}`).join(", ")} FROM main.${q(o.table)} WHERE rowid = ?`,
           [o.rowid],
         ) as Any;
@@ -2537,7 +2843,7 @@ export class Changes {
           this.flag(o.table, keyText([o.rowid]), "orphan", { parent: o.parent, key: pk });
           continue;
         }
-        if (this.db.selectValue("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? AND kind = 'kept-referenced'", [o.parent, pk]) != null) continue;
+        if (this.engine.value("SELECT 1 FROM _cs_flag WHERE tbl = ? AND pk = ? AND kind = 'kept-referenced'", [o.parent, pk]) != null) continue;
         this.flag(o.parent, pk, "kept-referenced", { by: o.table });
         this.place(o.parent, pk, true);
         revived += 1;
@@ -2550,11 +2856,11 @@ export class Changes {
 
   /** The flags, as the host reads them from `_cs_flag`. */
   flags(): { tbl: string; pk: string; kind: FlagKind; detail: string | null }[] {
-    return this.db.selectObjects("SELECT tbl, pk, kind, detail FROM _cs_flag ORDER BY tbl, pk, kind") as Any[];
+    return this.engine.all("SELECT tbl, pk, kind, detail FROM _cs_flag ORDER BY tbl, pk, kind") as Any[];
   }
 
   held(): { tbl: string; pk: string; reason: string; row: string }[] {
-    return this.db.selectObjects("SELECT tbl, pk, reason, row FROM _cs_held ORDER BY tbl, pk") as Any[];
+    return this.engine.all("SELECT tbl, pk, reason, row FROM _cs_held ORDER BY tbl, pk") as Any[];
   }
 
   /* ------------------------------------------------------------ resolution */
@@ -2582,7 +2888,7 @@ export class Changes {
         const exists = this.cellHeads(table, pk, [""]);
         const dels = exists.filter((h) => Number(h.val) === 0).map((h) => String(h.ver));
         const saw = new Set(
-          this.db.selectValues(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [table, pk, ...dels]) as string[],
+          this.engine.values(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [table, pk, ...dels]) as string[],
         );
         const kept = [...new Set(this.cellHeads(table, pk, null).map((h) => String(h.ver)).filter((v) => !saw.has(v)))].sort();
         o = {
@@ -2599,7 +2905,7 @@ export class Changes {
         const alternatives = vers.map((ver) => ({
           ver,
           values: Object.fromEntries(cols.map((c) => {
-            const cell = this.db.selectObject("SELECT val, typeof(val) AS t FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, ver]) as Any;
+            const cell = this.engine.object("SELECT val, typeof(val) AS t FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, ver]) as Any;
             return [c, cell ? typed(cell.t, cell.val) : state.values[c] ?? null];
           })),
         }));
@@ -2649,14 +2955,14 @@ export class Changes {
     const seen = deleting
       ? [
           ...new Set([
-            ...(this.db.selectValues(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [o.table, o.pk, ...dels]) as string[]),
+            ...(this.engine.values(`SELECT ver FROM _cs_seen WHERE tbl = ? AND pk = ? AND del IN (${dels.map(() => "?").join(",")})`, [o.table, o.pk, ...dels]) as string[]),
             ...o.alternatives.filter((a) => a.values[""] === 1).map((a) => a.ver),
           ]),
         ].sort()
       : [];
     const op: Op = [o.table, k, deleting ? "D" : "U", n, new Map(), bases, seen, resolves];
     const payload = cborEncode([1, [op] as unknown as CborValue[], this.received() as unknown as CborValue] as CborValue);
-    const fk = Number(this.db.selectValue("PRAGMA foreign_keys")) === 1;
+    const fk = Number(this.engine.value("PRAGMA foreign_keys")) === 1;
     if (fk) this.exec("PRAGMA foreign_keys = OFF");
     try {
       this.exec("SAVEPOINT cs_resolve");
@@ -2680,7 +2986,7 @@ export class Changes {
   /** A unit's columns, whole (R-X §5): one column, or every column of its coupled group; `[]`, the row's existence. */
   private unitOf(table: string, keys: Keys, unit: string[]): string[] {
     if (unit.length === 0) return [""];
-    const columns = new Set(this.db.selectValues("SELECT name FROM pragma_table_info(?, 'main')", [table]) as string[]);
+    const columns = new Set(this.engine.values("SELECT name FROM pragma_table_info(?, 'main')", [table]) as string[]);
     const cols = [...new Set(unit)];
     const group = this.declaredOf(table).coupled.find((g) => g.includes(cols[0]!));
     const whole = group ? cols.length === group.length && group.every((c) => cols.includes(c)) : cols.length === 1;
@@ -2692,7 +2998,7 @@ export class Changes {
 
   /** The current versions of a row's cells, for the columns named (null: every data column). */
   private cellHeads(table: string, pk: string, cols: string[] | null): { col: string; ver: string; val: unknown }[] {
-    const all = this.db.selectObjects(
+    const all = this.engine.all(
       "SELECT col, ver, val FROM _cs_cell c WHERE tbl = ? AND pk = ? AND NOT EXISTS (SELECT 1 FROM _cs_sup s WHERE s.tbl = c.tbl AND s.pk = c.pk AND s.col = c.col AND s.ver = c.ver) ORDER BY col, ver",
       [table, pk],
     ) as Any[];
@@ -2700,14 +3006,7 @@ export class Changes {
   }
 
   close(): void {
-    for (const s of this.stmts.values()) {
-      try {
-        s.finalize();
-      } catch {
-        /* Finalized with its database. */
-      }
-    }
-    this.stmts.clear();
+    this.engine.close();
     // A statement the application prepared is the mount's, and goes with it (R-W): none steps under another.
     for (const s of [...this.appStatements]) {
       try {
@@ -2718,8 +3017,9 @@ export class Changes {
     }
     this.appStatements.clear();
     this.capture.close();
-    if (this.authorizer) this.sqlite3.capi.sqlite3_set_authorizer(this.db.pointer, 0, 0);
+    if (this.authorizer) this.engineSetAuthorizer(this.db.pointer, 0, 0);
     this.authorizer = null;
+    trustByDb.delete(this.db.pointer);
   }
 }
 

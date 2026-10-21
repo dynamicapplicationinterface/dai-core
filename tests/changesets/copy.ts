@@ -29,18 +29,14 @@ const m = merge as Any;
 let booted: Promise<Any> | null = null;
 export const boot = (): Promise<Any> => (booted ??= sqlite3InitModule({ print: () => {}, printErr: () => {} } as Any));
 
-const norm = (v: unknown): unknown =>
-  typeof v === "bigint" && v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(v) : v;
-
-/** The Rows interface over an oo1.DB. */
-export function rowsOf(db: Any): Rows {
-  return {
-    all: (sql, params = []) =>
-      (db.selectObjects(sql, params.length ? params.slice() : undefined) as Record<string, unknown>[]).map((r) =>
-        Object.fromEntries(Object.entries(r).map(([k, v]) => [k, norm(v)])),
-      ),
-    run: (sql, params = []) => void db.exec({ sql, bind: params.length ? params.slice() : undefined }),
-  };
+/**
+ * The Rows interface over an oo1.DB, through the captured engine (1h-H1): the
+ * runtime reads and writes only through engine primitives, so the frame's
+ * `frameRows` does, and this harness mirrors it — a runtime-table write inside
+ * a trusted window is authorized by the engine's trust, not a handle method.
+ */
+export function rowsOf(sqlite3: Any, db: Any): Rows {
+  return m.createRows(sqlite3, db);
 }
 
 export function deserialize(sqlite3: Any, db: Any, bytes: Uint8Array): void {
@@ -61,7 +57,7 @@ export async function openBytes(bytes: Uint8Array): Promise<{ sqlite3: Any; db: 
   const sqlite3 = await boot();
   const db = new sqlite3.oo1.DB(":memory:", "c");
   deserialize(sqlite3, db, bytes);
-  return { sqlite3, db, rows: rowsOf(db) };
+  return { sqlite3, db, rows: rowsOf(sqlite3, db) };
 }
 
 /** A script cut into its statements where SQLite would end each one, trigger bodies whole. */
@@ -92,7 +88,7 @@ export class Copy {
     /** The release's schema, as the compiler declares it: what the host ran before the application had the handle. */
     readonly schema?: string,
   ) {
-    this.rows = rowsOf(db);
+    this.rows = rowsOf(sqlite3, db);
     // The host's id wins over the file's, as the frame settles it at mount.
     m.adoptReplica(this.rows, author.author);
     this.changes = new m.Changes(sqlite3, db, { author: author.author, schema });

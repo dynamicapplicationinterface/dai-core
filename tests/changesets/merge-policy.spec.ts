@@ -392,8 +392,8 @@ test("PR9-H3: a merged row does not become the application's last insert", async
   );
   // B's merge was its last write: it projected A's Lamp. B's next insert, into a text-keyed table, lands
   // on the hidden rowid Lamp holds in items, and must answer its own rowid, not Lamp's id.
-  // Read as the runtime: the application is refused rowid on a ranged-key table (K11).
-  const lampRowid = o.b.changes.trusted(() => o.b.db.selectValue("SELECT rowid FROM items WHERE title = 'Lamp'"));
+  // Read as the runtime, through its engine-backed rows: the application is refused rowid on a ranged-key table (K11).
+  const lampRowid = o.b.rows.all("SELECT rowid FROM items WHERE title = 'Lamp'")[0]!["rowid"];
   o.b.db.exec({ sql: "INSERT INTO tags (rowid, k) VALUES (?, 'seen')", bind: [lampRowid] });
   expect(o.b.db.selectValue("SELECT last_insert_rowid()")).toBe(lampRowid);
   close(o);

@@ -323,6 +323,7 @@ export {
   appTablesOf,
   authorIndexOf,
   changesDump,
+  createRows,
   declaresChanges,
   rewriteKeySql,
   stageChangeFunctions,

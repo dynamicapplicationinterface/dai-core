@@ -1535,12 +1535,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // the schema, the connection reports its own defaults and not the file's.
       sibling.exec("SELECT count(*) FROM sqlite_schema");
 
-      const rows = (db: Any): Any => ({
-        all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
-        run: (sql: string, params: Any[] = []) => {
-          trusted(() => db.exec(sql, { bind: params.slice() }));
-        },
-      });
+      // Through the captured engine, as every read and write of the live handle is (1h-H1); the sibling carries
+      // no authorizer, so its own captured view suffices.
+      const rows = frameRows;
 
       const merge = mergeModule as Any;
       // This copy's own unsaved changes go into its log first, so a merged row
@@ -1633,12 +1630,38 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   };
 
   /** The Rows view of a database handle, the shape the merge module reads. */
-  const frameRows = (db: Any): Any => ({
-    all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
-    run: (sql: string, params: Any[] = []) => {
-      trusted(() => db.exec(sql, { bind: params.slice() }));
-    },
-  });
+  /*
+   * The Rows view the merge module reads and writes a database through.
+   *
+   * Through the runtime's captured engine (1h-H1), never the handle's own
+   * methods or Stmt.prototype, which the application shares this handle and can
+   * replace: a merge or a save cannot be hijacked or broken by a replaced
+   * method. The live handle reuses the runtime's own engine, its runtime-table
+   * writes counted apart inside `trusted` (D08); a sibling or staging database,
+   * which carries no authorizer of its own, gets its own captured view.
+   */
+  const frameRows = (db: Any): Any => {
+    // The ordinary data interface (a changeset document): its runtime reads and writes only through its
+    // captured engine (1h-H1). The live handle reuses that engine, its runtime-table writes counted apart
+    // inside `trusted` (D08); a sibling or staging database, which carries no authorizer, gets its own captured
+    // view. A document with a session policy has no such runtime, and reads and writes the handle as before.
+    if (changes) {
+      const live = changes as Any;
+      if (db === liveDb) {
+        return {
+          all: (sql: string, params: Any[] = []) => live.rows.all(sql, params.slice()),
+          run: (sql: string, params: Any[] = []) => trusted(() => live.rows.run(sql, params.slice())),
+        };
+      }
+      if (typeof (mergeModule as Any)?.createRows === "function") return (mergeModule as Any).createRows(sqlite3, db);
+    }
+    return {
+      all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
+      run: (sql: string, params: Any[] = []) => {
+        trusted(() => db.exec(sql, { bind: params.slice() }));
+      },
+    };
+  };
 
   /*
    * An arriving database is merged, not mounted (step 6; D133's load path).
