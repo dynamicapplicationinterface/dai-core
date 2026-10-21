@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { Copy, person } from "./copy.js";
-import { SCENARIOS, base, exchange, item } from "./scenarios.js";
+import { SCENARIOS, base, exchange, item, unreceived } from "./scenarios.js";
 import { lastSeq, opsAfter, pendingOf } from "./rx.js";
 
 /**
@@ -72,6 +72,36 @@ test("1g-H1: a delete is based on the version each column showed; the title it d
   }
   for (const x of [a, b, c]) x.close();
 });
+
+const rejected = (c: Copy): [string, string][] => c.changes.refusedChanges().map((r: Any) => [r.ver, r.reason]);
+
+test("1g-M1: the honest control: F's title, made without A's, is pending against A's on both copies", async () => {
+  const o = await exchange((a, b) => unreceived(a, b));
+  expect(o.converged).toBe(true);
+  for (const c of [o.a, o.b]) {
+    expect(rejected(c)).toEqual([]);
+    expect(pendingOf(c, "items", JSON.stringify([item(c, "Tent (A)") ?? item(c, "Tent (F)")])).title).toEqual(["Tent (A)", "Tent (F)"]);
+  }
+  o.a.close();
+  o.b.close();
+});
+
+for (const name of ["1g-M1 unreceived basis", "1g-M1 unreceived resolves", "1g-M1 unreceived seen"]) {
+  test(`${name}: a version the signer never received, named with a lower clock, is refused by the runtime whichever way the copies meet`, async () => {
+    const o = await exchange(SCENARIOS[name]!.write);
+    expect(o.converged, "converged").toBe(true);
+    const forger = rejected(o.a);
+    expect(forger.map(([, r]) => r), "F's title batch refused, for its basis").toEqual(["basis-forged"]);
+    expect(rejected(o.b), "the same on the copy that carried it").toEqual(forger);
+    for (const c of [o.a, o.b]) {
+      expect(c.db.selectValue("SELECT title FROM items WHERE title LIKE 'Tent%'"), "A's edit stands").toBe("Tent (A)");
+      expect(c.rows.all("SELECT 1 FROM _cs_cell WHERE ver = ?", [forger[0]![0]]), "F's is kept in no cell").toEqual([]);
+      expect(c.db.selectValue("SELECT note FROM items WHERE title = 'Rope'"), "F's honest notes stand").toBe("f4");
+    }
+    o.a.close();
+    o.b.close();
+  });
+}
 
 test("1g-H1: a delete does not settle a proposal the CHECK set aside; it stays pending on the kept row, both copies", async () => {
   const s = SCENARIOS["1g-H1 delete over a set-aside proposal"]!;

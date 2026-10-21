@@ -1562,7 +1562,7 @@ export class Changes {
           let payload: Uint8Array;
           try {
             payloadOps = ops.map((op) => this.withBases(op));
-            payload = cborEncode([1, payloadOps as unknown as CborValue[]] as CborValue);
+            payload = cborEncode([1, payloadOps as unknown as CborValue[], this.received() as unknown as CborValue] as CborValue);
           } catch (e) {
             throw this.refusedBy(e);
           }
@@ -1871,8 +1871,8 @@ export class Changes {
     this.withoutCapture(() => {
       for (const row of fresh) {
         const ver = `${row["author"]}:${row["seq"]}`;
-        const decoded = cborDecode(row["payload"] as Uint8Array, { floats: true }) as unknown as [number, Op[]];
-        const verdict = this.basisVerdict(decoded[1], Number(row["lc"]), known);
+        const decoded = cborDecode(row["payload"] as Uint8Array, { floats: true }) as unknown as [number, Op[], unknown?];
+        const verdict = this.basisVerdict(decoded[1], Number(row["lc"]), known, String(row["author"]), Number(row["seq"]), decoded[2]);
         // A basis naming a version not yet here waits for it, unapplied, and is judged when it arrives.
         if (verdict === "wait") continue;
         if (verdict) {
@@ -1898,18 +1898,35 @@ export class Changes {
    * naming a version already judged that is not that cell's (refused, or
    * another cell's), or one from no earlier than itself, is refused. So every
    * copy decides alike, whatever order the batches came in.
+   *
+   * And a version named must be one the signer had received (1g-M1): its
+   * own from before, or one at or below the seq its batch records it had
+   * applied of that author (`received`). A clock shows only order; the
+   * receipt, signed with the batch, shows possession. A delete's `seen` is
+   * held to it too.
    */
-  private basisVerdict(ops: Op[], lc: number, known: Map<string, number>): BasisRefusal | "wait" | null {
+  private basisVerdict(ops: Op[], lc: number, known: Map<string, number>, author: string, seq: number, received: unknown): BasisRefusal | "wait" | null {
     let wait = false;
+    if (received !== undefined && !(received instanceof Map)) return "basis-forged";
+    const had = (v: string): boolean => {
+      const at = v.lastIndexOf(":");
+      const [by, n] = [v.slice(0, at), Number(v.slice(at + 1))];
+      if (!Number.isInteger(n)) return false;
+      if (by === author) return n < seq;
+      const upTo = (received as Map<string, unknown> | undefined)?.get(by);
+      return typeof upTo === "number" && n <= upTo;
+    };
     for (const op of ops) {
-      const [table, k, , n, , b] = op;
+      const [table, k, , n, , b, seen] = op;
       const r = op[7];
       if (!(b instanceof Map) || !(n instanceof Map)) return "basis-missing";
       for (const c of n.keys()) if (!Array.isArray(b.get(c))) return "basis-missing";
       if (r !== undefined && !(r instanceof Map)) return "basis-forged";
+      if (!Array.isArray(seen) || seen.some((v) => !had(String(v)))) return "basis-forged";
       const pk = this.identity(table, k);
       for (const [c, vers] of [...b, ...(r ?? new Map<string, string[]>())]) {
         if (!Array.isArray(vers)) return "basis-forged";
+        if (vers.some((v) => !had(String(v)))) return "basis-forged";
         for (const v of vers) {
           const at = this.db.selectValue("SELECT lc FROM _cs_cell WHERE tbl = ? AND pk = ? AND col = ? AND ver = ?", [table, pk, c, String(v)]);
           if (at != null) {
@@ -1921,6 +1938,22 @@ export class Changes {
       }
     }
     return wait ? "wait" : null;
+  }
+
+  /**
+   * What this copy had received when it signs a batch (1g-M1): for each other
+   * author, the highest seq of theirs it applied. A copy applies one author's
+   * batches in their order, so that seq names every batch of theirs it holds.
+   * Carried in the payload, signed with it, as its third field.
+   */
+  private received(): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const r of this.db.selectObjects(
+      "SELECT substr(ver, 1, instr(ver, ':') - 1) AS a, max(CAST(substr(ver, instr(ver, ':') + 1) AS INTEGER)) AS s FROM _cs_ingested i WHERE NOT EXISTS (SELECT 1 FROM _cs_refused r WHERE r.ver = i.ver) GROUP BY a ORDER BY a",
+    ) as Any[]) {
+      if (r.a !== this.authorHex) out.set(String(r.a), Number(r.s));
+    }
+    return out;
   }
 
   /** The admitted changesets refused for their basis (R-X §3), by version. */
@@ -2518,7 +2551,7 @@ export class Changes {
         ].sort()
       : [];
     const op: Op = [o.table, k, deleting ? "D" : "U", n, new Map(), bases, seen, resolves];
-    const payload = cborEncode([1, [op] as unknown as CborValue[]] as CborValue);
+    const payload = cborEncode([1, [op] as unknown as CborValue[], this.received() as unknown as CborValue] as CborValue);
     const fk = Number(this.db.selectValue("PRAGMA foreign_keys")) === 1;
     if (fk) this.exec("PRAGMA foreign_keys = OFF");
     try {

@@ -102,6 +102,33 @@ export function forging(c: Copy, change: (op: Any[]) => void): void {
   }
 }
 
+/**
+ * 1g-M1's arrangement: F opens from the base and saves four notes, so its
+ * clock is past A's next; A retitles Tent; F, which never received A's batch,
+ * retitles it too, and `forge` writes A's version into its title op. B
+ * carries F's file on. Without `forge`, the honest control.
+ */
+export async function unreceived(
+  a: Copy,
+  b: Copy,
+  forge?: (op: Any[], aVer: string) => void,
+  act = "UPDATE items SET title = 'Tent (F)' WHERE title = 'Tent'",
+): Promise<void> {
+  const f = await Copy.open(await person(), await a.bytes(), a.schema);
+  for (const note of ["f1", "f2", "f3", "f4"]) {
+    f.db.exec({ sql: "UPDATE items SET note = ? WHERE title = 'Rope'", bind: [note] });
+    f.save();
+  }
+  a.db.exec("UPDATE items SET title = 'Tent (A)' WHERE title = 'Tent'");
+  a.save();
+  const aVer = `${a.changes.authorHex}:${a.db.selectValue("SELECT max(_r_seq) FROM _cs_log WHERE _r_replica = ?", [a.author.author])}`;
+  f.db.exec(act);
+  if (forge) forging(f, (op) => op[0] === "items" && (op[3].has("title") || op[2] === "D") && forge(op, aVer));
+  else f.save();
+  await b.mergeFrom(await f.bytes());
+  f.close();
+}
+
 export interface Outcome {
   a: Copy;
   b: Copy;
@@ -445,6 +472,13 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       a.db.exec("DELETE FROM spans WHERE id = 1");
     },
   },
+  // 1g-M1: F, its clock moved past A's by four saves, names in its title basis A's title version, which it never
+  // received; B carries F's batch on.
+  "1g-M1 unreceived basis": { write: (a, b) => unreceived(a, b, (op, v) => op[5].set("title", [...op[5].get("title"), v])) },
+  // 1g-M1: the same, with A's version named in what F's ordinary edit resolves.
+  "1g-M1 unreceived resolves": { write: (a, b) => unreceived(a, b, (op, v) => (op[7] = new Map([["title", [v]]]))) },
+  // 1g-M1: F deletes Tent, and its delete names A's title version, never received, among what it saw.
+  "1g-M1 unreceived seen": { write: (a, b) => unreceived(a, b, (op, v) => op[6].push(v), "DELETE FROM items WHERE title = 'Tent'") },
   // 1e-H3: a key respelled under its collation on one copy while the other edits another column of the row.
   "1e-H3 respelled key": {
     extra: ["CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT)", "INSERT INTO people (email, name) VALUES ('bob@x.com', 'Bob')"],

@@ -270,24 +270,42 @@ def apply_log(db: sqlite3.Connection) -> None:
     judged_vers: set[str] = set()
     refused: dict[str, str] = {}
 
-    def basis_verdict(ops: list, lc: int):
+    def basis_verdict(ops: list, lc: int, author: str, seq: int, received: object):
         """Whether a changeset's operations bind their basis, read from the payload alone: every unit written
         names its basis, and every version its bases or resolves names is a version of that cell with a lower
         clock. A version not yet applied, from before it, is waited for; one already judged that is not that
-        cell's, or one no earlier than itself, is a forgery."""
+        cell's, or one no earlier than itself, is a forgery. And every version named, a delete's seen too,
+        is one the signer had received (1g-M1): its own from before, or at or below the seq its batch records
+        it had applied of that author."""
         wait = False
+        if not isinstance(received, dict):
+            return "basis-forged"
+
+        def had(v: object) -> bool:
+            by, _, n = str(v).rpartition(":")
+            if not n.isdigit():
+                return False
+            if by == author:
+                return int(n) < seq
+            up_to = received.get(by)
+            return isinstance(up_to, int) and not isinstance(up_to, bool) and int(n) <= up_to
+
         for op in ops:
             if not isinstance(op, list) or len(op) < 7 or not isinstance(op[3], dict) or not isinstance(op[5], dict):
                 return "basis-missing"
-            table, k, _code, new, _old, bases = op[:6]
+            table, k, _code, new, _old, bases, saw = op[:7]
             if any(not isinstance(bases.get(c), list) for c in new):
                 return "basis-missing"
             res = op[7] if len(op) > 7 else {}
             if not isinstance(res, dict):
                 return "basis-forged"
+            if not isinstance(saw, list) or not all(had(v) for v in saw):
+                return "basis-forged"
             pk = key_text(k, folds(table))
             for col, vers in list(bases.items()) + list(res.items()):
                 if not isinstance(vers, list):
+                    return "basis-forged"
+                if not all(had(v) for v in vers):
                     return "basis-forged"
                 for v in vers:
                     cell = cells.get((table, pk), {}).get(col, {}).get(v)
@@ -302,8 +320,11 @@ def apply_log(db: sqlite3.Connection) -> None:
 
     for author, seq, lc, payload in rows:
         ver = f"{author}:{seq}"
-        _, ops = cbor_decode(payload)  # type: ignore[misc]
-        verdict = basis_verdict(ops, int(lc))  # type: ignore[arg-type]
+        decoded = cbor_decode(payload)
+        ops = decoded[1]  # type: ignore[index]
+        # What the signer had received, signed with its batch (1g-M1); a batch without it names nothing it had.
+        received = decoded[2] if len(decoded) > 2 else {}  # type: ignore[arg-type]
+        verdict = basis_verdict(ops, int(lc), author, int(seq), received)  # type: ignore[arg-type]
         if verdict == "wait":
             continue
         judged_vers.add(ver)

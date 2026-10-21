@@ -48,7 +48,7 @@ Each holds:
 ## The payload
 
 A `_cs_log` row's `payload` is CBOR:
-`[1, [op, …]]`, and each op is
+`[1, [op, …], received]`, and each op is
 `[table, key, code, new, old, bases, seen]`, or
 `[table, key, code, new, old, bases, seen, resolves]` for a resolution:
 
@@ -63,9 +63,11 @@ A `_cs_log` row's `payload` is CBOR:
 - `bases`: the operation's **basis**, a map from every column in `new` to
   the versions it was based on, which it supersedes. For an edit (`"U"`),
   the version the column's shown value came from, and no other: the other
-  alternatives the copy held stay pending (R-X §3). For a birth or a delete,
-  every current version of the column;
-- `seen`: for a delete, every data version it saw;
+  alternatives the copy held stay pending (R-X §3). For a birth, every
+  current version of the column; for a delete, of its existence;
+- `seen`: for a delete, the version each data column showed, and no other
+  (1g-H1). A version it did not see (a pending loser, a proposal a
+  constraint set aside) keeps the row, `delete-conflict`;
 - `resolves`: present only on a **resolution** (R-X §4), made by the kit's
   explicit call. A map from each column of the unit resolved to the
   alternatives it explicitly accepted or rejected: exactly those the
@@ -73,6 +75,12 @@ A `_cs_log` row's `payload` is CBOR:
   too. Its `bases` is the version the resolved unit showed; its `new`, the
   chosen value, whole, though no byte changed. A resolution of `""` keeps a
   row a delete contested (1) or deletes it (0, with `seen`).
+
+`received` is what the signer had received when it signed (1g-M1): a map
+from each other author (hex) to the highest seq of theirs it had applied. A
+copy applies one author's batches in their order, so that seq stands for
+every batch of theirs it held. It is in the signed payload, so a signer
+cannot widen it after.
 
 A version is `<author hex>:<seq>`, the log row that carried it.
 
@@ -87,7 +95,11 @@ changeset, unapplied, when an operation in it:
 - **`basis-forged`**: names, in `bases` or `resolves`, a version that is not
   a version of that cell (that table, row and column) from before it: one
   whose clock (`_r_lc`) is not lower than the changeset's own, one the reader
-  already judged that wrote no such cell, or one the reader refused.
+  already judged that wrote no such cell, or one the reader refused; or
+  names, in `bases`, `resolves` or `seen`, a version the signer had not
+  received: not its own from before (a lower seq), and above the seq
+  `received` records for that author (a payload without `received` records
+  none).
 
 A version named that the reader has not admitted yet, with a lower clock,
 is waited for: the changeset is applied, or refused, once it arrives. So
