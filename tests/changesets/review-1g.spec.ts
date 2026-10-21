@@ -182,3 +182,67 @@ test("1g-M3: an admitted CREATE ... IF NOT EXISTS admits its own statement, as t
   a.close();
   b.close();
 });
+
+test("1g-L1 (b2): a resolution resolves its unit alone; another unit pending on the row stays pending on both copies", async () => {
+  const { a, b } = await base();
+  const tent = item(a, "Tent");
+  const key = JSON.stringify([tent]);
+  a.db.exec({ sql: "UPDATE items SET title = 'Tent (A)', qty = 2 WHERE id = ?", bind: [tent] });
+  b.db.exec({ sql: "UPDATE items SET title = 'Tent (B)', qty = 3 WHERE id = ?", bind: [tent] });
+  const [ab, bb] = [await a.bytes(), await b.bytes()];
+  await a.mergeFrom(bb);
+  await b.mergeFrom(ab);
+  expect(Object.keys(pendingOf(a, "items", key)).sort(), "title and qty pending").toEqual(["qty", "title"]);
+  const seen = a.changes.observe("items", [tent], ["title"]);
+  a.changes.resolve(seen.token, seen.shown);
+  await b.mergeFrom(await a.bytes());
+  for (const c of [a, b]) {
+    expect(Object.keys(pendingOf(c, "items", key)), "qty alone still pending").toEqual(["qty"]);
+    expect(pendingOf(c, "items", key).qty).toEqual([2, 3]);
+  }
+  expect(a.state()).toBe(b.state());
+  a.close();
+  b.close();
+});
+
+/** S4 on A and B (A deleted Map, B set its qty), contested on both; C opened from the base, before either. */
+async function contested(): Promise<{ a: Copy; b: Copy; c: Copy; map: number; key: string }> {
+  const { a, b } = await base();
+  const c = await Copy.open(await person(), await a.bytes(), a.schema);
+  const map = item(a, "Map");
+  a.db.exec({ sql: "DELETE FROM items WHERE id = ?", bind: [map] });
+  b.db.exec({ sql: "UPDATE items SET qty = 7 WHERE id = ?", bind: [map] });
+  const [ab, bb] = [await a.bytes(), await b.bytes()];
+  await a.mergeFrom(bb);
+  await b.mergeFrom(ab);
+  for (const x of [a, b]) expect(x.flags().map((f: Any) => f.kind), "contested").toEqual(["delete-conflict"]);
+  return { a, b, c, map, key: JSON.stringify([map]) };
+}
+
+for (const [label, change, choose] of [
+  ["b3", "an edit", "delete"],
+  ["b4", "a delete", "keep"],
+] as const) {
+  test(`1g-L1 (${label}): choosing to ${choose} the row does not settle ${change} that arrived after the token; the row stays contested on all three`, async () => {
+    const { a, b, c, map, key } = await contested();
+    if (change === "an edit") c.db.exec({ sql: "UPDATE items SET note = 'from C' WHERE id = ?", bind: [map] });
+    else c.db.exec({ sql: "DELETE FROM items WHERE id = ?", bind: [map] });
+    const cBytes = await c.bytes();
+    const seen = a.changes.observe("items", [map], []);
+    await a.mergeFrom(cBytes);
+    const pick = seen.alternatives.find((x: Any) => x.values[""] === (choose === "keep" ? 1 : 0)).ver;
+    a.changes.resolve(seen.token, pick);
+    const aBytes = await a.bytes();
+    await b.mergeFrom(cBytes);
+    await b.mergeFrom(aBytes);
+    await c.mergeFrom(await b.bytes());
+    for (const [name, x] of [["A", a], ["B", b], ["C", c]] as const) {
+      expect(kindsOf(x, "items", key), `${name}: still contested by what the token never presented`).toContain("delete-conflict");
+      expect(x.db.selectValue("SELECT count(*) FROM items WHERE id = ?", [map]), `${name}: kept`).toBe(1);
+      if (change === "an edit") expect(x.db.selectValue("SELECT note FROM items WHERE id = ?", [map]), `${name}: C's note`).toBe("from C");
+    }
+    expect(b.state()).toBe(a.state());
+    expect(c.state()).toBe(a.state());
+    for (const x of [a, b, c]) x.close();
+  });
+}
