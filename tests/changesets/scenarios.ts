@@ -414,6 +414,37 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       f.close();
     },
   },
+  // 1g-H1: B's and C's titles pending on A, which shows one and deletes the row; C's batch travels in B's file.
+  "1g-H1 delete over a pending loser": {
+    write: async (a, b) => {
+      const c = await Copy.open(await person(), await a.bytes(), a.schema);
+      b.db.exec("UPDATE items SET title = 'Tent (B)' WHERE title = 'Tent'");
+      c.db.exec("UPDATE items SET title = 'Tent (C)' WHERE title = 'Tent'");
+      const cBytes = await c.bytes();
+      await a.mergeFrom(await b.bytes());
+      await a.mergeFrom(cBytes);
+      a.db.exec("DELETE FROM items WHERE title LIKE 'Tent%'");
+      await b.mergeFrom(cBytes);
+      c.close();
+    },
+  },
+  // 1g-H1: B's finish, set aside on A by the CHECK (B's clock is ahead), and A deletes the row it showed.
+  "1g-H1 delete over a set-aside proposal": {
+    extra: [
+      "CREATE TABLE spans (id INTEGER PRIMARY KEY, start INTEGER NOT NULL, finish INTEGER NOT NULL, CHECK (start <= finish))",
+      "INSERT INTO spans (id, start, finish) VALUES (1, 0, 10)",
+    ],
+    write: async (a, b) => {
+      for (const note of ["b1", "b2", "b3"]) {
+        b.db.exec({ sql: "UPDATE items SET note = ? WHERE title = 'Map'", bind: [note] });
+        b.save();
+      }
+      a.db.exec("UPDATE spans SET start = 8 WHERE id = 1");
+      b.db.exec("UPDATE spans SET finish = 5 WHERE id = 1");
+      await a.mergeFrom(await b.bytes());
+      a.db.exec("DELETE FROM spans WHERE id = 1");
+    },
+  },
   // 1e-H3: a key respelled under its collation on one copy while the other edits another column of the row.
   "1e-H3 respelled key": {
     extra: ["CREATE TABLE people (email TEXT PRIMARY KEY COLLATE NOCASE, name TEXT)", "INSERT INTO people (email, name) VALUES ('bob@x.com', 'Bob')"],

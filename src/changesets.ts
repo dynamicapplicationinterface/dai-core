@@ -1755,7 +1755,14 @@ export class Changes {
      * supersedes that alone. The alternatives this copy also holds stay
      * pending until an explicit resolution names them, and an edit of a
      * column leaves the row's existence, and a delete that contests it, as
-     * they were. A birth and a delete are based on every current version.
+     * they were. A birth is based on every current version.
+     *
+     * A delete is an edit of the row unit (the delete ruling, 1g-H1): its
+     * existence is based on the existence heads, and what it saw is the
+     * version each column showed, not every version the copy holds. An
+     * alternative it did not see (a pending loser, a proposal a constraint
+     * set aside) stays on the row, which is kept and contested until the
+     * existence call settles it; a resolution may choose the deletion.
      */
     for (const c of n.keys()) {
       if (code !== "U") b.set(c, (heads.get(c) ?? []).map((h) => h.ver));
@@ -1765,10 +1772,14 @@ export class Changes {
       }
     }
     if (code === "D") {
-      seen = [...heads]
-        .filter(([c]) => c !== "")
-        .flatMap(([, hs]) => hs.map((h) => h.ver))
-        .sort();
+      seen = [
+        ...new Set(
+          [...heads.keys()]
+            .filter((c) => c !== "")
+            .map((c) => this.shownVersion(op.table, pk, c))
+            .filter((v): v is string => v !== null),
+        ),
+      ].sort();
     }
     return [op.table, k, code, n, p, b, seen];
   }
