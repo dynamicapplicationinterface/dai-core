@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
 
@@ -12,25 +12,57 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * a thin document, the copy the opener holds) and starts the worker from a
  * blob it mints itself. Nothing is fetched.
  *
- * WebKit fails a blob's load while its network is offline, under the driver's
- * offline emulation: a worker started then reports an error before its script
- * runs. The shell treated that as the document failing and refused it, and
- * the refusal stood over the opener's menu. A worker that never ran has been
- * given nothing, so nothing is lost with it: it is started again, and the
- * document is not refused. Offline the moment the document has loaded, the
- * menu opens and nothing is refused, on every engine; back online, the data
- * answers.
- *
- * (The application's own scripts are blobs too, and WebKit fails those under
- * the same emulation whether or not the document has a worker: the page's
- * application is not what this holds.)
+ * WebKit fails every blob load while its network is offline, under the
+ * driver's offline emulation (a page with no code of ours loses a blob
+ * script, a blob worker and a blob fetch alike; Chromium and Firefox load all
+ * three). A worker started then reports an error before its script runs. The
+ * shell treated that as the document failing and refused it, and the refusal
+ * stood over the opener's menu. A worker that never ran has been given
+ * nothing, so nothing is lost with it: it is started again, and the document
+ * is not refused.
  */
-test("offline the moment an ordinary document has loaded: the menu opens, nothing is refused, and back online the data's worker runs", async ({ page, context, browserName }) => {
-  test.slow();
-  const built = await compileDirectory({ sourceDir: resolve(repo, "examples/chore-chart"), root: repo, appName: "Chore chart" });
+
+let built: string;
+test.beforeAll(async () => {
+  built = (await compileDirectory({ sourceDir: resolve(repo, "examples/chore-chart"), root: repo, appName: "Chore chart" })).html;
+});
+
+/** The shell's own word for its data worker; "no shell" until the shell document has loaded. */
+const dataWorker = (shell: FrameLocator): Promise<string> =>
+  shell
+    .locator("body")
+    .evaluate(() => {
+      const facts = (window as unknown as { __DAI__?: { dataWorker?: string } }).__DAI__;
+      return facts ? (facts.dataWorker ?? "unsaid") : "no shell";
+    })
+    .catch(() => "no shell");
+
+async function open(page: Page): Promise<FrameLocator> {
   await page.goto("http://localhost:5175/");
-  await openFile(page, { name: "chore-chart.dai.html", mimeType: "text/html", buffer: Buffer.from(built.html, "utf8") });
+  await openFile(page, { name: "chore-chart.dai.html", mimeType: "text/html", buffer: Buffer.from(built, "utf8") });
   await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+  const shell = page.frameLocator("#cartridge");
+  // Loaded: the document's own shell is there. The opener's page says "loaded" before its frame has the shell,
+  // and under WebKit's emulation going offline in between fails the shell's own (blob) load: the opener's, not this.
+  await expect.poll(() => dataWorker(shell), { timeout: 60_000, message: "the document's shell has loaded" }).not.toBe("no shell");
+  return shell;
+}
+
+/** Back online, the shell's data worker runs; where the application could load, the data answers. */
+async function answers(page: Page, shell: FrameLocator, askApplication: boolean): Promise<void> {
+  await expect.poll(() => dataWorker(shell), { timeout: 60_000, message: "the data's worker is running" }).toBe("running");
+  if (!askApplication) return;
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __runner: { replicaId(): Promise<string | null> } }).__runner.replicaId()), {
+      timeout: 60_000,
+      message: "the document's data answers",
+    })
+    .toEqual(expect.any(String));
+}
+
+test("offline the moment a worker document has loaded: the menu opens, nothing is refused, and back online the data's worker runs", async ({ page, context, browserName }) => {
+  test.slow();
+  const shell = await open(page);
   await context.setOffline(true);
   try {
     await page.locator("#more").click({ timeout: 15_000 });
@@ -39,22 +71,40 @@ test("offline the moment an ordinary document has loaded: the menu opens, nothin
   } finally {
     await context.setOffline(false);
   }
-  // The shell's own word for its data worker: started again, from the bytes it holds, once it could load.
-  const shell = page.frameLocator("#cartridge").locator("body");
+  // Not the application on WebKit: the emulation failed its own scripts (blobs) as they loaded, with or without a
+  // worker (the tasks example has none and loses them the same way), so no application is there to ask.
+  await answers(page, shell, browserName !== "webkit");
+});
+
+/*
+ * Whether the worker's script was still loading at the moment the test went
+ * offline is a race the test does not hold. So the same case, held: the first
+ * worker the shell starts has its script's blob revoked before it loads, as
+ * the emulation fails it, on every engine.
+ */
+test("a data worker whose script never loaded is started again: nothing is refused, and the data's worker runs", async ({ page, context }) => {
+  test.slow();
+  await context.addInitScript(() => {
+    // The shell alone: a blob document framed directly by the opener.
+    if (!location.href.startsWith("blob:") || window === window.top || window.parent !== window.top) return;
+    const Real = window.Worker;
+    let first = true;
+    window.Worker = function (url: string | URL, options?: WorkerOptions): Worker {
+      if (first) {
+        first = false;
+        URL.revokeObjectURL(String(url));
+      }
+      return new Real(url, options);
+    } as unknown as typeof Worker;
+  });
+  const said: string[] = [];
+  page.on("console", (m) => said.push(m.text()));
+  const shell = await open(page);
+  // Whichever comes first: the worker started again, or the document refused for it.
+  const refused = async (): Promise<boolean> => (await page.locator("#report").innerText().catch(() => "")).includes("could not be started");
   await expect
-    .poll(() => shell.evaluate(() => (window as unknown as { __DAI__: { dataWorker: string } }).__DAI__.dataWorker), {
-      timeout: 60_000,
-      message: "back online, the data's worker is running",
-    })
-    .toBe("running");
-  // And the application, which asks the worker for its data. Not on WebKit: the driver's offline emulation
-  // failed the application's own scripts (blobs) as they loaded, with or without a worker (the tasks example
-  // has none and loses them the same way), so no application is there to ask.
-  if (browserName === "webkit") return;
-  await expect
-    .poll(() => page.evaluate(() => (window as unknown as { __runner: { replicaId(): Promise<string | null> } }).__runner.replicaId()), {
-      timeout: 60_000,
-      message: "back online, the document's data answers",
-    })
-    .toEqual(expect.any(String));
+    .poll(async () => said.some((s) => s.includes("the data's worker did not start")) || (await refused()), { timeout: 30_000, message: "the first worker's failure was answered" })
+    .toBe(true);
+  expect(await refused(), "the document is not refused").toBe(false);
+  await answers(page, shell, true);
 });
