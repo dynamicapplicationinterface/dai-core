@@ -86,7 +86,22 @@ export const KIT_SOURCE = `/**
  * Shipped inside every container. Reference it with:
  *   <script type="module" src="./dai-kit.js"></script>
  */
-const db = await window.dai.openDatabase();
+/*
+ * The database. A document under the ordinary data interface keeps it in the
+ * runtime's worker (R-Y): \`data\`, whose every call is a request answered by
+ * a promise. A document with shared tables keeps its synchronous handle: \`db\`.
+ * Exactly one of the two is set.
+ */
+const data = typeof window.dai.database === 'function' ? await window.dai.database() : null;
+const db = data ? null : await window.dai.openDatabase();
+/** A value now, or the promise of one: the next step runs on it either way, at once when it is already here. */
+function later(value, next) {
+  return value && typeof value.then === 'function' ? value.then(next) : next(value);
+}
+/** A query's rows: from the handle at once, or from the worker as a promise. */
+function rowsOf(sql, bind) {
+  return data ? data.query(sql, bind) : bind === undefined ? db.selectObjects(sql) : db.selectObjects(sql, bind);
+}
 
 /*
  * The schema, run before anything reads.
@@ -99,7 +114,8 @@ const db = await window.dai.openDatabase();
  * tags in the other order. That is the wiring this kit exists to remove, and
  * leaving one strand of it in place would be leaving the trap.
  */
-for (const block of document.querySelectorAll('script[type="application/sql"]')) {
+// The worker runs a worker's blocks itself, from the signed entry page: never from here.
+if (db) for (const block of document.querySelectorAll('script[type="application/sql"]')) {
   // The runtime runs these when the database opens and marks each one; a
   // container from before it did leaves them unmarked, and the kit still runs
   // those. Never twice.
@@ -157,11 +173,16 @@ function refresh() {
  * the application's, unchanged, and every other read sees the row.
  */
 function settled(sql) {
-  if (!db.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE name = '_cs_settle'").length) return sql;
+  return later(rowsOf("SELECT 1 AS x FROM sqlite_schema WHERE name = '_cs_settle'"), (marked) => (marked.length ? settledOver(sql) : sql));
+}
+function settledOver(sql) {
   const head = /^\\s*(WITH(\\s+RECURSIVE)?\\b)?/i.exec(sql);
   if (!head[1] && !/^\\s*SELECT\\b/i.test(sql)) return sql;
+  return later(rowsOf('SELECT tbl, body FROM _cs_settle'), (settles) => withSettled(sql, head, settles));
+}
+function withSettled(sql, head, settles) {
   const ctes = [];
-  for (const row of db.selectObjects('SELECT tbl, body FROM _cs_settle')) {
+  for (const row of settles) {
     const name = String(row.tbl);
     if (!new RegExp('(^|[^\\\\w"])"?' + name.replace(/[.*+?^$|()[\\]{}\\\\]/g, '\\\\$&') + '"?($|[^\\\\w"])', 'i').test(sql)) continue;
     ctes.push('"' + name.split('"').join('""') + '" AS (' + row.body + ')');
@@ -234,18 +255,21 @@ function run(sql, values) {
     }
     bind[':' + name] = values[name];
   }
-  if (names.length === 0) db.exec(sql);
-  else db.exec({ sql: sql, bind: bind });
-  refresh();
+  const done = data
+    ? data.run(sql, names.length === 0 ? undefined : bind)
+    : names.length === 0 ? db.exec(sql) : db.exec({ sql: sql, bind: bind });
+  return later(done, () => {
+    refresh();
 
-  // Somebody did something. The shell is told, and tells the host once: the
-  // first use is the moment an offer to keep this document stops being an
-  // interruption, and it is the number the whole thing is judged on.
-  try {
-    window.parent.postMessage({ type: 'dai:used' }, '*');
-  } catch (error) {
-    /* No parent, or one that is not listening. Neither changes the statement. */
-  }
+    // Somebody did something. The shell is told, and tells the host once: the
+    // first use is the moment an offer to keep this document stops being an
+    // interruption, and it is the number the whole thing is judged on.
+    try {
+      window.parent.postMessage({ type: 'dai:used' }, '*');
+    } catch (error) {
+      /* No parent, or one that is not listening. Neither changes the statement. */
+    }
+  });
 }
 
 /** Fills an element's [data-text] descendants from a row. */
@@ -370,8 +394,14 @@ class DaiRows extends HTMLElement {
 
   draw() {
     if (!this.template) return;
-    const rows = db.selectObjects(settled(this.getAttribute('query')));
+    // The latest draw wins: an answer from the worker for an older one is dropped.
+    const turn = (this.turn = (this.turn || 0) + 1);
+    return later(later(settled(this.getAttribute('query')), (sql) => rowsOf(sql)), (rows) => {
+      if (turn === this.turn) this.render(rows);
+    });
+  }
 
+  render(rows) {
     const empty = this.getAttribute('empty');
     while (this.lastChild && this.lastChild !== this.template) {
       release(this.lastChild);
@@ -409,10 +439,13 @@ class DaiValue extends HTMLElement {
   }
 
   draw() {
-    const rows = db.selectObjects(settled(this.getAttribute('query')));
-    const row = rows[0];
-    const value = row ? row[Object.keys(row)[0]] : '';
-    this.textContent = value === null || value === undefined ? '' : String(value);
+    const turn = (this.turn = (this.turn || 0) + 1);
+    return later(later(settled(this.getAttribute('query')), (sql) => rowsOf(sql)), (rows) => {
+      if (turn !== this.turn) return;
+      const row = rows[0];
+      const value = row ? row[Object.keys(row)[0]] : '';
+      this.textContent = value === null || value === undefined ? '' : String(value);
+    });
   }
 }
 
@@ -576,7 +609,7 @@ class DaiSave extends HTMLElement {
     const save = async () => {
       const before = this.textContent;
       this.textContent = 'Saving…';
-      const result = await window.dai.saveDatabase(db);
+      const result = await window.dai.saveDatabase(db || data);
       this.textContent = result.saved ? 'Saved' : before;
       if (result.saved) setTimeout(() => { this.textContent = before; }, 1500);
     };
@@ -604,7 +637,8 @@ customElements.define('dai-save', DaiSave);
  */
 const shared = () => window.dai.replicated;
 const me = () => (shared() && shared().author ? shared().author() : null);
-const first = (sql, values) => db.selectObjects(sql, values || [])[0] || null;
+// Seats are rows of shared tables, which only a document with the synchronous handle has.
+const first = (sql, values) => (db ? db.selectObjects(sql, values || [])[0] || null : null);
 const hasRoster = () => !!first("SELECT 1 AS x FROM sqlite_schema WHERE name = '_dai_holder'");
 /** The seat this copy holds in a session, or null: the creator's own seat, or an open seat the creator confirmed it in. */
 function mySeat(session) {
@@ -871,13 +905,15 @@ if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
  * resolve(token, ver) keeps or chooses one of those alternatives, saved as it
  * is made. Writing a shown value back with SQL resolves nothing.
  */
-function conflict(table, key, columns) { return window.dai.conflict(table, key, columns || []); }
-function resolve(token, ver) { var saved = window.dai.resolve(token, ver); refresh(); return saved; }
+const DATA_CALLS = 'This document keeps its data in the runtime, and its calls answer with promises: await window.daiKit.data.conflict(table, key, columns), then await window.daiKit.data.resolve(token, ver).';
+function conflict(table, key, columns) { if (data) throw new Error(DATA_CALLS); return window.dai.conflict(table, key, columns || []); }
+function resolve(token, ver) { if (data) throw new Error(DATA_CALLS); var saved = window.dai.resolve(token, ver); refresh(); return saved; }
 
 // Anything outside these is ordinary JavaScript against window.dai, which is
 // still there. This is a shortcut, not a framework.
 window.daiKit = {
-  db: db, run: run, refresh: refresh, conflict: conflict, resolve: resolve,
+  // data: the worker's handle, every call a promise (R-Y); db: a document with shared tables' synchronous handle.
+  db: db, data: data, run: data ? undefined : run, refresh: refresh, conflict: conflict, resolve: resolve,
   newSession: newSession, claimSeat: claimSeat, mySeat: mySeat, amCreator: amCreator,
   pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer,
   onSessionVoid: onSessionVoid, onContested: onContested, author: me,

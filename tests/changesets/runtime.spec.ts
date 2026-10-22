@@ -3,18 +3,19 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
+import { expect, type Browser, type FrameLocator, type Page, type Worker } from "@playwright/test";
 import { test } from "../fixtures.js";
 import { compileDirectory } from "../../src/compile.js";
 import { decode as cborDecode } from "../../src/cbor.js";
-import { TO_DOCUMENT } from "../../src/bridge.js";
+import { TO_DOCUMENT, TO_HOST } from "../../src/bridge.js";
 import { FRAME_INTERNAL } from "../../src/frame.js";
 import { SAVE_REFUSED } from "../../src/refusals.js";
 
 /**
  * The ordinary data interface through the real runtime: a document with no
  * session policy, compiled by the real compiler, opened in the real host,
- * written with plain SQL through the handle `window.dai.openDatabase()` gives.
+ * written with plain SQL through the handle `window.dai.database()` gives:
+ * every call a request to the runtime's worker, answered by a promise (R-Y).
  * One test per runtime rule (R-O, Build 1).
  */
 
@@ -41,7 +42,7 @@ INSERT OR IGNORE INTO notes (id, body) VALUES (1, 'seed one'), (2, 'seed two');
 </body></html>
 `;
 
-const APP = `const db = await window.dai.openDatabase();
+const APP = `const db = await window.dai.database();
 window.__db = db;
 document.getElementById("app").hidden = false;
 `;
@@ -72,11 +73,11 @@ async function firstOpen(page: Page, file: string): Promise<FrameLocator> {
 /** SQL in the frame, on the application's own handle. */
 const sql = (app: FrameLocator, text: string, bind: unknown[] = []): Promise<unknown> =>
   app.locator("#app").evaluate(
-    (_el, [t, b]) => (window as unknown as { __db: { exec(o: unknown): unknown } }).__db.exec({ sql: t as string, bind: (b as unknown[]).length ? b : undefined }),
+    (_el, [t, b]) => (window as unknown as { __db: { run(s: string, b?: unknown[]): Promise<unknown> } }).__db.run(t as string, (b as unknown[]).length ? (b as unknown[]) : undefined),
     [text, bind] as const,
   );
 const rows = (app: FrameLocator, text: string): Promise<Record<string, unknown>[]> =>
-  app.locator("#app").evaluate((_el, t) => (window as unknown as { __db: { selectObjects(s: string): Record<string, unknown>[] } }).__db.selectObjects(t), text);
+  app.locator("#app").evaluate((_el, t) => (window as unknown as { __db: { query(s: string): Promise<Record<string, unknown>[]> } }).__db.query(t), text);
 const value = async (app: FrameLocator, text: string): Promise<unknown> => {
   const r = await rows(app, text);
   return r[0] ? Object.values(r[0])[0] : undefined;
@@ -118,6 +119,23 @@ async function saveOut(page: Page, to: string): Promise<string> {
   await page.evaluate(() => (window as any).__runner.exportContainer());
   writeFileSync(to, readFileSync(await (await downloading).path()));
   return to;
+}
+
+/** The worker that holds a document's data (R-Y): the one with the runtime's api on its global. */
+async function dataWorkerOf(page: Page): Promise<Worker> {
+  let found: Worker | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const w of page.workers()) {
+          if (await w.evaluate(() => typeof (globalThis as any).dai === "object").catch(() => false)) found = w;
+        }
+        return Boolean(found);
+      },
+      { timeout: 30_000, message: "the data's worker" },
+    )
+    .toBe(true);
+  return found!;
 }
 
 async function device(browser: Browser): Promise<Page> {
@@ -185,14 +203,12 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     expect(await value(app, "PRAGMA foreign_keys")).toBe(1);
     const refused = await app
       .locator("#app")
-      .evaluate(() => {
-        try {
-          (window as any).__db.exec("INSERT INTO entries (list_id, body) VALUES (999, 'orphan')");
-          return "written";
-        } catch (e) {
-          return String((e as Error).message);
-        }
-      });
+      .evaluate(() =>
+        (window as any).__db.run("INSERT INTO entries (list_id, body) VALUES (999, 'orphan')").then(
+          () => "written",
+          (e: Error) => String(e.message),
+        ),
+      );
     expect(refused).toMatch(/FOREIGN KEY constraint failed/);
   });
 
@@ -439,14 +455,12 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     await sql(app, "INSERT INTO notes (body) VALUES (CAST(x'ff41' AS TEXT))");
     await expect(page.locator("#doc-note"), "the refusal, as its own sentence").toHaveText(SAVE_REFUSED, { timeout: 60_000 });
     await expect(page.locator("#save-state")).toHaveText("Not saved");
-    const held = await app.locator("#app").evaluate((_el) => {
-      try {
-        (window as unknown as { __db: { exec(s: string): unknown } }).__db.exec("INSERT INTO notes (body) VALUES ('after')");
-        return "written";
-      } catch (e) {
-        return String(e);
-      }
-    });
+    const held = await app.locator("#app").evaluate((_el) =>
+      (window as unknown as { __db: { run(s: string): Promise<unknown> } }).__db.run("INSERT INTO notes (body) VALUES ('after')").then(
+        () => "written",
+        (e: unknown) => String(e),
+      ),
+    );
     expect(held, "a later write is held").toMatch(/not authorized/);
     const kept = query(await stored(page, uuid), "SELECT body FROM notes ORDER BY id").map((r) => r["body"]);
     expect(kept, "the store holds the last save that succeeded").toEqual(["seed one", "seed two", "kept"]);
@@ -456,10 +470,12 @@ test.describe("the ordinary data interface, through the real runtime", () => {
    * 1d-L2. When the apply after a merge's COMMIT threw, the frame's catch
    * issued a ROLLBACK with no transaction open, and that error replaced the
    * real one. Forced in that order: the application writes text that is not
-   * UTF-8 as the merge verifies its batches (the frame shares the window, so a
-   * wrapped crypto.subtle.verify is its own), after the merge's own capture.
+   * UTF-8 while the merge verifies its batches, after the merge's own capture.
    * The save the apply begins with is refused (P3); the merge's answer is that
-   * refusal, and the person reads its sentence.
+   * refusal, and the person reads its sentence. The merge runs in the data's
+   * worker (R-Y), where the application cannot reach: the test holds the
+   * worker's first verification itself, and the application writes through
+   * its handle while it is held.
    */
   test("9. 1d-L2: a merge whose apply is refused after its commit answers with the refusal, not a ROLLBACK error", async ({ browser }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-cs-rollback-"));
@@ -476,58 +492,67 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     await expect.poll(async () => query(await stored(pageB, uuidB), "SELECT count(*) AS n FROM notes WHERE body = 'from B'")[0]?.["n"], { timeout: 60_000 }).toBe(1);
     const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
 
-    const shell = () => pageA.mainFrame().childFrames()[0]!;
-    await shell().evaluate((type) => {
+    // What the shell tells the host the merge answered.
+    await pageA.evaluate((type) => {
       window.addEventListener("message", (event) => {
         if ((event.data as { type?: string })?.type === type) (window as any).__mergeResult = event.data;
       });
-    }, FRAME_INTERNAL.MERGE_RESULT);
-    await a.locator("#app").evaluate(() => {
+    }, TO_HOST.MERGE_RESULT);
+    const worker = await dataWorkerOf(pageA);
+    await worker.evaluate(() => {
+      const scope = globalThis as any;
       const subtle = crypto.subtle as unknown as { verify: (...args: unknown[]) => Promise<boolean> };
       const verify = subtle.verify.bind(subtle);
+      const held = new Promise<void>((release) => {
+        scope.__release = release;
+      });
       let armed = true;
-      subtle.verify = (...args: unknown[]) => {
+      subtle.verify = async (...args: unknown[]) => {
         if (armed) {
           armed = false;
-          (window as unknown as { __db: { exec(s: string): unknown } }).__db.exec("INSERT INTO notes (body) VALUES (CAST(x'ff41' AS TEXT))");
+          scope.__holding = true;
+          await held;
         }
         return verify(...args);
+      };
+      // Released the moment the application's write has run, as its answer leaves: before that write's own save.
+      const post = MessagePort.prototype.postMessage;
+      MessagePort.prototype.postMessage = function (this: MessagePort, message: any, ...rest: any[]) {
+        if (scope.__holding && message?.ok === true && !scope.__released) {
+          scope.__released = true;
+          scope.__release();
+        }
+        return (post as any).call(this, message, ...rest);
       };
     });
     await pageA.setInputFiles("#file", b1);
     await expect(pageA.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
     await pageA.locator("#card-open").click();
+    await expect.poll(() => worker.evaluate(() => Boolean((globalThis as any).__holding)), { timeout: 60_000, message: "the merge is verifying" }).toBe(true);
+    await sql(a, "INSERT INTO notes (body) VALUES (CAST(x'ff41' AS TEXT))");
     await expect
-      .poll(() => shell().evaluate(() => String((window as any).__mergeResult?.refused ?? "")), { timeout: 60_000, message: "the merge's answer" })
+      .poll(() => pageA.evaluate(() => String((window as any).__mergeResult?.refused ?? "")), { timeout: 60_000, message: "the merge's answer" })
       .toMatch(/^CHANGES_SAVE_REFUSED/);
     await expect(pageA.locator("#doc-note"), "the person reads the refusal's sentence").toHaveText(SAVE_REFUSED, { timeout: 30_000 });
   });
 
-  test("11. R-W: the release's own CREATE IF NOT EXISTS is a no-op; every other schema statement is refused, through exec and prepare", async ({ page }) => {
+  test("11. R-W: the release's own CREATE IF NOT EXISTS is a no-op; every other schema statement is refused, through run and batch", async ({ page }) => {
     const app = await firstOpen(page, await build(mkdtempSync(join(tmpdir(), "dai-cs-release-"))));
-    const attempt = (text: string, how: "exec" | "prepare"): Promise<string> =>
+    const attempt = (text: string, how: "run" | "batch"): Promise<string> =>
       app.locator("#app").evaluate(
         (_el, [t, h]) => {
           const db = (window as any).__db;
-          try {
-            if (h === "exec") db.exec(t);
-            else {
-              const s = db.prepare(t);
-              try {
-                s.step();
-              } finally {
-                s.finalize();
-              }
-            }
-            return "ran";
-          } catch (e) {
-            return String((e as Error).message);
-          }
+          // One statement, or the same statement inside a batch: the handle has no prepare (R-Y).
+          const ran: Promise<unknown> = h === "run" ? db.run(t) : db.batch([{ sql: t }]);
+          return ran.then(
+            () => "ran",
+            (e: Error) => String(e.message),
+          );
         },
         [text, how] as const,
       );
     const before = await value(app, "PRAGMA schema_version");
-    for (const how of ["exec", "prepare"] as const) {
+    for (const how of ["run", "batch"] as const) {
       // As schema.sql declares them, a keyless table (given its hidden key at compile) and a trigger among them.
       for (const text of [
         "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)",
@@ -647,10 +672,14 @@ INSERT INTO items (qty, unit, note) VALUES (1, 'kg', '');
   writeFileSync(
     join(src, "app.js"),
     `window.addEventListener("dai:kit-merged", () => window.daiKit.refresh());
-document.getElementById("keep").addEventListener("click", () => {
-  const id = window.daiKit.db.selectValue("SELECT id FROM items");
-  const c = window.daiKit.conflict("items", [id], ["qty", "unit"]);
-  if (c) window.daiKit.resolve(c.token, c.shown);
+document.getElementById("keep").addEventListener("click", async () => {
+  const data = window.daiKit.data;
+  const id = await data.value("SELECT id FROM items");
+  const c = await data.conflict("items", [id], ["qty", "unit"]);
+  if (c) {
+    await data.resolve(c.token, c.shown);
+    window.daiKit.refresh();
+  }
 });
 `,
   );

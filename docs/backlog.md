@@ -11012,8 +11012,11 @@ no pending flag, and the set-aside proposal named in the resolution's
 
 #### D285 — The in-realm defense against the application is bounded by the realm
 
-*Status: open, decided with Build 2's architecture. Filed 21 October, from
-the Build 1h review (1h-H1, 1h-M2).*
+*Status: closed by R-Y, Build 2a. Filed 21 October, from the Build 1h review
+(1h-H1, 1h-M2). A document under the ordinary data interface keeps its
+database, the changeset runtime and every save in a worker the shell makes;
+the application's frame holds a port and no engine, handle or memory, and
+R-Y's red test (`tests/changesets/authority.spec.ts`) holds it.*
 
 The application shares the database handle, and under the ordinary data
 interface the runtime reads, writes and runs a VACUUM through the engine's

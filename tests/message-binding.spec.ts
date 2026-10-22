@@ -39,13 +39,13 @@ const APP = [
   "  mode.textContent = window.dai.appMode ? 'yes' : 'no';",
   "  window.dai.onAppModeChange((active) => { mode.textContent = active ? 'yes' : 'no'; });",
   "  try {",
-  "    const db = await window.dai.openDatabase();",
+  "    const db = await window.dai.database();",
   // schema.sql declares the shape, which is what makes the shell's dai:schema
   // branch live; the kit is what would normally run it, and this application
   // does not use the kit, so it creates its own table.
-  "    db.exec('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)');",
-  "    db.exec(\"INSERT INTO t (id) VALUES (1)\");",
-  "    out.textContent = 'opened ' + db.selectObjects('SELECT count(*) AS n FROM t')[0].n;",
+  "    await db.run('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)');",
+  "    await db.run(\"INSERT INTO t (id) VALUES (1)\");",
+  "    out.textContent = 'opened ' + (await db.value('SELECT count(*) AS n FROM t'));",
   "  } catch (error) { out.textContent = 'failed ' + error.message; }",
   "</script>",
 ].join("\n");

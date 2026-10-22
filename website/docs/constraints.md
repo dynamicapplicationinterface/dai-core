@@ -66,7 +66,7 @@ Fetch nothing by URL. No CDN script tags: inline the library, or write the code 
 
 **Applies to** every shape. **Enforcement:** checked by the lint (`browser-storage`).
 
-Keep every piece of data in the SQLite database inside the document, opened with `await window.dai.openDatabase()`. Never use localStorage, sessionStorage, IndexedDB, cookies, the Cache API or the File System API.
+Keep every piece of data in the SQLite database inside the document, opened with `await window.dai.database()`. Never use localStorage, sessionStorage, IndexedDB, cookies, the Cache API or the File System API.
 
 **Why.** Browser storage belongs to the browser rather than to the file, so data kept there does not travel: send the document to somebody and it arrives empty.
 
@@ -188,11 +188,11 @@ qty = qty + 1 on two copies at once is not summed: the row is pending, both numb
 
 **Applies to** every shape. **Enforcement:** not checked by anything.
 
-A form may save every field whole (type a REAL column: untyped, 2.0 reads back as 2): a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).
+A form may save every field whole (type a REAL column: untyped, 2.0 reads back as 2): a value written back as shown changes and resolves nothing. To keep or choose: c = await db.conflict(table, [id], [column]); if c is not null, show c.alternatives, then await db.resolve(c.token, chosen.ver).
 
 **Why.** A write cannot tell a choice from a field left alone.
 
-<small>Depends on [`src/kit.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/kit.ts), [`src/changesets.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/changesets.ts).</small>
+<small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`src/changesets.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/changesets.ts).</small>
 
 ### NO-REFUSED-SQL · What the runtime refuses {#NO-REFUSED-SQL}
 
@@ -218,9 +218,9 @@ Write every action a person takes — a tick, a new row, an edit — to the data
 
 **Applies to** every shape. **Enforcement:** not checked by anything.
 
-Until the application's script has finished starting — the database open, the handlers attached, the first draw done — show nothing a person can type into or submit. Put the interactive part of the page in an element marked both hidden and inert, `<main id="app" hidden inert>`, beside a short line such as "Opening…". `inert` is what keeps it out of reach: `hidden` alone is undone by any style rule that sets `display` on that element, while an inert element takes no focus, typing or clicks whatever the CSS says. Run the whole start-up — `openDatabase()`, the first draw — inside try/catch. On success, hide the line and remove both attributes. On failure, replace the line with what went wrong and what the person can do next: never leave "Opening…" showing over a start-up that has already ended. Do not wait for an event to learn that start-up failed: `dai:error` goes to the host, never to the application, and its own catch is the only place that knows. A page built only from the kit's elements is already safe: they are not `<form>` elements, so a button inside them submits nothing before the kit has started. A `<form>` of your own is not.
+Until the application's script has finished starting — the database open, the handlers attached, the first draw done — show nothing a person can type into or submit. Put the interactive part of the page in an element marked both hidden and inert, `<main id="app" hidden inert>`, beside a short line such as "Opening…". `inert` is what keeps it out of reach: `hidden` alone is undone by any style rule that sets `display` on that element, while an inert element takes no focus, typing or clicks whatever the CSS says. Run the whole start-up — `database()`, the first draw — inside try/catch. On success, hide the line and remove both attributes. On failure, replace the line with what went wrong and what the person can do next: never leave "Opening…" showing over a start-up that has already ended. Do not wait for an event to learn that start-up failed: `dai:error` goes to the host, never to the application, and its own catch is the only place that knows. A page built only from the kit's elements is already safe: they are not `<form>` elements, so a button inside them submits nothing before the kit has started. A `<form>` of your own is not.
 
-**Why.** The start-up waits on `await window.dai.openDatabase()`, which waits for the host's write rules. A form shown before then takes typing the application cannot handle yet: Enter either submits the form and replaces the page, or does nothing, and the start-up resets the form a moment later. Either way what was typed is gone, with nothing to say why.
+**Why.** The start-up waits on `await window.dai.database()`, which waits for the host's write rules. A form shown before then takes typing the application cannot handle yet: Enter either submits the form and replaces the page, or does nothing, and the start-up resets the form a moment later. Either way what was typed is gone, with nothing to say why.
 
 <small>Depends on [`tests/fixture/chess/app.js`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/tests/fixture/chess/app.js), [`examples/receipts/index.html`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/examples/receipts/index.html), [`examples/tic-tac-toe/index.html`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/examples/tic-tac-toe/index.html), [`src/frame.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/frame.ts), [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`src/kit.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/kit.ts).</small>
 

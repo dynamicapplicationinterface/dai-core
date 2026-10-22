@@ -63,9 +63,9 @@ function renderSurface(): string {
     .join("\n");
 }
 
-/** A refusal is taught when it can meet an ordinary-table application: nothing about shared tables or sessions. */
-export const TAUGHT_REFUSAL = (r: { code: string; when: string; then: string }): boolean =>
-  !/replicated|_r_|session|seat|roster|SHARED-|IDENTITY-SEAT|SESSION-/i.test(`${r.code} ${r.when} ${r.then}`);
+/** A refusal is taught when it can meet an ordinary-table application: nothing about shared tables or sessions, nor the synchronous handle they keep (R-Y). */
+export const TAUGHT_REFUSAL = (r: { code: string; when: string; then: string; shapes: readonly string[] }): boolean =>
+  r.shapes.includes("solo") && !/replicated|_r_|session|seat|roster|SHARED-|IDENTITY-SEAT|SESSION-/i.test(`${r.code} ${r.when} ${r.then}`);
 
 function renderRefusals(): string {
   return APP_REFUSALS.filter(TAUGHT_REFUSAL)
@@ -127,12 +127,12 @@ ${renderRefusals()}
 PATTERNS
 The database, from JavaScript. Parameters are bound, never interpolated.
 
-  const db = await window.dai.openDatabase();
-  db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: ["Buy milk"] });
-  db.exec({ sql: "UPDATE notes SET done = :done WHERE id = :id", bind: { ":done": 1, ":id": 3 } });
-  const rows = db.selectObjects("SELECT * FROM notes ORDER BY id");
-  const one  = db.selectObjects("SELECT * FROM notes WHERE id = ?", [3]);
-  const count = db.selectValue("SELECT count(*) FROM notes WHERE done = 0");
+  const db = await window.dai.database();
+  await db.run("INSERT INTO notes (body) VALUES (?)", ["Buy milk"]);
+  await db.run("UPDATE notes SET done = :done WHERE id = :id", { ":done": 1, ":id": 3 });
+  const rows = await db.query("SELECT * FROM notes ORDER BY id");
+  const one  = await db.get("SELECT * FROM notes WHERE id = ?", [3]);
+  const count = await db.value("SELECT count(*) FROM notes WHERE done = 0");
 
 Pass bind only when there are parameters: an empty array is read as parameters promised and not supplied, and throws. Use SQL for the work — joins, aggregates, ORDER BY — rather than loading everything and filtering in JavaScript.
 
@@ -205,7 +205,7 @@ name: Reading list
 CREATE TABLE IF NOT EXISTS books (…);
 
 --- file: app.js
-const db = await window.dai.openDatabase();
+const db = await window.dai.database();
 
 --- file: icon.svg
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">…</svg>

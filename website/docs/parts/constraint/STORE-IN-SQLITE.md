@@ -3,7 +3,7 @@
 ::: info STORE-IN-SQLITE
 **The database is the only storage**
 
-Keep every piece of data in the SQLite database inside the document, opened with `await window.dai.openDatabase()`. Never use localStorage, sessionStorage, IndexedDB, cookies, the Cache API or the File System API.
+Keep every piece of data in the SQLite database inside the document, opened with `await window.dai.database()`. Never use localStorage, sessionStorage, IndexedDB, cookies, the Cache API or the File System API.
 
 **Why.** Browser storage belongs to the browser rather than to the file, so data kept there does not travel: send the document to somebody and it arrives empty.
 

@@ -58,6 +58,8 @@ export const FRAME_INTERNAL = {
   AUTHORED: "dai:authored",
   AUTHORED_BATCH: "dai:authored-batch",
   AUTHORED_SINCE: "dai:authored-since",
+  /** The shell starting the data's worker: its configuration and the application's port (R-Y). */
+  DATA_START: "dai:data-start",
   /** Posted from the frame on an uncaught error. Nothing acts on it today (`src/rules.ts`). */
   ERROR: "dai:error",
   FLUSH: "dai:flush",
@@ -75,6 +77,11 @@ export const FRAME_INTERNAL = {
    * renamed here because this one is internal (D69).
    */
   MERGE_RESULT: "dai:merge-result",
+  /**
+   * The shell's page is going away: the data's worker flushes what is pending,
+   * as a frame that holds its own database does on its own pagehide (R-Y).
+   */
+  PAGEHIDE: "dai:pagehide",
   PAYLOAD: "dai:payload",
   /** Posted by the frame once its document has mounted; the shell latches the first. */
   READY: "dai:ready",
