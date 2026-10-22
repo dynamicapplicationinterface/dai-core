@@ -5,7 +5,7 @@
   "openB": true,
   "wroteBoth": true,
   "converged": true,
-  "reopened": false,
+  "reopened": true,
   "recovered": true
  },
  "shape": "ordinary tables",
@@ -34,8 +34,8 @@
  },
  "flags": [],
  "shows": {
-  "aShowsB": false,
-  "bShowsA": false
+  "aShowsB": true,
+  "bShowsA": true
  },
  "recovery": {
   "equalsA": true,
@@ -47,5 +47,5 @@
   "B": [],
   "C": []
  },
- "pass": false
+ "pass": true
 }

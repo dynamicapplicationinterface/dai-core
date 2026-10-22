@@ -1,12 +1,12 @@
 {
  "name": "09-inventory",
  "steps": {
-  "openA": false,
-  "openB": false,
+  "openA": true,
+  "openB": true,
   "wroteBoth": true,
   "converged": true,
-  "reopened": false,
-  "recovered": false
+  "reopened": true,
+  "recovered": true
  },
  "shape": "ordinary tables",
  "update": {
@@ -39,7 +39,7 @@
  },
  "recovery": {
   "equalsA": true,
-  "startedC": false,
+  "startedC": true,
   "aHoldsC": true
  },
  "errors": {
@@ -47,5 +47,5 @@
   "B": [],
   "C": []
  },
- "pass": false
+ "pass": true
 }

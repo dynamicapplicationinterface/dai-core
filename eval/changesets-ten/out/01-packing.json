@@ -5,8 +5,8 @@
   "openB": true,
   "wroteBoth": true,
   "converged": true,
-  "reopened": false,
-  "recovered": false
+  "reopened": true,
+  "recovered": true
  },
  "shape": "ordinary tables",
  "update": {
@@ -18,12 +18,12 @@
  },
  "ops": {
   "a": {
-   "I": 14,
+   "I": 16,
    "U": 1,
    "D": 1
   },
   "b": {
-   "I": 0,
+   "I": 2,
    "U": 1,
    "D": 0
   }
@@ -36,18 +36,18 @@
   "items:pending"
  ],
  "shows": {
-  "aShowsB": false,
-  "bShowsA": false
+  "aShowsB": true,
+  "bShowsA": true
  },
  "recovery": {
   "equalsA": true,
   "startedC": true,
-  "aHoldsC": false
+  "aHoldsC": true
  },
  "errors": {
   "A": [],
   "B": [],
   "C": []
  },
- "pass": false
+ "pass": true
 }

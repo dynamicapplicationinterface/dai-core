@@ -261,18 +261,35 @@ async function clickControl(side: Side, wantDelete: boolean): Promise<string | n
   return null;
 }
 
+/*
+ * Started: the kit said it is ready, and nothing is still held hidden and
+ * inert. A page without the kit has started when no line reads as the
+ * start-up's own ("Opening…", alone): a line that merely begins with the word,
+ * such as a stock note "Opening count", is the application's content.
+ */
 const isStarted = (side: Side): Promise<boolean> =>
   side.app
     .locator("body")
     .evaluate(() => {
-      const opening = [...document.querySelectorAll("body *")].some(
-        (e) => /^\s*Opening/.test(e.textContent ?? "") && e.children.length === 0 && (e as HTMLElement).offsetParent !== null,
-      );
       const blocked = !!document.querySelector("main[hidden][inert], #app[hidden][inert]");
+      if (document.documentElement.getAttribute("data-dai-kit") === "ready") return !blocked;
+      const opening = [...document.querySelectorAll("body *")].some(
+        (e) => /^\s*Opening(…|\.\.\.)?\s*$/.test(e.textContent ?? "") && e.children.length === 0 && (e as HTMLElement).offsetParent !== null,
+      );
       return !opening && !blocked;
     })
     .catch(() => false);
-const textOf = (side: Side): Promise<string> => side.app.locator("body").innerText().catch(() => "");
+/** What the screen shows: its text, and what its fields hold, since a value drawn into a field is on the screen too. */
+const textOf = (side: Side): Promise<string> =>
+  side.app
+    .locator("body")
+    .evaluate((body) => {
+      const values = [...body.querySelectorAll("input, textarea")]
+        .filter((e) => !["checkbox", "radio", "hidden", "button", "submit"].includes((e as HTMLInputElement).type))
+        .map((e) => (e as HTMLInputElement).value);
+      return [(body as HTMLElement).innerText, ...values].join("\n");
+    })
+    .catch(() => "");
 
 for (const name of APPS) {
   test(name, async ({ browser }) => {

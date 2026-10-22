@@ -1,7 +1,51 @@
 {
  "name": "07-chores",
- "steps": {},
- "exception": "ReplicationError: The table chores has no closing bracket. |     at tableSpans (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/replicated.ts:267:29) |     at rewriteReplicated (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/replicated.ts:1565:17)",
- "errors": {},
- "pass": false
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Name  UPDATE people SET name = COALESCE(NULLIF(trim(:typed), ''), name) WHERE id",
+  "b": "Name  UPDATE people SET name = COALESCE(NULLIF(trim(:typed), ''), name) WHERE id"
+ },
+ "delete": {
+  "a": "× Remove this chore  DELETE FROM chores WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 19,
+   "U": 0,
+   "D": 1
+  },
+  "b": {
+   "I": 4,
+   "U": 0,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 6,
+  "b": 6
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
 }
