@@ -11137,8 +11137,10 @@ engine.
 
 #### D289 — A character outside the Basic Multilingual Plane in schema.sql stops the build
 
-*Status: open, cause known. Filed 21 October, from Build 2a's cold run
-(07-chores).*
+*Status: closed, Build 2a. Filed 21 October, from Build 2a's cold run
+(07-chores). The blanked copy is built by UTF-16 unit
+(`tests/changesets/astral.spec.ts`), and the vector `astral-default` carries
+a default outside the BMP through both readers.*
 
 `tableSpans` in `src/replicated.ts` scans the schema by UTF-16 index (`scan`)
 but builds its blanked copy with `[...sql]`, which splits by code point. An
