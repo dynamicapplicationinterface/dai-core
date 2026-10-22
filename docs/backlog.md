@@ -11177,6 +11177,25 @@ prompts from the amended file, fresh generations, and records which file.
 in it reaches for a kit behavior the file does not show (each subagent's own
 list of assumptions, read, is the check).
 
+#### D291 — Firefox: `ios-relaunch` 242 failed both attempts in Build 2a's CI
+
+*Status: open, a reading (non-gating). Filed 22 October, from Build 2a's CI.*
+
+Run 39727574866, on `a8cf5290` (PR #11), Firefox job:
+`ios-relaunch.spec.ts:242`, "a load that lost its hint, on a device that
+refuses storage, relaunches once", failed on both attempts: the line read
+"iOS reload: not reached" where "taken on the load before this one" was
+expected. Run locally on Firefox it passed 12 of 12 (three repeats of the
+file). It is not on Firefox's known list (D32, D286); its document is the
+packing list, an ordinary document, which since R-Y starts a data worker
+before it is interactive, so the boundary's later start is a candidate and
+not a finding.
+
+**Change:** none yet. If it fails again, read the trace for the order of
+the reload and the frame's interactive mark against a run on `main`.
+**Acceptance:** a CI run in which it fails is read and the cause named, or
+a month of Firefox runs passes it.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
