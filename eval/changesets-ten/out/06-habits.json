@@ -5,25 +5,25 @@
   "openB": true,
   "wroteBoth": true,
   "converged": true,
-  "reopened": true,
-  "recovered": true
+  "reopened": false,
+  "recovered": false
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "Mark done today",
-  "b": "Mark done today"
+  "a": "Mark done today  INSERT INTO checkins (habit_id, day) VALUES (:id, date('now', '",
+  "b": "Mark done today  INSERT INTO checkins (habit_id, day) VALUES (:id, date('now', '"
  },
  "delete": {
-  "a": null
+  "a": "Done today. Undo  DELETE FROM checkins WHERE habit_id = :id AND day = date('now'"
  },
  "ops": {
   "a": {
-   "I": 12,
+   "I": 17,
    "U": 0,
    "D": 0
   },
   "b": {
-   "I": 3,
+   "I": 0,
    "U": 0,
    "D": 0
   }
@@ -34,18 +34,18 @@
  },
  "flags": [],
  "shows": {
-  "aShowsB": true,
-  "bShowsA": true
+  "aShowsB": false,
+  "bShowsA": false
  },
  "recovery": {
   "equalsA": true,
   "startedC": true,
-  "aHoldsC": true
+  "aHoldsC": false
  },
  "errors": {
   "A": [],
   "B": [],
   "C": []
  },
- "pass": true
+ "pass": false
 }

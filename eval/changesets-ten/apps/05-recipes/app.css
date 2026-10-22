@@ -1,114 +1,388 @@
+/* Recipe box: warm paper, tomato red. */
 :root {
-  color-scheme: light dark;
-  --bg: #fbf6ee;
-  --card: #ffffff;
+  --paper: #fbf6ef;
+  --card: #fffdf9;
   --ink: #2b2118;
-  --muted: #7a6b5c;
+  --muted: #7a6a5a;
   --line: #eadfce;
-  --accent: #b5502b;
+  --accent: #b4452a;
   --accent-ink: #ffffff;
-  --danger: #a3261f;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --soft: #f4e3d6;
+  color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1d1712; --card: #2a221b; --ink: #f3e9dc; --muted: #b3a28f; --line: #3e342a;
-    --accent: #e88a63; --accent-ink: #1d1712; --danger: #ff8a80;
+    --paper: #1b1612;
+    --card: #251e18;
+    --ink: #f1e7da;
+    --muted: #a89886;
+    --line: #3a3027;
+    --accent: #e8795c;
+    --accent-ink: #1b1612;
+    --soft: #38271f;
   }
 }
-* { box-sizing: border-box; }
-[hidden] { display: none !important; }
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
-/* Color runs to every edge; content stays clear of the strips a phone covers. */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+ * The screen's edges: the color runs out to every edge, and the content is
+ * pushed clear of the strips a phone covers.
+ */
 main {
   max-width: 640px;
   margin: 0 auto;
+  padding: calc(28px + var(--dai-safe-top, 0px)) calc(20px + var(--dai-safe-right, 0px))
+    calc(40px + var(--dai-safe-bottom, 0px)) calc(20px + var(--dai-safe-left, 0px));
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: calc(20px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
-    calc(40px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+  gap: 22px;
 }
 
-/* The top right corner belongs to the host's menu button. */
-header { display: flex; align-items: center; gap: 12px; padding-right: 56px; }
-h1 { margin: 0; flex: 1; font-size: 30px; letter-spacing: -0.02em; line-height: 1.1; }
-h2 { margin: 0 0 4px; font-size: 18px; }
+/* Two views, one page: which one shows follows what the open-recipe query drew. */
+main:has(article.detail) .browse { display: none; }
+main:not(:has(article.detail)) .editor { display: none; }
 
-button, input, textarea {
-  font: inherit; color: inherit;
+/* The host floats a round button in the top right corner. */
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 56px;
 }
-button {
-  min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--line); background: var(--card);
-}
-button:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px;
-}
-button.quiet { background: transparent; color: var(--accent); border-color: var(--accent); }
-button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-button.danger { color: var(--danger); border-color: var(--danger); }
-button.danger-solid { background: var(--danger); color: var(--bg); border-color: var(--danger); font-weight: 600; }
 
-input, textarea {
-  width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px;
-  border: 1px solid var(--line); background: var(--card);
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
-textarea { resize: vertical; line-height: 1.5; }
-::placeholder { color: var(--muted); opacity: 0.6; font-style: italic; }
 
-label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
-
-/* Filters */
-.filters { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { border-radius: 999px; min-height: 44px; padding: 0 16px; }
-
-/* The list */
-.list { display: grid; gap: 8px; }
-.pick {
-  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 12px;
-  width: 100%; text-align: left; padding: 10px 14px; border-radius: 12px;
+h1 {
+  margin: 0;
+  font: 700 36px/1.05 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  letter-spacing: -0.02em;
 }
-.pick-title { font-weight: 600; }
-.pick-meta { grid-column: 1; font-size: 14px; color: var(--muted); }
-.pick-open { grid-column: 2; grid-row: 1 / span 2; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
 
-/* A considered empty state */
-dai-rows:not(:has(*)), dai-rows > :only-child:not(button):not(article) { color: var(--muted); }
-.list > :not(button), .recipe > :not(article) {
-  margin: 0; padding: 18px; text-align: center; color: var(--muted);
-  border: 1px dashed var(--line); border-radius: 12px;
+h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
+
+.browse, .editor { display: flex; flex-direction: column; gap: 12px; }
+.browse h2 { margin: 10px 0 -2px; }
+.editor h2 { margin: 0; }
+
+dai-rows { display: block; }
+
+/* The box */
+.list { display: grid; gap: 10px; }
+
+.recipe {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "title star" "meta star";
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 16px;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.recipe:hover { border-color: var(--accent); }
+.rtitle { grid-area: title; font-weight: 600; font-size: 17px; }
+.rmeta { grid-area: meta; font-size: 13px; color: var(--muted); }
+.recipe .star { grid-area: star; }
+
+.mark { display: none; }
+.star { color: var(--accent); font-size: 18px; }
+.recipe:has(.mark:not([hidden])) .star { display: inline; }
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 0;
+  padding: 24px 18px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+}
+
+/* Switches */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.toggle:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.switch {
+  position: relative;
+  width: 40px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 0.15s;
+}
+
+.toggle:has(.mark:not([hidden])) .switch { background: var(--accent); }
+.toggle:has(.mark:not([hidden])) .switch::after { transform: translateX(16px); }
+
+/* Visible text for the state is redundant next to the switch; keep it for screen readers. */
+.toggle .mark:not([hidden]) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  display: inline;
+}
+
+.fav .star { color: var(--muted); font-size: 22px; }
+.fav:has(.mark:not([hidden])) .star { color: var(--accent); }
 
 /* The open recipe */
-.card {
-  display: grid; gap: 14px; padding: 16px; border-radius: 16px;
-  background: var(--card); border: 1px solid var(--line);
-}
-.name {
-  font-size: 24px; font-weight: 700; letter-spacing: -0.01em; min-height: 52px;
-  border-color: transparent; background: transparent; padding-left: 0;
-}
-.name:hover, .name:focus { border-color: var(--line); padding-left: 12px; }
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-.block textarea { background: var(--bg); }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.sure { padding: 12px; border-radius: 12px; border: 1px solid var(--danger); }
-.sure span { flex: 1 1 100%; color: var(--ink); }
+.detail { display: flex; flex-direction: column; gap: 12px; }
 
-/* Add form */
-.add {
-  display: grid; gap: 12px; padding: 16px; border-radius: 16px;
-  background: var(--card); border: 1px solid var(--line);
+.back {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 14px 0 0;
+  border: 0;
+  background: none;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
 }
 
-footer { display: flex; justify-content: flex-end; }
-dai-save { display: inline-block; padding: 12px 22px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
+input.name {
+  width: 100%;
+  min-height: 44px;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  background: none;
+  font: 700 30px/1.15 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  letter-spacing: -0.01em;
+}
 
-/* On a wide window, the same single column, a little roomier. */
+input.name:hover, input.name:focus { border-bottom-color: var(--accent); outline: none; }
+
+.facts { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.facts label {
+  flex: 1 1 8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.facts input, .notes, dai-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+}
+
+.cooked { margin: 4px 0 0; color: var(--muted); }
+
+.primary, dai-form button, dai-save {
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary { align-self: flex-start; }
+
+/* Ingredients and steps */
+.lines {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.line:first-child { border-top: 0; }
+.line .text { flex: 1; padding: 8px 0; }
+
+.x {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.x:hover { color: var(--accent); }
+
+.steps { counter-reset: step; }
+
+.step::before {
+  counter-increment: step;
+  content: counter(step);
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lines > :not(template):only-child:not(.line) {
+  display: block;
+  padding: 18px 16px;
+  color: var(--muted);
+}
+
+/* Forms */
+dai-form { display: flex; flex-wrap: wrap; gap: 8px; }
+dai-form input { flex: 1 1 8rem; width: auto; min-width: 0; }
+dai-form input[name="title"], dai-form input[name="line"], dai-form input[name="body"] { flex: 3 1 12rem; }
+
+/* Removing */
+.remove {
+  padding: 0 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.remove summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.remove p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+
+.danger {
+  margin-bottom: 14px;
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Footer */
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.quiet {
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+dai-save { display: inline-block; }
+
 @media (min-width: 720px) {
-  main { padding-top: calc(40px + var(--dai-safe-top, 0px)); }
-  h1 { font-size: 36px; }
+  main { padding-top: calc(48px + var(--dai-safe-top, 0px)); }
+  h1 { font-size: 44px; }
 }

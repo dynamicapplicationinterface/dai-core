@@ -2,94 +2,116 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Books to read next, and the ones you finished" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="What to read next, and what you got through" />
   <meta name="dai:does" content="Keep a list of the books you want to read next" />
-  <meta name="dai:does" content="Move a book to reading now, then mark it finished" />
-  <meta name="dai:does" content="Show how many books you have finished" />
-  <meta name="theme-color" content="#f6f1e7" />
+  <meta name="dai:does" content="Start a book, then finish it with a note to remember it by" />
+  <meta name="dai:does" content="Show how many you have finished and how long ago" />
+  <meta name="theme-color" content="#faf6ef" />
   <title>Reading list</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
   <script type="application/sql">
-    -- Local seed rows, fixed ids, so a second open adds nothing.
-    INSERT OR IGNORE INTO books (id, title, author, status) VALUES
-      (1, 'Middlemarch', 'George Eliot', 'reading'),
-      (2, 'Pride and Prejudice', 'Jane Austen', 'next'),
-      (3, 'Frankenstein', 'Mary Shelley', 'next'),
-      (4, 'The Great Gatsby', 'F. Scott Fitzgerald', 'done');
+    -- seed rows; the table is declared in schema.sql
+    INSERT INTO books (title, author, status, note, added, finished_at) VALUES
+      ('The Remains of the Day', 'Kazuo Ishiguro', 'done', 'Quiet and devastating. Read it again in winter.', datetime('now', '-60 days'), datetime('now', '-12 days')),
+      ('Braiding Sweetgrass', 'Robin Wall Kimmerer', 'done', '', datetime('now', '-40 days'), datetime('now', '-3 days')),
+      ('Piranesi', 'Susanna Clarke', 'reading', '', datetime('now', '-9 days'), NULL),
+      ('The Overstory', 'Richard Powers', 'next', '', datetime('now', '-8 days'), NULL),
+      ('Pachinko', 'Min Jin Lee', 'next', '', datetime('now', '-7 days'), NULL),
+      ('A Month in the Country', 'J. L. Carr', 'next', '', datetime('now', '-6 days'), NULL);
   </script>
 
-  <!-- A page built only from the kit's elements is safe while it starts:
-       none of them is a <form>, so nothing submits before the kit is ready. -->
   <main>
     <header>
+      <p class="eyebrow">Your shelf</p>
       <h1>Reading list</h1>
       <p class="progress">
         <dai-value query="SELECT count(*) FROM books WHERE status = 'done'"></dai-value>
-        finished ·
-        <dai-value query="SELECT count(*) FROM books WHERE status != 'done'"></dai-value>
+        finished
+        <span aria-hidden="true">&middot;</span>
+        <dai-value query="SELECT count(*) FROM books WHERE status = 'next'"></dai-value>
         to go
       </p>
     </header>
 
-    <dai-form run="INSERT INTO books (title, author) VALUES (:title, :author)" class="add">
-      <input name="title" aria-label="Title" placeholder="Title" required maxlength="120" />
-      <input name="author" aria-label="Author" placeholder="Author (optional)" maxlength="80" />
-      <button>Add</button>
-    </dai-form>
-
-    <section>
-      <h2>Reading now</h2>
-      <dai-rows query="SELECT id, title, author FROM books WHERE status = 'reading' ORDER BY id" empty="Nothing in hand. Start a book from Up next.">
+    <section aria-labelledby="h-reading">
+      <h2 id="h-reading">Reading now</h2>
+      <dai-rows
+        query="SELECT id, title, author FROM books WHERE status = 'reading' ORDER BY added, title"
+        empty="Nothing in progress. Start one from the list below.">
         <template>
-          <div class="book">
-            <div class="what">
-              <strong data-text="title"></strong>
-              <span data-text="author"></span>
+          <article class="book">
+            <div class="who">
+              <span class="title" data-text="title"></span>
+              <span class="author" data-text="author" data-when="author"></span>
             </div>
-            <div class="acts">
-              <button data-run="UPDATE books SET status = 'done' WHERE id = :id">Finished</button>
-              <button class="quiet" data-run="UPDATE books SET status = 'next' WHERE id = :id">Put back</button>
+            <div class="actions">
+              <button class="primary" data-run="UPDATE books SET status = 'done', finished_at = datetime('now') WHERE id = :id">Finished</button>
+              <button class="ghost" data-run="UPDATE books SET status = 'next' WHERE id = :id">Put back</button>
             </div>
-          </div>
+          </article>
         </template>
       </dai-rows>
     </section>
 
-    <section>
-      <h2>Up next</h2>
-      <dai-rows query="SELECT id, title, author FROM books WHERE status = 'next' ORDER BY id" empty="Nothing waiting. Add a book above.">
+    <section aria-labelledby="h-next">
+      <h2 id="h-next">Up next</h2>
+      <dai-rows
+        query="SELECT id, title, author FROM books WHERE status = 'next' ORDER BY added, title"
+        empty="The list is empty. Add the next book you hear about.">
         <template>
-          <div class="book">
-            <div class="what">
-              <strong data-text="title"></strong>
-              <span data-text="author"></span>
+          <article class="book">
+            <div class="who">
+              <span class="title" data-text="title"></span>
+              <span class="author" data-text="author" data-when="author"></span>
             </div>
-            <div class="acts">
-              <button data-run="UPDATE books SET status = 'reading' WHERE id = :id">Start</button>
-              <button class="quiet" data-run="DELETE FROM books WHERE id = :id">Remove</button>
+            <div class="actions">
+              <button class="primary" data-run="UPDATE books SET status = 'reading' WHERE id = :id">Start</button>
+              <button class="ghost" data-run="DELETE FROM books WHERE id = :id">Remove</button>
             </div>
-          </div>
+          </article>
         </template>
       </dai-rows>
+
+      <dai-form run="INSERT INTO books (title, author) VALUES (:title, :author)">
+        <input name="title" placeholder="Title" aria-label="Title" required maxlength="120" />
+        <input name="author" placeholder="Author (optional)" aria-label="Author" maxlength="80" />
+        <button>Add</button>
+      </dai-form>
     </section>
 
-    <section>
-      <h2>Finished</h2>
-      <dai-rows query="SELECT id, title, author FROM books WHERE status = 'done' ORDER BY id DESC" empty="No finished books yet.">
+    <section aria-labelledby="h-done">
+      <h2 id="h-done">Finished</h2>
+      <dai-rows
+        query="SELECT id, title, author, note,
+                      CASE WHEN d >= 60 THEN (d / 30) || ' months ago'
+                           WHEN d >= 30 THEN 'last month'
+                           WHEN d >= 2  THEN d || ' days ago'
+                           WHEN d >= 1  THEN 'yesterday'
+                           ELSE 'today' END AS when_done
+               FROM (SELECT id, title, author, note,
+                            cast(julianday('now') - julianday(finished_at) AS integer) AS d,
+                            finished_at
+                       FROM books WHERE status = 'done')
+               ORDER BY finished_at DESC, title"
+        empty="Nothing finished yet. The first one will show up here.">
         <template>
-          <div class="book">
-            <div class="what">
-              <strong data-text="title"></strong>
-              <span data-text="author"></span>
+          <article class="book done">
+            <div class="who">
+              <span class="title" data-text="title"></span>
+              <span class="author" data-text="author" data-when="author"></span>
+              <span class="when" data-text="when_done"></span>
+              <input class="note" aria-label="Your note on this book" placeholder="Add a note&hellip;" maxlength="300"
+                     data-text="note"
+                     data-run="UPDATE books SET note = :typed WHERE id = :id" />
             </div>
-            <div class="acts">
-              <button class="quiet" data-run="UPDATE books SET status = 'next' WHERE id = :id">Read again</button>
-              <button class="quiet" data-run="DELETE FROM books WHERE id = :id">Remove</button>
+            <div class="actions">
+              <button class="ghost" data-run="UPDATE books SET status = 'reading', finished_at = NULL WHERE id = :id">Read again</button>
+              <button class="ghost" data-run="DELETE FROM books WHERE id = :id">Remove</button>
             </div>
-          </div>
+          </article>
         </template>
       </dai-rows>
     </section>

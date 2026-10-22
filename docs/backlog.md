@@ -11135,6 +11135,25 @@ functions, as they keep their database in the frame. Nothing in
 SQL functions and callbacks are refused, with the sentence", on every
 engine.
 
+#### D289 — A character outside the Basic Multilingual Plane in schema.sql stops the build
+
+*Status: open, cause known. Filed 21 October, from Build 2a's cold run
+(07-chores).*
+
+`tableSpans` in `src/replicated.ts` scans the schema by UTF-16 index (`scan`)
+but builds its blanked copy with `[...sql]`, which splits by code point. An
+emoji in a string before a table (`emoji TEXT NOT NULL DEFAULT '🙂'`) puts
+every later index one off, the column list's closing bracket is never found,
+and the build is refused: "The table chores has no closing bracket." The
+same schema with `':)'` builds. It refuses a valid application at compile,
+loses nothing, and reaches every document whose schema carries such a
+character before a table.
+
+**Change:** build the blanked copy by UTF-16 unit, as the scanner reads
+(`sql.split("")`), or scan by code point.
+**Acceptance:** the cold run's chore chart builds as written; a schema with
+an emoji default before a CHECK builds and declares both tables.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

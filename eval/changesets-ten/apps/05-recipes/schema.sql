@@ -1,27 +1,47 @@
--- Recipe box · shape: solo
+-- Recipe box
 --
--- The decision: one person's collection of recipes, kept in one file. Nobody
--- else changes it and no second copy's edits need to be kept alongside this
--- one's, so nothing is shared: ordinary local tables, written with the kit.
--- Sending the box to someone gives them a copy of their own.
---
--- Which recipe is open, which filter is on, and which delete is waiting for a
--- second tap are about this screen, not about a recipe, so they live in
--- settings rather than on the recipes.
+-- Ordinary tables with their own keys. Totals (how many recipes, how many
+-- times a dish was cooked) are always queries, never stored columns, and a
+-- repeated action (cooking a dish) is a row per time, not a counter.
 
 CREATE TABLE IF NOT EXISTS recipes (
-  id          INTEGER PRIMARY KEY,
-  title       TEXT NOT NULL,
-  category    TEXT NOT NULL DEFAULT 'Other',
-  servings    TEXT NOT NULL DEFAULT '',
-  ingredients TEXT NOT NULL DEFAULT '',
-  steps       TEXT NOT NULL DEFAULT '',
-  favorite    INTEGER NOT NULL DEFAULT 0
+  id        INTEGER PRIMARY KEY,
+  title     TEXT NOT NULL,
+  serves    INTEGER,
+  minutes   INTEGER,
+  notes     TEXT NOT NULL DEFAULT '',
+  favorite  INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS ingredients (
+  id        INTEGER PRIMARY KEY,
+  recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  position  INTEGER NOT NULL DEFAULT 0,
+  line      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ingredients_by_recipe ON ingredients (recipe_id, position);
+
+CREATE TABLE IF NOT EXISTS steps (
+  id        INTEGER PRIMARY KEY,
+  recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  position  INTEGER NOT NULL DEFAULT 0,
+  body      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS steps_by_recipe ON steps (recipe_id, position);
+
+CREATE TABLE IF NOT EXISTS cooked (
+  id        INTEGER PRIMARY KEY,
+  recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS cooked_by_recipe ON cooked (recipe_id);
+
+-- What is showing: one row. recipe_id is the open recipe (NULL shows the box).
 CREATE TABLE IF NOT EXISTS settings (
-  id       INTEGER PRIMARY KEY CHECK (id = 1),
-  selected INTEGER NOT NULL DEFAULT 0,   -- the recipe that is open, 0 for none
-  filter   TEXT NOT NULL DEFAULT '',     -- '' for all, '*fav' for favorites, else a category
-  confirm  INTEGER NOT NULL DEFAULT 0    -- the recipe whose delete is waiting for a second tap
+  id             INTEGER PRIMARY KEY,
+  recipe_id      INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
+  favorites_only INTEGER NOT NULL DEFAULT 0
 );

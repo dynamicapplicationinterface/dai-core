@@ -10,16 +10,16 @@
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "✓ All   UPDATE settings SET filter = :val WHERE id = 1",
-  "b": "✓ All   UPDATE settings SET filter = :val WHERE id = 1"
+  "a": "UPDATE settings SET favorites_only = 1 - favorites_only",
+  "b": "UPDATE settings SET favorites_only = 1 - favorites_only"
  },
  "delete": {
-  "a": "Delete   UPDATE settings SET confirm = :id WHERE id = 1"
+  "a": null
  },
  "ops": {
   "a": {
-   "I": 6,
-   "U": 1,
+   "I": 38,
+   "U": 0,
    "D": 0
   },
   "b": {
@@ -29,8 +29,8 @@
   }
  },
  "typed": {
-  "a": 10,
-  "b": 10
+  "a": 2,
+  "b": 2
  },
  "flags": [],
  "shows": {

@@ -1,11 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#14181d"/><rect x="12" y="40" width="10" height="20" rx="3" fill="#ff7a50"/><rect x="22" y="32" width="10" height="36" rx="3" fill="#ff7a50"/><rect x="32" y="46" width="36" height="8" fill="#eceff2"/><rect x="68" y="32" width="10" height="36" rx="3" fill="#ff7a50"/><rect x="78" y="40" width="10" height="20" rx="3" fill="#ff7a50"/></svg>
-```
-
-A few notes on how it works:
-
-- **Solo shape.** The log is yours alone, so the table is ordinary and there is no sharing machinery. To send it to someone, use the Share option in the host's menu. They get a copy of their own to write in.
-- **Saving.** Every entry is written the moment you add it. There is no save button under the opener. A Save button appears only if the file is opened straight in a browser.
-- **Derived numbers.** "Days trained" and "lb lifted" for the last 7 days, and your best weight per exercise, are worked out from your entries each time. None are stored, so deleting a mistaken entry fixes them.
-- **Times.** Entries are stored in UTC and shown as "Today", "Yesterday", or a weekday and date.
-- **Units.** Weight is in pounds, and 0 means bodyweight (pull-ups and the like).
-- **Not included yet.** There is no editing of an entry (delete and re-add), and no per-workout grouping or rest timer. I can add any of these if you want them.
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- A barbell on a green ground. -->
+  <rect width="100" height="100" rx="22" fill="#1f6f4a"/>
+  <rect x="30" y="46" width="40" height="8" rx="4" fill="#f5f6f1"/>
+  <rect x="18" y="30" width="12" height="40" rx="5" fill="#f5f6f1"/>
+  <rect x="70" y="30" width="12" height="40" rx="5" fill="#f5f6f1"/>
+  <rect x="8" y="39" width="8" height="22" rx="4" fill="#f5f6f1"/>
+  <rect x="84" y="39" width="8" height="22" rx="4" fill="#f5f6f1"/>
+</svg>

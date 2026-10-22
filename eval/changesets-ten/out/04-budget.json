@@ -5,37 +5,37 @@
   "openB": true,
   "wroteBoth": true,
   "converged": true,
-  "reopened": true,
+  "reopened": false,
   "recovered": true
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "Monthly limit  UPDATE categories SET limit_cents = max(0, CAST(round(:typed * 10",
-  "b": "Monthly limit  UPDATE categories SET limit_cents = max(0, CAST(round(:typed * 10"
+  "a": "Category name  UPDATE categories SET name = trim(:typed) WHERE id = :id AND trim",
+  "b": "Category name  UPDATE categories SET name = trim(:typed) WHERE id = :id AND trim"
  },
  "delete": {
-  "a": "Delete   DELETE FROM expenses WHERE id = :id"
+  "a": "Remove   DELETE FROM categories WHERE id = :id AND NOT EXISTS (SELECT 1 FROM tra"
  },
  "ops": {
   "a": {
-   "I": 15,
+   "I": 19,
    "U": 0,
    "D": 1
   },
   "b": {
-   "I": 4,
+   "I": 2,
    "U": 0,
    "D": 0
   }
  },
  "typed": {
-  "a": 8,
-  "b": 8
+  "a": 4,
+  "b": 4
  },
  "flags": [],
  "shows": {
-  "aShowsB": true,
-  "bShowsA": true
+  "aShowsB": false,
+  "bShowsA": false
  },
  "recovery": {
   "equalsA": true,
@@ -47,5 +47,5 @@
   "B": [],
   "C": []
  },
- "pass": true
+ "pass": false
 }

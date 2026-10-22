@@ -1,14 +1,16 @@
--- Reading list · shape: solo
+-- Reading list
 --
--- The decision: one person's list of books, kept on one device. Nobody else
--- adds to it and no second copy's changes need keeping, so nothing is shared:
--- ordinary tables, written with the kit, keys and all. If it is sent to
--- someone, they get their own copy to write in.
+-- One table. A book is "next" (on the list), "reading" (in progress) or
+-- "done" (finished). Every count on the page is a query over these rows.
 
 CREATE TABLE IF NOT EXISTS books (
-  id     INTEGER PRIMARY KEY,
-  title  TEXT NOT NULL,
-  author TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'next' CHECK (status IN ('next', 'reading', 'done')),
-  added  TEXT NOT NULL DEFAULT (datetime('now'))
+  id          INTEGER PRIMARY KEY,
+  title       TEXT NOT NULL,
+  author      TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'next' CHECK (status IN ('next', 'reading', 'done')),
+  note        TEXT NOT NULL DEFAULT '',
+  added       TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
 );
+
+CREATE INDEX IF NOT EXISTS books_by_status ON books (status, added);

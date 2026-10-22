@@ -10,29 +10,31 @@
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "Mark visited: A-1-0 alpha",
-  "b": "Mark visited: B-1-0 alpha"
+  "a": "✓\nselected\nLisbon   UPDATE settings SET value = :id WHERE name = 'trip'",
+  "b": "✓\nselected\nLisbon   UPDATE settings SET value = :id WHERE name = 'trip'"
  },
  "delete": {
-  "a": "Remove day Remove day 1: A-0-0 alpha"
+  "a": "× Remove this stop  DELETE FROM plans WHERE id = :id"
  },
  "ops": {
   "a": {
-   "I": 12,
+   "I": 33,
    "U": 1,
-   "D": 0
+   "D": 1
   },
   "b": {
-   "I": 4,
+   "I": 6,
    "U": 1,
    "D": 0
   }
  },
  "typed": {
-  "a": 6,
-  "b": 6
+  "a": 8,
+  "b": 8
  },
- "flags": [],
+ "flags": [
+  "settings:pending"
+ ],
  "shows": {
   "aShowsB": true,
   "bShowsA": true

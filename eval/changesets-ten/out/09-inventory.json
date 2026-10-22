@@ -1,30 +1,30 @@
 {
  "name": "09-inventory",
  "steps": {
-  "openA": true,
-  "openB": true,
+  "openA": false,
+  "openB": false,
   "wroteBoth": true,
   "converged": true,
-  "reopened": true,
-  "recovered": true
+  "reopened": false,
+  "recovered": false
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "− One fewer  UPDATE items SET qty = max(qty - 1, 0) WHERE id = :id",
-  "b": "− One fewer  UPDATE items SET qty = max(qty - 1, 0) WHERE id = :id"
+  "a": "Use 1   INSERT INTO movements (item_id, delta, note) SELECT :id, -1, 'Used one' ",
+  "b": "Use 1   INSERT INTO movements (item_id, delta, note) SELECT :id, -1, 'Used one' "
  },
  "delete": {
-  "a": "Remove Remove this item  DELETE FROM items WHERE id = :id"
+  "a": null
  },
  "ops": {
   "a": {
-   "I": 6,
-   "U": 1,
-   "D": 1
+   "I": 18,
+   "U": 0,
+   "D": 0
   },
   "b": {
-   "I": 2,
-   "U": 1,
+   "I": 3,
+   "U": 0,
    "D": 0
   }
  },
@@ -39,7 +39,7 @@
  },
  "recovery": {
   "equalsA": true,
-  "startedC": true,
+  "startedC": false,
   "aHoldsC": true
  },
  "errors": {
@@ -47,5 +47,5 @@
   "B": [],
   "C": []
  },
- "pass": true
+ "pass": false
 }

@@ -1,7 +1,7 @@
 {
  "name": "07-chores",
  "steps": {},
- "exception": "CompileError: DAI: Its schema marks a table as shared (-- dai:replicated) or declares a session (-- dai:profile session). Remove every -- dai:replicated and -- dai:profile line from schema.sql, keep the tables as ordinary tables with an INTEGER PRIMARY KEY each, and read and write them with plain SQL. |     at compileDirectory (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/compile.ts:343:22) |     at file:///C:/Users/cwhit/Documents/DAI_Protocol/eval/changesets-ten/ten-apps.spec.ts:255:21",
+ "exception": "ReplicationError: The table chores has no closing bracket. |     at tableSpans (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/replicated.ts:267:29) |     at rewriteReplicated (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/replicated.ts:1565:17)",
  "errors": {},
  "pass": false
 }

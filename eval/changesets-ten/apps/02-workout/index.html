@@ -2,119 +2,163 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Log your lifts and see your week at a glance" />
-  <meta name="dai:does" content="Log each exercise with sets, reps and weight in a few taps" />
-  <meta name="dai:does" content="Show how many days you trained this week and your total weight lifted" />
-  <meta name="dai:does" content="Keep your best weight for every exercise so you can beat it" />
-  <meta name="theme-color" content="#14181d" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Log every set and see how your lifting adds up" />
+  <meta name="dai:does" content="Log each set with its exercise, reps and weight in a few taps" />
+  <meta name="dai:does" content="Show what you did today, yesterday and across the week" />
+  <meta name="dai:does" content="Track your best weight for every exercise you have logged" />
+  <meta name="theme-color" content="#f5f6f1" />
   <title>Workout log</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
+  <!--
+    A workout log made only from the kit: no JavaScript of its own. Every set
+    is a row, written the moment it is added; the day summaries, the weekly
+    figures and the personal bests are all queries over those rows.
+  -->
   <script type="application/sql">
-    -- Example entries, so the first open is not an empty shell. Fixed ids, so
-    -- a second open adds nothing. The tables are declared in schema.sql.
-    INSERT OR IGNORE INTO lifts (id, exercise, sets, reps, weight, logged) VALUES
-      (1, 'Back squat',  4, 5,  185, datetime('now', '-2 days')),
-      (2, 'Bench press', 3, 8,  135, datetime('now', '-2 days')),
-      (3, 'Pull-up',     3, 8,    0, datetime('now', '-1 days'));
+    -- Seed rows. The table is declared in schema.sql; ids are left to the runtime.
+    INSERT INTO sets (exercise, reps, weight, at) VALUES
+      ('Squat', 8, 60, datetime('now', '-3 days', '-5 minutes')),
+      ('Squat', 8, 60, datetime('now', '-3 days', '-10 minutes')),
+      ('Squat', 6, 70, datetime('now', '-3 days', '-15 minutes')),
+      ('Bench press', 10, 40, datetime('now', '-3 days', '-30 minutes')),
+      ('Bench press', 8, 45, datetime('now', '-3 days', '-35 minutes')),
+      ('Pull-up', 6, 0, datetime('now', '-1 days', '-5 minutes')),
+      ('Pull-up', 5, 0, datetime('now', '-1 days', '-8 minutes')),
+      ('Deadlift', 5, 90, datetime('now', '-1 days', '-20 minutes')),
+      ('Deadlift', 5, 95, datetime('now', '-1 days', '-25 minutes')),
+      ('Bench press', 8, 47.5, datetime('now', '-3 hours')),
+      ('Bench press', 7, 50, datetime('now', '-2 hours', '-50 minutes'));
   </script>
 
   <main>
     <header>
+      <p class="eyebrow">Strength training</p>
       <h1>Workout log</h1>
-      <p class="sub">What you lifted, and how it adds up.</p>
+      <p class="lede">Add a set the moment you finish it.</p>
     </header>
 
-    <section class="stats" aria-label="Last 7 days">
+    <section class="stats" aria-label="The last seven days">
       <div class="stat">
-        <span class="num">
-          <dai-value query="SELECT count(DISTINCT date(logged, 'localtime')) FROM lifts WHERE logged >= datetime('now', '-6 days')"></dai-value>
-        </span>
-        <span class="label">days trained, last 7</span>
+        <dai-value class="num" query="SELECT count(DISTINCT date(at, 'localtime')) FROM sets WHERE at >= datetime('now', '-7 days')"></dai-value>
+        <span class="cap">workout days</span>
       </div>
       <div class="stat">
-        <span class="num">
-          <dai-value query="SELECT CAST(coalesce(sum(sets * reps * weight), 0) AS INTEGER) FROM lifts WHERE logged >= datetime('now', '-6 days')"></dai-value>
-        </span>
-        <span class="label">lb lifted, last 7</span>
+        <dai-value class="num" query="SELECT count(*) FROM sets WHERE at >= datetime('now', '-7 days')"></dai-value>
+        <span class="cap">sets</span>
+      </div>
+      <div class="stat">
+        <dai-value class="num" query="SELECT printf('%d', coalesce(round(sum(weight * reps)), 0)) FROM sets WHERE at >= datetime('now', '-7 days')"></dai-value>
+        <span class="cap">lifted</span>
       </div>
     </section>
 
-    <dai-form run="INSERT INTO lifts (exercise, sets, reps, weight) VALUES (:exercise, :sets, :reps, :weight)">
-      <h2>Log a lift</h2>
-      <label class="wide">Exercise
-        <input name="exercise" list="common" required maxlength="60" placeholder="e.g. Deadlift" autocomplete="off" />
-      </label>
-      <datalist id="common">
-        <option value="Back squat"></option>
-        <option value="Front squat"></option>
-        <option value="Bench press"></option>
-        <option value="Overhead press"></option>
-        <option value="Deadlift"></option>
-        <option value="Barbell row"></option>
-        <option value="Pull-up"></option>
-        <option value="Dip"></option>
-        <option value="Lunge"></option>
-        <option value="Curl"></option>
-      </datalist>
-      <label>Sets
-        <input name="sets" type="number" inputmode="numeric" min="1" max="50" step="1" value="3" required />
-      </label>
-      <label>Reps
-        <input name="reps" type="number" inputmode="numeric" min="1" max="500" step="1" value="8" required />
-      </label>
-      <label>Weight (lb)
-        <input name="weight" type="number" inputmode="decimal" min="0" max="2000" step="any" value="0" required />
-      </label>
-      <button>Add to log</button>
-      <p class="hint">Weight 0 means bodyweight.</p>
-    </dai-form>
+    <section>
+      <h2>Log a set</h2>
+      <dai-form class="add" run="INSERT INTO sets (exercise, reps, weight) VALUES (:exercise, :reps, :weight)">
+        <label class="field wide">
+          <span>Exercise</span>
+          <input name="exercise" placeholder="Bench press" required maxlength="60" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Reps</span>
+          <input name="reps" type="number" inputmode="numeric" min="1" max="999" step="1" placeholder="8" required />
+        </label>
+        <label class="field">
+          <span>Weight</span>
+          <input name="weight" type="number" inputmode="decimal" min="0" step="any" value="0" required />
+        </label>
+        <button type="button" class="primary">Add set</button>
+      </dai-form>
+      <p class="hint">Weight 0 is for bodyweight work.</p>
+    </section>
 
     <section>
-      <h2>Recent</h2>
+      <h2>Days</h2>
       <dai-rows
-        query="SELECT id, exercise,
-                      CASE date(logged, 'localtime')
-                        WHEN date('now', 'localtime') THEN 'Today'
-                        WHEN date('now', 'localtime', '-1 day') THEN 'Yesterday'
-                        ELSE strftime('%a %b %d', logged, 'localtime')
-                      END AS day,
-                      sets || ' x ' || reps ||
-                        CASE WHEN weight = 0 THEN ' · bodyweight'
-                             ELSE ' at ' || CAST(weight AS TEXT) || ' lb' END AS detail
-                 FROM lifts ORDER BY logged DESC, id DESC LIMIT 30"
-        empty="Nothing logged yet. Add your first lift above.">
+        empty="No workouts yet. Log your first set above."
+        query="SELECT day,
+                 CASE CAST(julianday(date('now', 'localtime')) - julianday(day) AS INTEGER)
+                   WHEN 0 THEN 'Today'
+                   WHEN 1 THEN 'Yesterday'
+                   ELSE substr('SunMonTueWedThuFriSat', 1 + 3 * strftime('%w', day), 3) || ' '
+                        || CAST(strftime('%d', day) AS INTEGER) || ' '
+                        || substr('JanFebMarAprMayJunJulAugSepOctNovDec', 1 + 3 * (strftime('%m', day) - 1), 3)
+                 END AS label,
+                 count(*) AS n,
+                 printf('%d', round(sum(weight * reps))) AS lifted,
+                 replace(group_concat(DISTINCT exercise), ',', ', ') AS what
+               FROM (SELECT date(at, 'localtime') AS day, exercise, reps, weight FROM sets)
+               GROUP BY day
+               ORDER BY day DESC
+               LIMIT 14">
         <template>
-          <div class="entry">
-            <div class="what">
-              <strong data-text="exercise"></strong>
-              <span class="detail" data-text="detail"></span>
+          <div class="row day">
+            <div class="grow">
+              <span class="title" data-text="label"></span>
+              <span class="meta" data-text="what"></span>
             </div>
-            <span class="day" data-text="day"></span>
-            <button type="button" class="quiet" aria-label="Delete this entry" data-run="DELETE FROM lifts WHERE id = :id">Delete</button>
+            <div class="figures">
+              <span class="big" data-text="n"></span>
+              <span class="meta">sets</span>
+            </div>
           </div>
         </template>
       </dai-rows>
     </section>
 
     <section>
-      <h2>Your best</h2>
+      <h2>Best by exercise</h2>
       <dai-rows
-        query="SELECT exercise,
-                      CASE WHEN max(weight) = 0 THEN 'bodyweight'
-                           ELSE CAST(max(weight) AS TEXT) || ' lb' END AS best,
-                      count(*) || CASE WHEN count(*) = 1 THEN ' entry' ELSE ' entries' END AS times
-                 FROM lifts GROUP BY exercise ORDER BY max(logged) DESC LIMIT 20"
-        empty="Your best weight for each exercise shows up here.">
+        empty="Your best weights will show up here."
+        query="SELECT exercise, count(*) AS n, printf('%g', max(weight)) AS best, max(weight) > 0 AS weighted
+               FROM sets
+               GROUP BY exercise
+               ORDER BY max(at) DESC">
         <template>
-          <div class="entry best">
-            <div class="what">
-              <strong data-text="exercise"></strong>
-              <span class="detail" data-text="times"></span>
+          <div class="row">
+            <div class="grow">
+              <span class="title" data-text="exercise"></span>
+              <span class="meta"><span data-text="n"></span> sets logged</span>
             </div>
-            <span class="pr" data-text="best"></span>
+            <div class="figures" data-when="weighted">
+              <span class="big" data-text="best"></span>
+              <span class="meta">best</span>
+            </div>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section>
+      <h2>Latest sets</h2>
+      <dai-rows
+        empty="Nothing logged yet."
+        query="SELECT id, exercise,
+                 CASE WHEN weight = 0 THEN reps || ' reps' ELSE reps || ' × ' || printf('%g', weight) END AS detail,
+                 CASE
+                   WHEN m < 1 THEN 'just now'
+                   WHEN m < 60 THEN CAST(m AS INTEGER) || ' min ago'
+                   WHEN m < 120 THEN '1 hour ago'
+                   WHEN m < 1440 THEN CAST(m / 60 AS INTEGER) || ' hours ago'
+                   WHEN dd = 1 THEN 'yesterday'
+                   ELSE dd || ' days ago'
+                 END AS ago
+               FROM (SELECT id, exercise, reps, weight, at,
+                       (julianday('now') - julianday(at)) * 1440.0 AS m,
+                       CAST(julianday(date('now', 'localtime')) - julianday(date(at, 'localtime')) AS INTEGER) AS dd
+                     FROM sets)
+               ORDER BY at DESC, id DESC
+               LIMIT 20">
+        <template>
+          <div class="row">
+            <div class="grow">
+              <span class="title" data-text="exercise"></span>
+              <span class="meta"><span data-text="detail"></span> · <span data-text="ago"></span></span>
+            </div>
+            <button type="button" class="remove" aria-label="Delete this set" data-run="DELETE FROM sets WHERE id = :id">Delete</button>
           </div>
         </template>
       </dai-rows>
