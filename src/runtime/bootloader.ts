@@ -4294,6 +4294,8 @@ function workerBoot(names: FrameNames, sessionId: unknown, start: string, main: 
     scope.__DAI__ = data.config;
     main(names, sessionId, true);
   };
+  // Speaks first: the shell sends the configuration and the application's port only to a worker that is running.
+  scope.postMessage({ type: start });
 }
 
 /** The glue as a classic script that leaves its initializer on the worker's global, or null if it is not the shape this runtime knows. */
@@ -4569,6 +4571,10 @@ async function boot(): Promise<void> {
     /** Where the boot spent its time, for whoever is measuring. */
     get timings() {
       return timingTable();
+    },
+    /** For a document whose data lives in a worker (R-Y): whether that worker is running and listening. */
+    get dataWorker(): "none" | "starting" | "running" {
+      return !authority ? "none" : workerListening ? "running" : "starting";
     },
   };
 
@@ -5279,40 +5285,89 @@ async function boot(): Promise<void> {
       refuse("BOOT_FAILED", "This document's data could not be started.", "the engine's glue is not one this runtime can run in a worker");
       return;
     }
-    const url = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
-    const scripts = shellPolicy();
-    const worker = new Worker((scripts ? scripts.createScriptURL(url) : url) as string);
-    dataWorker = worker;
-    worker.onmessage = (event: MessageEvent): void => {
-      if (url) URL.revokeObjectURL(url);
-      fromRuntime(event.data, (message) => worker.postMessage(message), "worker");
+    const appPort = appChannel.port1;
+    /*
+     * The worker speaks first, as the frame does (FRAME_HELLO): its script
+     * posts DATA_START once it runs, and only then is it sent the engine, the
+     * stored database and the application's port. A worker whose script never
+     * ran (WebKit fails a blob's load while its network is offline, and the
+     * worker reports an error) has been given nothing, so nothing is lost with
+     * it: it is not this document's failure, and it is started again from the
+     * same bytes when the network returns and on a widening schedule. A worker
+     * that started and then failed is a failure of the data, and refuses.
+     */
+    const RETRY_MS = [500, 1000, 2000, 5000, 10000];
+    let attempts = 0;
+    let retry: number | undefined;
+    let started = false;
+    /** Whether an attempt is still waiting to hear from its worker. */
+    let live = false;
+    const start = (): void => {
+      live = true;
+      if (retry !== undefined) window.clearTimeout(retry);
+      retry = undefined;
+      const url = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
+      const scripts = shellPolicy();
+      const worker = new Worker((scripts ? scripts.createScriptURL(url) : url) as string);
+      dataWorker = worker;
+      workerListening = false;
+      let spoke = false;
+      worker.onmessage = (event: MessageEvent): void => {
+        if (!spoke) {
+          if ((event.data as { type?: unknown })?.type !== FRAME_INTERNAL.DATA_START) return;
+          spoke = true;
+          started = true;
+          URL.revokeObjectURL(url);
+          window.removeEventListener("online", again);
+          const wasm = files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null;
+          const stored = toArrayBuffer(documentBytes);
+          worker.postMessage(
+            {
+              type: FRAME_INTERNAL.DATA_START,
+              config: {
+                version: "0.1.0",
+                documentUuid: manifest?.documentUuid ?? null,
+                verified: policy === "required",
+                signature: signatureState,
+                publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
+                replicated: replicatedTables.length > 0,
+                manifestDebug: framePayload.facts.manifestDebug,
+                sqlite: new Uint8Array(stored),
+                sqliteWasm: wasm,
+                schema: files[SCHEMA_ENTRY] ? new TextDecoder().decode(files[SCHEMA_ENTRY]) : null,
+                hosted: window.parent !== window,
+                sqlBlocks: sqlBlocksOf(entryHtml),
+                appPort,
+              },
+            },
+            [appPort, stored, ...(wasm ? [wasm] : [])],
+          );
+          return;
+        }
+        fromRuntime(event.data, (message) => worker.postMessage(message), "worker");
+      };
+      worker.onerror = (event: ErrorEvent): void => {
+        if (spoke) {
+          refuse("BOOT_FAILED", "This document's data could not be started.", String(event.message ?? "the worker failed"));
+          return;
+        }
+        event.preventDefault();
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        live = false;
+        if (started) return;
+        const delay = RETRY_MS[Math.min(attempts, RETRY_MS.length - 1)] as number;
+        attempts += 1;
+        console.info(`dai: the data's worker did not start (${String(event.message || "its script did not load")}); starting it again in ${delay} ms`);
+        retry = window.setTimeout(start, delay);
+      };
     };
-    worker.onerror = (event: ErrorEvent): void => {
-      refuse("BOOT_FAILED", "This document's data could not be started.", String(event.message ?? "the worker failed"));
+    // Back online is the likeliest moment a worker that could not load now can.
+    const again = (): void => {
+      if (!started && !live) start();
     };
-    const wasm = files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null;
-    const stored = toArrayBuffer(documentBytes);
-    worker.postMessage(
-      {
-        type: FRAME_INTERNAL.DATA_START,
-        config: {
-          version: "0.1.0",
-          documentUuid: manifest?.documentUuid ?? null,
-          verified: policy === "required",
-          signature: signatureState,
-          publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
-          replicated: replicatedTables.length > 0,
-          manifestDebug: framePayload.facts.manifestDebug,
-          sqlite: new Uint8Array(stored),
-          sqliteWasm: wasm,
-          schema: files[SCHEMA_ENTRY] ? new TextDecoder().decode(files[SCHEMA_ENTRY]) : null,
-          hosted: window.parent !== window,
-          sqlBlocks: sqlBlocksOf(entryHtml),
-          appPort: appChannel.port1,
-        },
-      },
-      [appChannel.port1, stored, ...(wasm ? [wasm] : [])],
-    );
+    window.addEventListener("online", again);
+    start();
     // The page going away flushes the worker's pending save, as a frame's own pagehide does.
     window.addEventListener("pagehide", () => toFrame({ type: FRAME_INTERNAL.PAGEHIDE }));
   }

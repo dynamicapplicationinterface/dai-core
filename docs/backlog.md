@@ -11186,13 +11186,23 @@ Run 39727574866, on `a8cf5290` (PR #11), Firefox job:
 refuses storage, relaunches once", failed on both attempts: the line read
 "iOS reload: not reached" where "taken on the load before this one" was
 expected. Run locally on Firefox it passed 12 of 12 (three repeats of the
-file). It is not on Firefox's known list (D32, D286); its document is the
-packing list, an ordinary document, which since R-Y starts a data worker
-before it is interactive, so the boundary's later start is a candidate and
-not a finding.
+file). It is not on Firefox's known list (D32, D286).
 
-**Change:** none yet. If it fails again, read the trace for the order of
-the reload and the frame's interactive mark against a run on `main`.
+**Likely cause, not confirmed.** The page CI saw was still the opener's
+root ("arrived with DAI Opener → http://localhost:5175/"), its iOS line at
+its first value, "not reached": the first open on an iPhone never reached
+`relaunchAtOwnAddress`. That path mounts the document behind the launch
+screen first and waits on it (the ground colour, `groundSettled`), and its
+document is the packing list, an ordinary document, which since R-Y starts a
+data worker before it is interactive. It is the class the WebKit offline case
+of Build 2a belonged to: a step that waits on the document having started,
+which now starts later; on CI's Firefox, slower than a desk, the wait did not
+end inside the test's 60 seconds on either attempt. Not reproduced locally
+(12 of 12).
+
+**Change:** none yet. If it fails again, time the rehearsal mount on the
+trace (hostMark "prepared" to the relaunch's "reloading at the document's
+address"), against the same test on `main`.
 **Acceptance:** a CI run in which it fails is read and the cause named, or
 a month of Firefox runs passes it.
 
