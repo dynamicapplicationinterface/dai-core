@@ -25,7 +25,8 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `await db.query(sql, bind?)` — Rows as plain objects. bind is an array for ? or an object for :name.
 - `await db.get(sql, bind?) / await db.value(sql, bind?)` — The first row, or the first column of the first row — a count, a setting, a total.
 - `await db.run(sql, bind?)` — Runs one statement that writes. Returns { changes, lastInsertRowid }.
-- `await db.batch([{ sql, bind }, …])` — Several statements as one request, in order. Returns each one's { rows, changes, lastInsertRowid }.
+- `await db.batch([{ sql, bind }, …])` — Several statements as one request: all of them, or none.
+- `await db.transaction(async (tx) => { … })` — tx's requests run alone and commit when fn returns; a throw rolls back. Inside, call tx, not db.
 - `await db.export()` — The database as bytes, without saving.
 
 ## Shared tables (passable and session)

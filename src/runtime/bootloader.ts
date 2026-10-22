@@ -1195,7 +1195,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     let schema = -1;
     try {
       if (typeof db.changes === "function") changes = db.changes(true) as number;
-      if (typeof db.selectValue === "function") schema = db.selectValue("PRAGMA schema_version") as number;
+      // Under the ordinary data interface, read by the runtime's own engine: a statement of the application's
+      // here would become the last one its own count answers for (R-Y's db.run).
+      const live = changesOf(db);
+      if (live) schema = Number(live.rows.all("PRAGMA schema_version")[0]?.["schema_version"]);
+      else if (typeof db.selectValue === "function") schema = db.selectValue("PRAGMA schema_version") as number;
     } catch {
       /* A closed handle, or a statement mid-flight: treated as changed. */
       return String(Math.random());
@@ -1284,6 +1288,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * table outside one (T11, P01): the application shares this handle.
    */
   const trusted = <T,>(f: () => T): T => (changes ? (changes.trusted(f) as T) : f());
+  /** The changeset runtime over this handle, when it is the live one. */
+  const changesOf = (db: Any): Any | null => (changes && db === liveDb ? changes : null);
   const startChanges = (db: Any, rawExec: (sql: Any) => unknown): void => {
     if (changes || !mergeModule || !sqlite3) return;
     const merge = mergeModule as Any;
@@ -3250,9 +3256,16 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     "This document's data is reached with await window.dai.database(): its calls are asynchronous, and openDatabase() with its synchronous handle belongs only to documents with shared tables.";
   const boundValue = (v: unknown): boolean =>
     v === null || typeof v === "number" || typeof v === "bigint" || typeof v === "string" || typeof v === "boolean" || v instanceof Uint8Array;
+  const FUNCTIONS_SENTENCE =
+    "DATA_REFUSED: An application's own SQL functions and callbacks do not run inside the runtime: compute in SQL, or in the page from the rows a query returns.";
+  /** Whether a function is anywhere in what the application handed over: none crosses into the runtime. */
+  const carriesFunction = (v: unknown, depth = 0): boolean =>
+    typeof v === "function" || (depth < 3 && v !== null && typeof v === "object" && !(v instanceof Uint8Array) && Object.values(v as Record<string, unknown>).some((x) => carriesFunction(x, depth + 1)));
   const statementOf = (s: unknown): { sql: string; bind?: unknown[] | Record<string, unknown> } => {
+    if (carriesFunction(s)) throw new TypeError(FUNCTIONS_SENTENCE);
     const text = typeof s === "string" ? s : s && typeof s === "object" && typeof (s as Any).sql === "string" ? String((s as Any).sql) : null;
-    if (text === null) throw new TypeError("DATA_REFUSED: A statement is its SQL as a string, or { sql, bind }.");
+    const extra = s !== null && typeof s === "object" && Object.keys(s as Record<string, unknown>).some((k) => k !== "sql" && k !== "bind");
+    if (text === null || extra) throw new TypeError("DATA_REFUSED: A statement is its SQL as a string, or { sql, bind }.");
     const bind = typeof s === "object" ? (s as Any).bind : undefined;
     if (bind === undefined || bind === null) return { sql: text };
     if (Array.isArray(bind)) {
@@ -3281,12 +3294,27 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * The application's requests, in the worker (R-Y). The port the shell paired
    * with the application's is the only way in: a request names no document and
    * no database (this worker has one, for this mount), and the application
-   * holds no handle, statement, pointer or memory of the engine's. Requests run
-   * one at a time, whole, in the order they arrived, on the handle this worker
-   * opened, so every statement goes through the same refusals a frame's did.
+   * holds no handle, statement, pointer or memory of the engine's. Every
+   * statement goes through the same refusals a frame's did.
+   *
+   * Requests run one at a time, whole, in the order they arrived. A batch is
+   * one request and one transaction: all of it, or none. A transaction the
+   * application opens (`db.transaction`) belongs to the request sequence that
+   * opened it: until it commits or rolls back, a request that is not part of
+   * it waits, and nothing else runs inside it. One left idle is rolled back.
+   * A request cancelled before it starts never runs; one that has started
+   * finishes, and its answer says what it did.
    */
   let opening: Promise<Any> | null = null;
-  const live = (): Promise<Any> => (opening ??= api.openDatabase());
+  /** The handle, once open: a held transaction is rolled back on it at once, before any other request runs. */
+  let openHandle: Any | null = null;
+  const live = (): Promise<Any> =>
+    (opening ??= api.openDatabase().then((db: Any) => {
+      openHandle = db;
+      return db;
+    }));
+  /** How long a transaction may wait for its next request before it is rolled back. */
+  const TRANSACTION_IDLE_MS = 10_000;
   /** One statement, as the application's handle runs it: its rows, its columns and what it changed. */
   const runStatement = (db: Any, statement: { sql: string; bind?: unknown }): Any => {
     const rows: Any[] = [];
@@ -3301,16 +3329,140 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       lastInsertRowid: db.selectValue("SELECT last_insert_rowid()") ?? 0,
     };
   };
+  /*
+   * A statement that would open, end or mark a transaction of its own is not
+   * one of a batch: it would commit half a batch, or outlive the request that
+   * opened it. Read as SQLite reads the text, one complete statement at a
+   * time, so a trigger's BEGIN ... END is the CREATE it belongs to.
+   */
+  const TRANSACTION_WORDS = new Set(["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"]);
+  const controlsTransaction = (sql: string): boolean => {
+    const complete = (text: string): boolean => Boolean(sqlite3 && sqlite3.capi.sqlite3_complete(text));
+    let start = 0;
+    const pieces: string[] = [];
+    for (let i = sql.indexOf(";"); i >= 0; i = sql.indexOf(";", i + 1)) {
+      if (complete(sql.slice(start, i + 1))) {
+        pieces.push(sql.slice(start, i + 1));
+        start = i + 1;
+      }
+    }
+    pieces.push(sql.slice(start));
+    return pieces.some((piece) => {
+      const word = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/.exec(piece);
+      return Boolean(word && TRANSACTION_WORDS.has(word[1]!.toUpperCase()));
+    });
+  };
+  const TRANSACTION_SENTENCE =
+    "DATA_REFUSED: A transaction is await db.transaction(async (tx) => …): BEGIN, COMMIT, ROLLBACK and SAVEPOINT are not statements of a request.";
+  /** The statements of a request, each run as the application's; all of them, or none. */
+  const runAll = (db: Any, statements: { sql: string; bind?: unknown }[], inside: boolean): Any[] => {
+    if (statements.some((s) => controlsTransaction(s.sql))) throw new Error(TRANSACTION_SENTENCE);
+    const open = inside ? "SAVEPOINT dai_request" : "BEGIN";
+    const close = inside ? "RELEASE dai_request" : "COMMIT";
+    if (statements.length === 1 && !inside) return [runStatement(db, statements[0]!)];
+    db.exec(open);
+    try {
+      const results = statements.map((statement) => runStatement(db, statement));
+      db.exec(close);
+      return results;
+    } catch (error) {
+      try {
+        if (inside) {
+          db.exec("ROLLBACK TO dai_request");
+          db.exec("RELEASE dai_request");
+        } else db.exec("ROLLBACK");
+      } catch {
+        /* SQLite already ended it (an error that rolls a transaction back says so itself). */
+      }
+      throw error;
+    }
+  };
+
+  /** The transaction the application holds, if it holds one: the request that opened it, and its idle timer. */
+  let transaction: { id: number; idle: ReturnType<typeof setTimeout> | undefined } | null = null;
+  /** Transactions that ended without the application: a request still naming one is refused, never run outside it. */
+  const ended = new Map<number, { name: string; message: string }>();
+  const ENDED_IDLE = { name: "Error", message: `DATA_REFUSED: This transaction was rolled back: nothing was asked of it for ${TRANSACTION_IDLE_MS / 1000} seconds.` };
+  const ENDED_CANCELLED = { name: "AbortError", message: "This transaction was cancelled and rolled back." };
+  const endTransaction = (why: { name: string; message: string } | null): void => {
+    if (!transaction) return;
+    if (transaction.idle !== undefined) clearTimeout(transaction.idle);
+    if (why !== null) ended.set(transaction.id, why);
+    transaction = null;
+  };
+  const rollBackHeld = (why: { name: string; message: string }): void => {
+    if (!transaction) return;
+    // Not while a request of the transaction's own is running: it finishes, then the rollback comes before anything else.
+    if (running) {
+      rollBackAfter = why;
+      return;
+    }
+    try {
+      openHandle?.exec("ROLLBACK");
+    } catch {
+      /* Already ended. */
+    }
+    endTransaction(why);
+    pump();
+  };
+  let rollBackAfter: { name: string; message: string } | null = null;
+  const touch = (): void => {
+    if (!transaction) return;
+    if (transaction.idle !== undefined) clearTimeout(transaction.idle);
+    transaction.idle = setTimeout(() => rollBackHeld(ENDED_IDLE), TRANSACTION_IDLE_MS);
+  };
+  const inTransaction = (request: Any): boolean => transaction !== null && request.tx === transaction.id;
+  const transactionOf = (request: Any): void => {
+    if (typeof request.tx !== "number") return;
+    const why = ended.get(request.tx);
+    if (why !== undefined) throw Object.assign(new Error(why.message), { name: why.name });
+    if (!inTransaction(request)) throw new Error("DATA_REFUSED: This transaction is not open.");
+  };
+
   const operations: Record<string, (request: Any) => unknown> = {
     open: async () => {
       await live();
       return { autosaves, author: (api.replicated as Any).author() };
     },
     batch: async (request) => {
+      transactionOf(request);
       const list = Array.isArray(request.statements) ? request.statements : [];
       const statements = list.map(statementOf);
       const db = await live();
-      return statements.map((statement: { sql: string; bind?: unknown }) => runStatement(db, statement));
+      return runAll(db, statements, inTransaction(request));
+    },
+    begin: async (request) => {
+      const db = await live();
+      db.exec("BEGIN");
+      transaction = { id: request.id, idle: undefined };
+      return request.id;
+    },
+    commit: async (request) => {
+      transactionOf(request);
+      const db = await live();
+      try {
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          /* Already ended. */
+        }
+        endTransaction(null);
+        throw error;
+      }
+      endTransaction(null);
+      return true;
+    },
+    rollback: async (request) => {
+      transactionOf(request);
+      const db = await live();
+      try {
+        db.exec("ROLLBACK");
+      } finally {
+        endTransaction(null);
+      }
+      return true;
     },
     conflict: async (request) => {
       await live();
@@ -3329,19 +3481,53 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     writable: () => (api.replicated as Any).writable(),
     readOnly: () => (api.replicated as Any).readOnly(),
   };
-  let queue: Promise<unknown> = Promise.resolve();
-  /** One request, run whole after every request before it. */
-  const perform = (request: Any): Promise<unknown> => {
+
+  /** Requests in arrival order, not yet started. */
+  const queued: { request: Any; resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = [];
+  let running = false;
+  /** The next request that may run: in a held transaction, only that transaction's; otherwise the first. */
+  const nextRunnable = (): number => (transaction ? queued.findIndex((q) => inTransaction(q.request) || ended.has(q.request.tx)) : queued.length > 0 ? 0 : -1);
+  function pump(): void {
+    if (running) return;
+    const at = nextRunnable();
+    if (at < 0) return;
+    const [item] = queued.splice(at, 1);
+    const { request, resolve, reject } = item!;
     const op = typeof request?.op === "string" && Object.prototype.hasOwnProperty.call(operations, request.op) ? operations[request.op] : undefined;
-    const result = queue.then(() => {
-      if (!op) throw new TypeError("DATA_REFUSED: no such request.");
-      return op(request);
+    running = true;
+    Promise.resolve()
+      .then(() => {
+        if (!op) throw new TypeError("DATA_REFUSED: no such request.");
+        return op(request);
+      })
+      .then(resolve, reject)
+      .finally(() => {
+        running = false;
+        if (rollBackAfter) {
+          const why = rollBackAfter;
+          rollBackAfter = null;
+          rollBackHeld(why);
+          return;
+        }
+        touch();
+        pump();
+      });
+  }
+  /** One request: queued behind every request before it, and behind a transaction it is not part of. */
+  const perform = (request: Any): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      queued.push({ request, resolve, reject });
+      pump();
     });
-    queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
+  /** A request cancelled before it started never runs; a transaction cancelled while held is rolled back. */
+  const cancel = (target: unknown): void => {
+    const at = queued.findIndex((q) => q.request.id === target);
+    if (at >= 0) {
+      const [item] = queued.splice(at, 1);
+      item!.reject(Object.assign(new Error("This request was cancelled before it ran."), { name: "AbortError" }));
+      return;
+    }
+    if (transaction && transaction.id === target) rollBackHeld(ENDED_CANCELLED);
   };
   const serveApplication = (port: MessagePort): void => {
     port.onmessage = (event: MessageEvent) => {
@@ -3355,6 +3541,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           port.postMessage({ id, ok: false, error: errorShape(error) });
         }
       };
+      // Heard at once, never queued: it is about requests already waiting.
+      if (request.op === "cancel") {
+        cancel(request.target);
+        answer({ id, ok: true, value: true });
+        return;
+      }
       perform(request).then(
         (value) => answer({ id, ok: true, value }),
         (error) => answer({ id, ok: false, error: errorShape(error) }),
@@ -3367,14 +3559,21 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * answer a promise, under names of their own. The synchronous handle's names
    * stay with the documents that still have one, so no call keeps its name and
    * changes what it returns.
+   *
+   * `batch` and `transaction` take { signal }: an AbortSignal that, once
+   * aborted, keeps a request that has not started from running (it rejects
+   * with AbortError) and rolls back a transaction still open. A request that
+   * has started finishes, and its promise says what it did.
    */
-  const handleOver = (ask: (op: string, args?: Any) => Promise<any>): Any => {
+  const aborted = (): Error => Object.assign(new Error("This request was cancelled before it ran."), { name: "AbortError" });
+  const handleOver = (ask: (op: string, args?: Any, signal?: AbortSignal) => Promise<any>, tx?: number): Any => {
+    const extra = (): Any => (tx === undefined ? {} : { tx });
     const one = (sql: unknown, bind?: unknown): Promise<any> =>
       Promise.resolve()
         .then(() => statementOf(bind === undefined ? sql : { sql, bind }))
-        .then((statement) => ask("batch", { statements: [statement] }))
+        .then((statement) => ask("batch", { statements: [statement], ...extra() }))
         .then((results: Any[]) => results[0] as Any);
-    return Object.freeze({
+    const handle: Any = {
       /** Rows as plain objects. */
       query: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => r.rows),
       /** The first row, or undefined. */
@@ -3383,22 +3582,59 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       value: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => (r.rows[0] && r.columns[0] !== undefined ? r.rows[0][r.columns[0]] : undefined)),
       /** A statement that writes: how many rows it changed, and the key it gave a new row. */
       run: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => ({ changes: r.changes, lastInsertRowid: r.lastInsertRowid })),
-      /** Several statements as one request, in order. */
-      batch: (statements: unknown) =>
+      /** Several statements as one request, in order: all of them, or none. */
+      batch: (statements: unknown, options?: { signal?: AbortSignal }) =>
         Promise.resolve()
           .then(() => {
             if (!Array.isArray(statements)) throw new TypeError("DATA_REFUSED: Several statements are given as an array of { sql, bind }.");
             return statements.map(statementOf);
           })
-          .then((list) => ask("batch", { statements: list })),
+          .then((list) => ask("batch", { statements: list, ...extra() }, options?.signal)),
+      /** Not part of the data interface (R-Y): an application's functions do not run inside the runtime. */
+      createFunction: (): never => {
+        throw new Error(FUNCTIONS_SENTENCE);
+      },
+    };
+    if (tx === undefined) {
+      /*
+       * A transaction: fn is given tx, and only tx's requests run until fn's
+       * promise settles. Then it commits, or — when fn throws, a statement it
+       * did not catch fails, or the signal aborts — it rolls back, and the
+       * promise rejects with why. A request on db made from inside fn waits
+       * for the transaction to end; one that keeps it waiting past the idle
+       * limit rolls it back.
+       */
+      handle.transaction = async (fn: unknown, options?: { signal?: AbortSignal }) => {
+        if (typeof fn !== "function") throw new TypeError("DATA_REFUSED: transaction takes a function of tx.");
+        const signal = options?.signal;
+        if (signal?.aborted) throw aborted();
+        const id = (await ask("begin", {}, signal)) as number;
+        const onAbort = (): void => void ask("cancel", { target: id }).catch(() => undefined);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+        try {
+          let value: unknown;
+          try {
+            value = await (fn as (t: Any) => unknown)(handleOver(ask, id));
+          } catch (error) {
+            await ask("rollback", { tx: id }).catch(() => undefined);
+            throw error;
+          }
+          await ask("commit", { tx: id });
+          return value;
+        } finally {
+          signal?.removeEventListener("abort", onAbort);
+        }
+      };
       /** A conflict observed (R-X): what is shown, the alternatives, and a token; null when nothing is pending. */
-      conflict: (table: unknown, key: unknown, unit: unknown = []) =>
-        ask("conflict", { table: String(table), key: Array.isArray(key) ? key : [key], unit: Array.isArray(unit) ? unit.map(String) : [] }),
+      handle.conflict = (table: unknown, key: unknown, unit: unknown = []) =>
+        ask("conflict", { table: String(table), key: Array.isArray(key) ? key : [key], unit: Array.isArray(unit) ? unit.map(String) : [] });
       /** Keeps or chooses one alternative a token presented (R-X), logged as it is made. */
-      resolve: (token: unknown, choice: unknown) => ask("resolve", { token: String(token), choice: String(choice) }),
+      handle.resolve = (token: unknown, choice: unknown) => ask("resolve", { token: String(token), choice: String(choice) });
       /** The database as bytes, without saving. */
-      export: () => ask("export"),
-    });
+      handle.export = () => ask("export");
+    }
+    return Object.freeze(handle);
   };
 
   /*
@@ -3430,14 +3666,32 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       if (data.ok) waiter.resolve(data.value);
       else waiter.reject(Object.assign(new Error(String(data.error?.message ?? "DATA_FAILED")), { name: String(data.error?.name ?? "Error"), ...(Number.isInteger(data.error?.resultCode) ? { resultCode: data.error.resultCode } : {}) }));
     };
-    const ask = (op: string, args: Any = {}): Promise<any> =>
+    // A signal aborted before the request leaves keeps it here; aborted after, it asks the worker to drop it if it has not started.
+    const ask = (op: string, args: Any = {}, signal?: AbortSignal): Promise<any> =>
       new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(aborted());
+          return;
+        }
         const id = next++;
-        waiting.set(id, { resolve, reject });
+        const onAbort = (): void => {
+          try {
+            port.postMessage({ id: next++, op: "cancel", target: id });
+          } catch {
+            /* The port is gone; the request's own answer settles it. */
+          }
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        const settle = (f: (v: any) => void) => (v: any): void => {
+          signal?.removeEventListener("abort", onAbort);
+          f(v);
+        };
+        waiting.set(id, { resolve: settle(resolve), reject: settle(reject) });
         try {
           port.postMessage({ ...args, id, op });
         } catch (error) {
           waiting.delete(id);
+          signal?.removeEventListener("abort", onAbort);
           reject(error as Error);
         }
       });

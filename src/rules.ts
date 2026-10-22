@@ -357,7 +357,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     why: "A write cannot tell a choice from a field left alone.",
     enforced: ["prose"],
     anchors: [
-      { file: "src/runtime/bootloader.ts", contains: 'resolve: (token: unknown, choice: unknown) => ask("resolve"' },
+      { file: "src/runtime/bootloader.ts", contains: 'handle.resolve = (token: unknown, choice: unknown) => ask("resolve"' },
       { file: "src/changesets.ts", contains: "resolve(token: string, choice: string): SavedChanges" },
     ],
   },
@@ -1045,15 +1045,21 @@ export const SURFACE: readonly SurfaceEntry[] = [
   },
   {
     call: "await db.batch([{ sql, bind }, …])",
-    does: "Several statements as one request, in order. Returns each one's { rows, changes, lastInsertRowid }.",
+    does: "Several statements as one request: all of them, or none.",
     shapes: ORDINARY,
-    anchor: { file: "src/runtime/bootloader.ts", contains: "batch: (statements: unknown) =>" },
+    anchor: { file: "src/runtime/bootloader.ts", contains: "batch: (statements: unknown, options?: { signal?: AbortSignal }) =>" },
+  },
+  {
+    call: "await db.transaction(async (tx) => { … })",
+    does: "tx's requests run alone and commit when fn returns; a throw rolls back. Inside, call tx, not db.",
+    shapes: ORDINARY,
+    anchor: { file: "src/runtime/bootloader.ts", contains: "handle.transaction = async (fn: unknown, options?: { signal?: AbortSignal }) =>" },
   },
   {
     call: "await db.export()",
     does: "The database as bytes, without saving.",
     shapes: ORDINARY,
-    anchor: { file: "src/runtime/bootloader.ts", contains: 'export: () => ask("export"),' },
+    anchor: { file: "src/runtime/bootloader.ts", contains: 'handle.export = () => ask("export");' },
   },
   {
     call: "await window.dai.openDatabase()",

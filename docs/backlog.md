@@ -11100,6 +11100,41 @@ Then the 35 and the 55 go back to 25 and 45.
 **Acceptance:** two WebKit mailbox jobs, each under 15 minutes on the slowest
 runner seen, both required by the ruleset; no part of the gate above 25.
 
+### Build 2a (filed 21 October)
+
+#### D288 — An application's own SQL functions and callbacks are not part of the data interface
+
+*Status: decided, Build 2a (R-Y). Filed 21 October.*
+
+Under R-Y an ordinary document's database lives in the runtime's worker,
+and the application reaches it through `await window.dai.database()`. What
+crosses the port is data: SQL text and bound values (null, numbers,
+bigints, strings, booleans, bytes). A function never crosses. R-Y asked for
+the decision to be explicit: running the application's JavaScript inside
+the worker, as a SQL function SQLite calls or a callback a statement drives,
+would put application code back where the runtime's authority is, the
+problem R-Y removes.
+
+**Decided:** refused, with one sentence, wherever an application could hand
+one over: `db.createFunction`, a function among bound values, and a
+statement carrying a callback (or any field but `sql` and `bind`, such as
+`rowMode` or `resultRows`). The sentence: "An application's own SQL
+functions and callbacks do not run inside the runtime: compute in SQL, or
+in the page from the rows a query returns."
+
+**Compatibility:** an ordinary document written for the synchronous handle
+that registered a function (`db.createFunction`) or iterated rows through
+`exec`'s `callback` stops at the first such call, with the sentence above
+or the one that names `database()`. It is rewritten over the new handle:
+the computation goes into the SQL, or into the page over the rows `query`
+returns. Documents with shared tables keep the synchronous handle and its
+functions, as they keep their database in the frame. Nothing in
+`examples/` and none of the evaluation's apps registers a function.
+
+**Acceptance:** `tests/changesets/interface.spec.ts`, "an application's own
+SQL functions and callbacks are refused, with the sentence", on every
+engine.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

@@ -67,10 +67,10 @@ function renderSurface(): string {
 export const TAUGHT_REFUSAL = (r: { code: string; when: string; then: string; shapes: readonly string[] }): boolean =>
   r.shapes.includes("solo") && !/replicated|_r_|session|seat|roster|SHARED-|IDENTITY-SEAT|SESSION-/i.test(`${r.code} ${r.when} ${r.then}`);
 
+/** The refusals an ordinary-table application can meet, under their heading; nothing when there are none. */
 function renderRefusals(): string {
-  return APP_REFUSALS.filter(TAUGHT_REFUSAL)
-    .map((r) => `- ${r.code} — ${r.when} ${r.then}`)
-    .join("\n");
+  const taught = APP_REFUSALS.filter(TAUGHT_REFUSAL).map((r) => `- ${r.code} — ${r.when} ${r.then}`);
+  return taught.length === 0 ? "" : `REFUSALS YOU MAY MEET\nWhat an error means, and what to do instead.\n\n${taught.join("\n")}\n\n`;
 }
 
 function bundleOf(name: string, files: Record<string, string>): string {
@@ -119,12 +119,7 @@ Everything an application is given, and nothing else.
 
 ${renderSurface()}
 
-REFUSALS YOU MAY MEET
-What an error means, and what to do instead.
-
-${renderRefusals()}
-
-PATTERNS
+${renderRefusals()}PATTERNS
 The database, from JavaScript. Parameters are bound, never interpolated.
 
   const db = await window.dai.database();
