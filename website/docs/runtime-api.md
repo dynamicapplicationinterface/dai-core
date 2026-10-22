@@ -16,7 +16,6 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `window.dai.documentUuid` — This document's identity.
 - `window.dai.signature` — "valid", "unsigned" or "invalid" for this container.
 - `window.dai.onAppModeChange(fn)` — Called when the container enters or leaves full-screen App Mode.
-- `window.dai.requestShare(session?)` — Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send. In a session document, pass the session id to make it an invite into that one session: the copy that travels holds only that session's rows, and none of the other sessions or of this copy's local tables. Without one, the whole document is offered.
 - `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the merge listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
 
 ## Ordinary tables (the database lives in the runtime's worker)
@@ -28,6 +27,7 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `await db.batch([{ sql, bind }, …])` — Several statements as one request: all of them, or none.
 - `await db.transaction(async (tx) => { … })` — tx's requests run alone and commit when fn returns; a throw rolls back. Inside, call tx, not db.
 - `await db.export()` — The database as bytes, without saving.
+- `window.dai.requestShare()` — Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send.
 
 ## Shared tables (passable and session)
 

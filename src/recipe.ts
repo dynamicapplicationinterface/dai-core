@@ -172,9 +172,10 @@ The kit:
 
   <script type="module" src="./dai-kit.js"></script>
 
-- A form's fields become the :parameters of its statement, by name.
-- Inside a row, :parameters come from that row's columns; data-text writes a column as text; data-when shows an element when a column is truthy.
-- A control's own attributes data-x become :x, and what was typed into an input is :typed.
+- A form's fields become the :parameters of its statement, by name; its button submits it, whatever its type.
+- Inside a row, :parameters come from that row's columns; data-text fills an element's text or a field's value; data-when shows any element when a column is truthy.
+- data-run runs on any element: a button when clicked, an input or select when it changes. Its own attributes data-x become :x, and what was typed is :typed.
+- A select fills its options from a query: <select name="person_id" data-options="SELECT id, name FROM people">, value then label.
 - A picture goes in the document, in a BLOB column, so it travels with the file: <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">Add a photo</dai-attach>, and <img data-blob="photo" alt=""> to show it. Never write a file path or a URL to an image the document does not carry.
 
 When another copy's changes arrive, the host applies them to the same tables and the application hears dai:merged; redraw on it (the kit's elements already do):

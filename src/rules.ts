@@ -1128,10 +1128,17 @@ export const SURFACE: readonly SurfaceEntry[] = [
     anchor: { file: "src/runtime/bootloader.ts", contains: "onAppModeChange" },
   },
   {
+    call: "window.dai.requestShare()",
+    does:
+      "Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send.",
+    shapes: ORDINARY,
+    anchor: { file: "src/runtime/bootloader.ts", contains: "requestShare: (session?: string) =>" },
+  },
+  {
     call: "window.dai.requestShare(session?)",
     does:
       "Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send. In a session document, pass the session id to make it an invite into that one session: the copy that travels holds only that session's rows, and none of the other sessions or of this copy's local tables. Without one, the whole document is offered.",
-    shapes: ALL,
+    shapes: SHARED,
     anchor: { file: "src/runtime/bootloader.ts", contains: "requestShare: (session?: string) =>" },
   },
   {

@@ -424,6 +424,7 @@ class DaiRows extends HTMLElement {
       wire(holder, row);
       while (holder.firstChild) this.appendChild(holder.firstChild);
     }
+    drawOptions(this);
   }
 }
 
@@ -924,6 +925,34 @@ window.daiKit = {
  * control a person (or a test) uses now does what it says. Said on the root
  * as data-dai-kit="ready", for whatever waits on it: never a guess at time.
  */
+/*
+ * A choice list from a query: <select data-options="SELECT id, name FROM
+ * people">. Each row is an option, its first column the value and its second
+ * (or, alone, its first) the label, written as text. Options written in the
+ * HTML stay, first. Redrawn with every view, keeping the choice while it is
+ * still offered; inside a dai-form its value is the parameter of its name, as
+ * any field's is.
+ */
+function drawOptions(root) {
+  const lists = [...root.querySelectorAll('select[data-options]')];
+  return Promise.all(lists.map((select) => later(later(settled(select.getAttribute('data-options')), (sql) => rowsOf(sql)), (rows) => {
+    const kept = select.value;
+    for (const option of select.querySelectorAll('option[data-dai-option]')) option.remove();
+    for (const row of rows) {
+      const columns = Object.keys(row);
+      const option = document.createElement('option');
+      option.value = String(row[columns[0]] ?? '');
+      option.textContent = String(row[columns[1] ?? columns[0]] ?? '');
+      option.setAttribute('data-dai-option', '');
+      select.appendChild(option);
+    }
+    if ([...select.options].some((option) => option.value === kept)) select.value = kept;
+  })));
+}
+const choiceLists = { draw() { this.drawn = drawOptions(document); return this.drawn; } };
+choiceLists.draw();
+views.add(choiceLists);
+
 const markReady = () => document.documentElement.setAttribute('data-dai-kit', 'ready');
 Promise.all([...views].map((view) => view.drawn)).then(markReady, markReady);
 `;

@@ -11156,6 +11156,27 @@ character before a table.
 **Acceptance:** the cold run's chore chart builds as written; a schema with
 an emoji default before a CHECK builds and declares both tables.
 
+#### D290 — The next cold run asks from the amended model file
+
+*Status: open, for the next cold run. Filed 21 October, from Build 2a.*
+
+Build 2a's cold run was asked from the model file of R-Y (33,955 bytes,
+sha256 `e2db23c9…f510`). Every one of its ten apps put `data-run` on a
+plain button, which the file never showed, and two needed a select filled
+from a table, which the kit could not do: the budget redesigned around it
+and the chore chart wrote a script of its own. The kit already ran
+`data-run` on any element and `data-when` on any element; it now also fills
+`<select data-options="SELECT id, name FROM people">`. The model file now
+says all three, and that a kit form's button submits it whatever its type
+(33,959 bytes). Build 2a did not ask again: its rerun used the same
+generations, so the amendment is untested by a cold reader.
+
+**Change:** the next cold run of `eval/changesets-ten` asks the same ten
+prompts from the amended file, fresh generations, and records which file.
+**Acceptance:** the run's record names the model file's digest, and no app
+in it reaches for a kit behavior the file does not show (each subagent's own
+list of assumptions, read, is the check).
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

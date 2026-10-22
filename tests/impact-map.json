@@ -310,6 +310,24 @@
       "src/cbor.ts",
       "tests/cbor.spec.ts"
     ],
+    "tests/changesets/astral.spec.ts": [
+      "src/cbor.ts",
+      "src/changes-log.ts",
+      "src/compile.ts",
+      "src/container.ts",
+      "src/core.ts",
+      "src/cose.ts",
+      "src/declarations.ts",
+      "src/format.ts",
+      "src/kit.ts",
+      "src/refusals.ts",
+      "src/replicated.ts",
+      "src/schema.ts",
+      "src/session-id.ts",
+      "src/test-keys.ts",
+      "src/unzip.ts",
+      "tests/changesets/astral.spec.ts"
+    ],
     "tests/changesets/authoring.spec.ts": [
       "examples/receipts/",
       "examples/request/",
