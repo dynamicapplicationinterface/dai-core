@@ -384,7 +384,7 @@ class DaiRows extends HTMLElement {
   connectedCallback() {
     this.template = this.querySelector('template');
     views.add(this);
-    this.draw();
+    this.drawn = this.draw();
   }
 
   disconnectedCallback() {
@@ -431,7 +431,7 @@ class DaiRows extends HTMLElement {
 class DaiValue extends HTMLElement {
   connectedCallback() {
     views.add(this);
-    this.draw();
+    this.drawn = this.draw();
   }
 
   disconnectedCallback() {
@@ -918,6 +918,14 @@ window.daiKit = {
   pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer,
   onSessionVoid: onSessionVoid, onContested: onContested, author: me,
 };
+
+/*
+ * Ready: every element defined and every view on the page drawn once, so a
+ * control a person (or a test) uses now does what it says. Said on the root
+ * as data-dai-kit="ready", for whatever waits on it: never a guess at time.
+ */
+const markReady = () => document.documentElement.setAttribute('data-dai-kit', 'ready');
+Promise.all([...views].map((view) => view.drawn)).then(markReady, markReady);
 `;
 
 /** Where the compiler puts it, and what an application references. */

@@ -57,7 +57,34 @@ async function firstOpen(side: Side, file: string): Promise<void> {
   await side.page.locator("#card-open").click({ timeout: 60_000 });
   await expect(side.page.locator("iframe")).toBeVisible({ timeout: 60_000 });
   await side.app.locator("body").waitFor({ timeout: 60_000 });
-  await side.page.waitForTimeout(1500);
+  await ready(side);
+}
+
+/*
+ * The page is ready when the kit says so (data-dai-kit="ready" on the app's
+ * root: every element defined, every view drawn once). A page with none of the
+ * kit's elements is ready when it has started. Never a guess at time: a fixed
+ * wait typed into a page whose kit had not started, and the typing was lost.
+ */
+async function ready(side: Side): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        side.app
+          .locator("body")
+          .evaluate(() => {
+            if (document.documentElement.getAttribute("data-dai-kit") === "ready") return true;
+            const kit = document.querySelector("dai-rows, dai-value, dai-form, dai-attach, dai-save");
+            const opening = [...document.querySelectorAll("body *")].some(
+              (e) => /^\s*Opening/.test(e.textContent ?? "") && e.children.length === 0 && (e as HTMLElement).offsetParent !== null,
+            );
+            return !kit && !opening && !document.querySelector("main[hidden][inert], #app[hidden][inert]");
+          })
+          .catch(() => false),
+      { timeout: 60_000, message: "the page is ready" },
+    )
+    .toBe(true)
+    .catch(() => undefined);
 }
 
 /** Opens another copy's file into this device's copy. Only the first merge on a device asks. */
@@ -67,7 +94,7 @@ async function mergeIn(side: Side, file: string): Promise<void> {
   if (await card.waitFor({ timeout: 10_000 }).then(() => true, () => false)) {
     if (/Open in my copy/.test((await card.innerText().catch(() => "")) ?? "")) await card.click();
   }
-  await side.page.waitForTimeout(1500);
+  await ready(side);
 }
 
 async function saveOut(side: Side, to: string): Promise<string> {
@@ -205,9 +232,12 @@ async function writeForms(side: Side, rounds: number): Promise<string[]> {
         }
       }
       if (!filled) continue;
-      const submit = form.locator("button[type=submit], button:not([type]), input[type=submit]").first();
+      // As a person submits it: a kit form by its own button (the kit runs on its button, whatever its type),
+      // a form by its submit button; with neither, Enter in a text field, never in a select.
+      const kitForm = await form.evaluate((e) => e.tagName === "DAI-FORM");
+      const submit = kitForm ? form.locator("button").first() : form.locator("button[type=submit], button:not([type]), input[type=submit]").first();
       if (await submit.count()) await submit.click({ timeout: 3000 }).catch(() => {});
-      else await fields.first().press("Enter").catch(() => {});
+      else await form.locator("input:not([type=checkbox]):not([type=radio]), textarea").first().press("Enter").catch(() => {});
       await side.page.waitForTimeout(300);
     }
   }
@@ -296,8 +326,8 @@ for (const name of APPS) {
       // 5. Reopen both: the app starts and shows the other side's typing.
       await a.page.reload();
       await b.page.reload();
-      await a.page.waitForTimeout(3000);
-      await b.page.waitForTimeout(3000);
+      await ready(a);
+      await ready(b);
       const textA = await textOf(a);
       const textB = await textOf(b);
       row.shows = {
