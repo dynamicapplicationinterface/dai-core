@@ -125,7 +125,7 @@ test.describe("protocol", () => {
     // blank apps and nobody finds out until a person opens one.
     const create = TOOLS.find((tool) => tool.name === "create_dai_app");
     expect(create?.description).toMatch(/no network/i);
-    expect(create?.description).toMatch(/window\.dai\.openDatabase/);
+    expect(create?.description).toMatch(/window\.dai\.database\(\)/);
     expect(create?.description).toMatch(/type="module"/);
     expect(create?.description).toMatch(/localStorage/);
   });

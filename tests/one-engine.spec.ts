@@ -149,7 +149,7 @@ test.describe("one engine", () => {
     // Losing any of these turns the server into something that produces blank
     // apps, and nobody finds out until a person opens one.
     expect(RECIPE).toMatch(/no network|NO NETWORK/i);
-    expect(RECIPE).toMatch(/window\.dai\.openDatabase/);
+    expect(RECIPE).toMatch(/window\.dai\.database\(\)/);
     expect(RECIPE).toMatch(/saveDatabase/);
     expect(RECIPE).toMatch(/type="module"/);
     expect(RECIPE).toMatch(/localStorage/);
