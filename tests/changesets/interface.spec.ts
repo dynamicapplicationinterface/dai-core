@@ -189,6 +189,27 @@ test.describe("the data interface across the boundary (R-Y)", () => {
     expect(await bodies(app)).toEqual(["in tx", "late"]);
   });
 
+  test("a cancel queued behind a slow statement is heard before the next request starts", async ({ page }) => {
+    const app = await open(page);
+    const result = await inApp<Any>(
+      app,
+      `const slow = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 3000000) SELECT count(*) AS n FROM c";
+       const behind = new AbortController();
+       const first = db.batch([slow, slow]);
+       const second = db.batch(["INSERT INTO notes (body) VALUES ('q1')", "INSERT INTO notes (body) VALUES ('q2')"], { signal: behind.signal });
+       const third = db.run("INSERT INTO notes (body) VALUES ('third')");
+       // Aborted while the first runs: the worker hears it only once the running statement returns.
+       setTimeout(() => behind.abort(), 40);
+       return {
+         first: await first.then((r) => 'ran ' + r.length, (e) => e.name),
+         second: await second.then(() => 'ran', (e) => e.name),
+         third: await third.then((r) => 'ran ' + r.changes, (e) => e.name),
+       };`,
+    );
+    expect(result, "the slow batch, started, finished; the cancelled one never ran; the next one did").toEqual({ first: "ran 2", second: "AbortError", third: "ran 1" });
+    expect(await bodies(app)).toEqual(["third"]);
+  });
+
   test("a transaction left waiting is rolled back, and the request that kept it waiting then runs", async ({ page }) => {
     const app = await open(page);
     const outcome = await inApp<Any>(

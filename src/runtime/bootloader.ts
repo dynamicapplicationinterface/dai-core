@@ -3375,6 +3375,15 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * it waits, and nothing else runs inside it. One left idle is rolled back.
    * A request cancelled before it starts never runs; one that has started
    * finishes, and its answer says what it did.
+   *
+   * What "cancelled" means for the statement in flight: nothing. The worker
+   * runs a statement to its end before it reads its port again, so a cancel
+   * sent while one runs is heard only after it returns, and the request it
+   * belongs to (the rest of its batch with it) runs to its end and is answered
+   * with what it did. A request that carries a signal and has not started
+   * starts only once the application's side, asked in its turn, answers that
+   * its signal is not aborted, so one aborted while it waited behind another
+   * never runs (2a-L1).
    */
   let opening: Promise<Any> | null = null;
   /** The handle, once open: a held transaction is rolled back on it at once, before any other request runs. */
@@ -3584,16 +3593,35 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   };
 
   /** Requests in arrival order, not yet started. */
-  const queued: { request: Any; resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = [];
+  const queued: { request: Any; resolve: (v: unknown) => void; reject: (e: unknown) => void; asked?: boolean; wanted?: boolean }[] = [];
   let running = false;
+  /** The port the application's requests arrive on; a request with a signal is confirmed through it before it starts. */
+  let served: MessagePort | null = null;
   /** The next request that may run: in a held transaction, only that transaction's; otherwise the first. */
   const nextRunnable = (): number => (transaction ? queued.findIndex((q) => inTransaction(q.request) || ended.has(q.request.tx)) : queued.length > 0 ? 0 : -1);
   function pump(): void {
     if (running) return;
     const at = nextRunnable();
     if (at < 0) return;
-    const [item] = queued.splice(at, 1);
-    const { request, resolve, reject } = item!;
+    /*
+     * A request with a signal starts only once the application's side says it
+     * is still wanted (2a-L1). A cancel sent while a statement ran waits in
+     * the port behind the request it names, and nothing the worker can do
+     * makes it heard sooner: no yield is ordered against the application's
+     * port the same way on every engine. Asked now, the answer is the signal
+     * as it stands now, so a request aborted while it waited never starts.
+     * Nothing behind it starts first.
+     */
+    const next = queued[at]!;
+    if (next.request.signal === true && !next.wanted) {
+      if (!next.asked && served) {
+        next.asked = true;
+        served.postMessage({ start: next.request.id });
+      }
+      return;
+    }
+    queued.splice(at, 1);
+    const { request, resolve, reject } = next;
     const op = typeof request?.op === "string" && Object.prototype.hasOwnProperty.call(operations, request.op) ? operations[request.op] : undefined;
     running = true;
     Promise.resolve()
@@ -3626,11 +3654,21 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     if (at >= 0) {
       const [item] = queued.splice(at, 1);
       item!.reject(Object.assign(new Error("This request was cancelled before it ran."), { name: "AbortError" }));
+      // What waited behind it may start now.
+      pump();
       return;
     }
     if (transaction && transaction.id === target) rollBackHeld(ENDED_CANCELLED);
   };
+  /** The application's side says a request with a signal is still wanted: it starts in its turn. */
+  const wanted = (target: unknown): void => {
+    const item = queued.find((q) => q.request.id === target);
+    if (!item) return;
+    item.wanted = true;
+    pump();
+  };
   const serveApplication = (port: MessagePort): void => {
+    served = port;
     port.onmessage = (event: MessageEvent) => {
       const request = event.data as Any;
       const id = request?.id;
@@ -3646,6 +3684,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       if (request.op === "cancel") {
         cancel(request.target);
         answer({ id, ok: true, value: true });
+        return;
+      }
+      if (request.op === "go") {
+        wanted(request.target);
         return;
       }
       perform(request).then(
@@ -3749,9 +3791,16 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     let status: typeof saveStatus = "idle";
     let author: string | null = null;
     const waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    /** The signal of each request still waiting that has one: the worker asks before it starts one (2a-L1). */
+    const signals = new Map<number, AbortSignal>();
     port.onmessage = (event: MessageEvent) => {
       const data = event.data as Any;
       if (!data || typeof data !== "object") return;
+      if (typeof data.start === "number") {
+        const signal = signals.get(data.start);
+        port.postMessage({ id: next++, op: signal?.aborted ? "cancel" : "go", target: data.start });
+        return;
+      }
       if (typeof data.event === "string") {
         if (data.event === names.NEW_PLAYER) target.newPlayer = true;
         window.dispatchEvent(data.detail === undefined ? new CustomEvent(data.event) : new CustomEvent(data.event, { detail: data.detail }));
@@ -3783,15 +3832,18 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           }
         };
         signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal) signals.set(id, signal);
         const settle = (f: (v: any) => void) => (v: any): void => {
           signal?.removeEventListener("abort", onAbort);
+          signals.delete(id);
           f(v);
         };
         waiting.set(id, { resolve: settle(resolve), reject: settle(reject) });
         try {
-          port.postMessage({ ...args, id, op });
+          port.postMessage({ ...args, id, op, ...(signal ? { signal: true } : {}) });
         } catch (error) {
           waiting.delete(id);
+          signals.delete(id);
           signal?.removeEventListener("abort", onAbort);
           reject(error as Error);
         }
