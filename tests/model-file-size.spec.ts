@@ -78,6 +78,14 @@ test("R-Y: the model file teaches the asynchronous handle, and never the synchro
   for (const old of ["openDatabase", "selectObjects", "selectValue", "db.exec(", "exportDatabase"]) expect(RECIPE, old).not.toContain(old);
 });
 
+test("2a-L3: the line that lists the ordinary SQL names batch and transaction as the calls, and no transaction as SQL", () => {
+  const line = RECIPE.split("\n").find((l) => l.startsWith("Write ordinary SQLite tables"));
+  expect(line, "the line is there").toBeDefined();
+  expect(line, "BEGIN, COMMIT and ROLLBACK in a request are refused").not.toMatch(/transactions/i);
+  expect(line).toContain("db.batch");
+  expect(line).toContain("db.transaction");
+});
+
 test.describe("the model file's size", () => {
   test("stays within its stated budget, so growth is a decision rather than a discovery", () => {
     const bytes = bytesOf(RECIPE);
