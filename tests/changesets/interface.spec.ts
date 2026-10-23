@@ -67,6 +67,29 @@ test.describe("the data interface across the boundary (R-Y)", () => {
     expect(await bodies(app)).toEqual(["a", "b"]);
   });
 
+  test("a request of several statements is atomic too: when one fails, none is applied", async ({ page }) => {
+    const app = await open(page);
+    const outcome = await inApp<string>(
+      app,
+      "return db.run(\"INSERT INTO notes (body) VALUES ('multi1'); INSERT INTO notes (body) VALUES (NULL)\").then(() => 'resolved', (e) => 'rejected: ' + e.message);",
+    );
+    expect(outcome).toMatch(/^rejected: .*NOT NULL/);
+    expect(await bodies(app), "the first statement did not stay").toEqual([]);
+    await inApp(app, "await db.run(\"INSERT INTO notes (body) VALUES ('one'); INSERT INTO notes (body) VALUES ('two')\");");
+    expect(await bodies(app), "both, when both run").toEqual(["one", "two"]);
+    // Inside a transaction too, and the transaction goes on.
+    const inside = await inApp<string>(
+      app,
+      `return db.transaction(async (tx) => {
+         const failed = await tx.run("INSERT INTO notes (body) VALUES ('half'); INSERT INTO notes (body) VALUES (NULL)").then(() => 'ran', () => 'failed');
+         await tx.run("INSERT INTO notes (body) VALUES ('three')");
+         return failed;
+       });`,
+    );
+    expect(inside).toBe("failed");
+    expect(await bodies(app)).toEqual(["one", "two", "three"]);
+  });
+
   test("a transaction is its own: no other request runs inside it, and one made during it lands after", async ({ page }) => {
     const app = await open(page);
     const seen = await inApp<Any>(

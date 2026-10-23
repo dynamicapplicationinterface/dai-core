@@ -3407,7 +3407,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * time, so a trigger's BEGIN ... END is the CREATE it belongs to.
    */
   const TRANSACTION_WORDS = new Set(["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"]);
-  const controlsTransaction = (sql: string): boolean => {
+  const FIRST_WORD = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/;
+  /** The statements of a text, as SQLite reads it: each piece's first word, where it has one (a lone ; or a comment has none). */
+  const firstWords = (sql: string): string[] => {
     const complete = (text: string): boolean => Boolean(sqlite3 && sqlite3.capi.sqlite3_complete(text));
     let start = 0;
     const pieces: string[] = [];
@@ -3418,19 +3420,26 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       }
     }
     pieces.push(sql.slice(start));
-    return pieces.some((piece) => {
-      const word = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/.exec(piece);
-      return Boolean(word && TRANSACTION_WORDS.has(word[1]!.toUpperCase()));
+    return pieces.flatMap((piece) => {
+      const word = FIRST_WORD.exec(piece);
+      return word ? [word[1]!.toUpperCase()] : [];
     });
   };
+  const controlsTransaction = (sql: string): boolean => firstWords(sql).some((word) => TRANSACTION_WORDS.has(word));
   const TRANSACTION_SENTENCE =
     "DATA_REFUSED: A transaction is await db.transaction(async (tx) => …): BEGIN, COMMIT, ROLLBACK and SAVEPOINT are not statements of a request.";
-  /** The statements of a request, each run as the application's; all of them, or none. */
+  /*
+   * The statements of a request, each run as the application's; all of them,
+   * or none. A text of several statements is several statements: db.run of
+   * two runs inside a transaction as a batch of two does, and a failure in the
+   * second leaves nothing of the first (2a-M1). Only one statement alone runs
+   * without one, as SQLite runs it whole anyway, so a VACUUM can still run.
+   */
   const runAll = (db: Any, statements: { sql: string; bind?: unknown }[], inside: boolean): Any[] => {
     if (statements.some((s) => controlsTransaction(s.sql))) throw new Error(TRANSACTION_SENTENCE);
     const open = inside ? "SAVEPOINT dai_request" : "BEGIN";
     const close = inside ? "RELEASE dai_request" : "COMMIT";
-    if (statements.length === 1 && !inside) return [runStatement(db, statements[0]!)];
+    if (statements.length === 1 && !inside && firstWords(statements[0]!.sql).length <= 1) return [runStatement(db, statements[0]!)];
     db.exec(open);
     try {
       const results = statements.map((statement) => runStatement(db, statement));
