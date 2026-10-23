@@ -1206,7 +1206,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         }
         if (result && result.saved === false) throw new Error(String(result.method || "this page did not save it"));
         failures = 0;
-        tellSaveStatus("saved");
+        // A write made while these bytes were taken is still to be saved, so this is not yet "Saved" (2a-r1-M1).
+        tellSaveStatus(autosaveDb ? "saving" : "saved");
       },
       (error: unknown) => {
         saving = null;
@@ -1244,6 +1245,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     // Nor one refused under P3: no save of it can succeed, and the refusal has been said.
     if (changes && changes.refusal) return;
     autosaveDb = db;
+    // A write still to be saved is not "Saved" (2a-r1-M1): the host is told at once. A failure stays said until a save succeeds.
+    if (saveStatus === "saved" || saveStatus === "idle") tellSaveStatus("saving");
     if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
       autosaveTimer = undefined;
@@ -3543,6 +3546,15 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     },
     begin: async (request) => {
       const db = await live();
+      /*
+       * A save that is due, or in flight, is written before the transaction
+       * opens (2a-r1-M1). Taken after, it would wait for the transaction's end,
+       * or find it open at the bytes and wait again, and a committed write
+       * would sit unsaved for the whole hold. So only the transaction's own
+       * rows ever wait on it. Nothing of the application's runs meanwhile: its
+       * requests start one at a time, and this one has started.
+       */
+      if (autosaves) await Promise.resolve(flushAutosave()).catch(() => undefined);
       db.exec("BEGIN");
       transaction = { id: request.id, idle: undefined };
       return request.id;

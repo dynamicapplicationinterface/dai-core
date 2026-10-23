@@ -159,7 +159,8 @@ test.describe("no bytes while an application transaction is open (2a-H1)", () =>
     await based(page, app, uuid);
 
     // A committed write whose save is still to come, then a transaction opened over it and kept open: it asks
-    // every second, so its idle limit never ends it and only the page leaving can.
+    // every second, so its idle limit never ends it and only the page leaving can. The write is saved before the
+    // transaction opens (2a-r1-M1); the transaction's own row never is.
     await inApp(
       app,
       `await db.run("INSERT INTO notes (body) VALUES ('pending')");
@@ -176,7 +177,7 @@ test.describe("no bytes while an application transaction is open (2a-H1)", () =>
        await ready;`,
     );
     await page.waitForTimeout(2000);
-    expect((await stored(page, uuid)).bodies, "nothing is taken while the transaction is open").toBe("base");
+    expect(await stored(page, uuid), "nothing of the open transaction is taken").toEqual({ bodies: "base,pending", unsealed: 0, ghostOps: 0 });
 
     // The shell's page is going away: what a close or a hide fires.
     await page.frameLocator("#cartridge").locator("body").evaluate(() => window.dispatchEvent(new Event("pagehide")));
@@ -190,5 +191,46 @@ test.describe("no bytes while an application transaction is open (2a-H1)", () =>
     app = appIn(page);
     await expect(app.locator("#app")).toBeVisible({ timeout: 60_000 });
     expect(await bodies(app), "reopened").toEqual(["base", "pending"]);
+  });
+
+  test("a committed write is saved before a transaction opens over it, Saved is never said of what is not stored, and a real leave keeps it (2a-r1-M1)", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-held-before-"));
+    let app = await open(page, await build(scratch));
+    const uuid = await uuidOf(page);
+    await based(page, app, uuid);
+
+    // The status arrives on the port the answer comes back on, before it: what the application reads as soon as
+    // its write resolves is what the runtime said of that write.
+    const said = await inApp<string>(
+      app,
+      `await db.run("INSERT INTO notes (body) VALUES ('pending')");
+       const said = window.dai.saveStatus;
+       let opened;
+       const ready = new Promise((r) => (opened = r));
+       window.__held = db.transaction(async (tx) => {
+         await tx.run("INSERT INTO notes (body) VALUES ('ghost')");
+         opened();
+         for (let i = 0; i < 120; i++) {
+           await new Promise((r) => setTimeout(r, 1000));
+           await tx.value('SELECT count(*) FROM notes');
+         }
+       }).then(() => 'committed', (e) => e.message);
+       await ready;
+       return said;`,
+    );
+    expect.soft(said, "a write still to be saved is not said to be saved").not.toBe("saved");
+
+    // Held past the save's interval; the transaction keeps asking, so nothing but the page leaving ends it.
+    await page.waitForTimeout(2500);
+    expect(await stored(page, uuid), "the committed write was saved before the transaction opened").toEqual({ bodies: "base,pending", unsealed: 0, ghostOps: 0 });
+
+    // A real leave: away and back, as a person goes.
+    await page.goto("about:blank");
+    await page.goBack();
+    await page.reload();
+    app = appIn(page);
+    await expect(app.locator("#app")).toBeVisible({ timeout: 60_000 });
+    expect(await bodies(app), "reopened").toEqual(["base", "pending"]);
+    expect(await stored(page, uuid), "the stored copy").toEqual({ bodies: "base,pending", unsealed: 0, ghostOps: 0 });
   });
 });
