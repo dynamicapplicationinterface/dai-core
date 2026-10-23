@@ -11206,6 +11206,57 @@ address"), against the same test on `main`.
 **Acceptance:** a CI run in which it fails is read and the cause named, or
 a month of Firefox runs passes it.
 
+#### D292 — The browser install stalls CI's browser jobs past their limit
+
+*Status: open, the fix owed in the merge session. Filed 23 October, from
+Build 2a-r1's CI.*
+
+Every browser job runs `npx playwright install --with-deps <browser>
+chromium` (`.github/workflows/test.yml`) with no cache of the browsers and
+no limit of its own. When the runner's apt mirror or the browser download is
+slow, the step takes the job's whole allowance: the job is cancelled with no
+tally, and the count gate fails because that part sent no count. No test
+failed in any of these runs. Read from the runs' own step timings:
+
+| Run | Commit | Job | `playwright install` |
+|---|---|---|---|
+| 39774895221 | `59a40b27` | Firefox (whole) | cancelled at 60.0 min, the job's limit |
+| 39815514636 | `93a2be93` | WebKit shard 3 | cancelled at 44.9 min, the job's limit |
+| 39888560478 | `d661504b` | WebKit shards 1 and 4 | 28.0 and 33.4 min, then passed |
+| 39952369056, attempt 1 | `f8ee1d86` | WebKit shard 4 | cancelled at 44.9 min |
+| 39952369056, attempt 1 | `f8ee1d86` | WebKit mailbox | cancelled at 55.0 min |
+| 39962418846, attempt 1 | `70f9125e` | WebKit mailbox | 42.8 min; the tests were then cancelled at the job's 55 min |
+
+- On the same runs the install takes about 11 min for Chromium and well
+  under a minute when the mirror is quick (39952369056 attempt 2: 37 s for
+  WebKit mailbox).
+- Each stall above cleared on `gh run rerun --failed`.
+- The run before 39888560478 on the branch, 39888079056 (`1ae80a04`), had
+  none.
+- The workflow's own comment on the job's limit (30 September, beside
+  D174) records the install at 6 to 11 minutes on runners whose apt
+  mirror was slow. The limit was set then to give setup an allowance
+  apart from the tests' budget.
+- **I.** The stall has since outgrown that allowance.
+
+**Change (the merge session, not before).** The install stops depending on
+the mirror at the moment of the run, by one of:
+
+- cache the browsers (`~/.cache/ms-playwright`) keyed on the installed
+  Playwright version, so `playwright install` downloads only on a version
+  change. The system libraries `--with-deps` installs are not in that
+  cache: `install-deps` still runs, or the next option covers them;
+- or run the browser jobs in Playwright's container image for the same
+  version (`mcr.microsoft.com/playwright:v<version>-<distro>`), which
+  carries the browsers and their libraries, so no install step runs.
+
+Either one ties the browsers to the `@playwright/test` version in
+`package-lock.json` (1.63.0 today). The workflow was not changed in Build
+2a-r1.
+
+**Acceptance:** a month of runs in which no browser job is cancelled in, or
+loses its tests' time to, the browser install.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
