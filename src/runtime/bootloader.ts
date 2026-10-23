@@ -2901,7 +2901,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
             databaseBytes = undefined;
           }
         }
-        toShell({ type: names.FLUSHED, id: data.id, saved: landed(), ...(databaseBytes ? { databaseBytes } : {}) });
+        const saved = landed();
+        // Not landed because the application holds a transaction: kept for its end, not failed (2a-r1-L1).
+        const held = !saved && liveDb !== null && transactionHeld(liveDb);
+        toShell({ type: names.FLUSHED, id: data.id, saved, ...(held ? { held } : {}), ...(databaseBytes ? { databaseBytes } : {}) });
       })();
       return;
     }
@@ -5126,6 +5129,7 @@ async function boot(): Promise<void> {
           sessionNonce,
           id: relay.id,
           saved: (data as { saved?: unknown }).saved !== false,
+          ...((data as { held?: unknown }).held === true ? { held: true } : {}),
           ...((data as { databaseBytes?: unknown }).databaseBytes instanceof Uint8Array
             ? { databaseBytes: (data as { databaseBytes: Uint8Array }).databaseBytes }
             : {}),

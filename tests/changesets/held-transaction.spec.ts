@@ -233,4 +233,38 @@ test.describe("no bytes while an application transaction is open (2a-H1)", () =>
     expect(await bodies(app), "reopened").toEqual(["base", "pending"]);
     expect(await stored(page, uuid), "the stored copy").toEqual({ bodies: "base,pending", unsealed: 0, ghostOps: 0 });
   });
+
+  test("Save a copy while a transaction is held says it waits on the app, not that a signature or a save failed (2a-r1-L1)", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-held-copy-"));
+    const context = await browser.newContext({ acceptDownloads: true });
+    const page = await context.newPage();
+    const app = await open(page, await build(scratch));
+    await based(page, app, await uuidOf(page));
+    await page.evaluate(() => {
+      delete (window as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+    });
+    let files = 0;
+    page.on("download", () => void (files += 1));
+    // Kept open by asking every second, so nothing but the test's end closes it.
+    await inApp(
+      app,
+      `let opened;
+       const ready = new Promise((r) => (opened = r));
+       db.transaction(async (tx) => {
+         await tx.run("INSERT INTO notes (body) VALUES ('ghost')");
+         opened();
+         for (let i = 0; i < 120; i++) {
+           await new Promise((r) => setTimeout(r, 1000));
+           await tx.value('SELECT 1');
+         }
+       }).catch(() => undefined);
+       await ready;`,
+    );
+    await page.click("#more");
+    await page.click("#export");
+    await expect(page.locator("#doc-note"), "what Save a copy says").toContainText("waiting on the app", { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).not.toContainText("could not be signed");
+    expect(files, "no file is made of a document in the middle of a change").toBe(0);
+    await context.close();
+  });
 });
