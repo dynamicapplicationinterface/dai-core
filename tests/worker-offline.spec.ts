@@ -71,8 +71,10 @@ test("offline the moment a worker document has loaded: the menu opens, nothing i
   } finally {
     await context.setOffline(false);
   }
-  // Not the application on WebKit: the emulation failed its own scripts (blobs) as they loaded, with or without a
-  // worker (the tasks example has none and loses them the same way), so no application is there to ask.
+  // Not the application on WebKit: the emulation fails its own scripts (blobs) as they load, with or without a
+  // worker, so no application is there to ask. Offline at this same moment, the chore chart lost its kit in 10 runs
+  // of 10; the tasks example, which has no worker, lost its script in 8 of 10 and drew whole in 2, a race with the
+  // script's load. Online on WebKit, and offline on Chromium and Firefox, it drew whole every time.
   await answers(page, shell, browserName !== "webkit");
 });
 
