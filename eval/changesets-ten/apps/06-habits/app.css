@@ -1,109 +1,366 @@
+/* A calm green page that gets out of the way of the ticks. */
 :root {
-  color-scheme: light dark;
-  --bg: #f4f1ea;
+  --paper: #f3f7f1;
   --card: #ffffff;
-  --ink: #1f2a24;
-  --muted: #667069;
-  --line: #e1dccf;
-  --accent: #2f7d54;
+  --ink: #17251c;
+  --muted: #667a6c;
+  --line: #dbe6d9;
+  --accent: #1f9d6b;
   --accent-ink: #ffffff;
-  --glow: #dcefe3;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --accent-soft: #dff2e8;
+  --danger: #b3382c;
+  color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #151a17; --card: #1e2520; --ink: #e8ece8; --muted: #9aa39c;
-    --line: #2d362f; --accent: #6fc493; --accent-ink: #10231a; --glow: #20352a;
+    --paper: #101a14;
+    --card: #17251c;
+    --ink: #e8f2ea;
+    --muted: #93a99a;
+    --line: #26382c;
+    --accent: #3fc08b;
+    --accent-ink: #07130d;
+    --accent-soft: #1e3a2b;
+    --danger: #f0897d;
   }
 }
+
 * { box-sizing: border-box; }
-/* A display rule below would otherwise show what the page hid. */
+
 [hidden] { display: none !important; }
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { line-height: 1.45; -webkit-font-smoothing: antialiased; }
 
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The color runs to every edge; the content is pushed clear of the strips a
+   phone covers. */
 main {
-  max-width: 560px;
+  max-width: 600px;
+  min-height: 100vh;
   margin: 0 auto;
-  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
-    calc(40px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+  padding:
+    calc(28px + var(--dai-safe-top, 0px))
+    calc(20px + var(--dai-safe-right, 0px))
+    calc(40px + var(--dai-safe-bottom, 0px))
+    calc(20px + var(--dai-safe-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
 }
-/* The top right corner belongs to the host's menu button. */
-header { padding-right: 56px; margin-bottom: 18px; }
-h1 { margin: 0; font-size: 32px; letter-spacing: -0.02em; line-height: 1.1; }
-.today { margin: 6px 0 0; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
-.today.all { color: var(--accent); }
 
-.opening {
-  margin: 0; color: var(--muted); text-align: center;
-  padding: calc(28px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px)) 0
-    calc(16px + var(--dai-safe-left, 0px));
+header { display: flex; flex-direction: column; gap: 4px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
-.opening.failed { color: var(--ink); text-align: left; max-width: 36em; margin: 0 auto; }
-.notice { background: var(--card); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; }
 
-.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.progress {
+  margin: 8px 0 0;
+  align-self: flex-start;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* The lists are cards. Rows draw their own dividers. */
+dai-rows {
+  display: block;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .habit {
-  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 14px; display: grid; gap: 12px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
 }
-.habit.done { border-color: var(--accent); }
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
-.title { display: grid; gap: 2px; flex: 1 1 11em; min-width: 0; }
-.name { font-size: 18px; overflow-wrap: anywhere; }
-.meta { color: var(--muted); font-size: 14px; }
+
+.habit:first-child { border-top: 0; }
+
+/* Both tick controls share the first column; only one is shown. */
+.tick {
+  grid-column: 1;
+  grid-row: 1;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.tick input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.box {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.tick:hover .box { border-color: var(--accent); }
+.tick:active .box { transform: scale(0.92); }
+
+.tick.is-done .box {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.tick.is-done .box::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 4px;
+  width: 7px;
+  height: 14px;
+  border: solid var(--accent-ink);
+  border-width: 0 3px 3px 0;
+  transform: rotate(45deg);
+}
+
+.tick:has(input:focus-visible) .box {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.body {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+.emoji { font-size: 20px; line-height: 1; }
+
+/* The name is a control that reads as the line it replaced until touched. */
+input.name {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+input.name:hover { border-bottom-color: var(--muted); }
+input.name:focus { outline: none; border-bottom-color: var(--accent); background: var(--accent-soft); }
+
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.strip {
+  margin: 2px 0 0;
+  font-size: 13px;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+}
 
 button {
-  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
 }
-button.quiet { background: transparent; color: var(--accent); }
-.today-btn { flex: 0 0 auto; font-weight: 600; }
-.habit.done .today-btn { background: var(--glow); color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Seven days, oldest first, today on the right. */
-.strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.day {
-  display: grid; justify-items: center; align-content: center; gap: 2px;
-  min-height: 52px; padding: 4px 0; background: transparent; color: var(--muted);
+button.quiet {
+  grid-column: 3;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+button.quiet:hover { background: var(--accent-soft); color: var(--accent); }
+button.quiet.danger:hover { background: none; color: var(--danger); }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Adding a habit. */
+dai-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+dai-form select,
+dai-form input {
+  min-height: 44px;
+  padding: 8px 12px;
+  font: inherit;
   border: 1px solid var(--line);
-}
-.day .dow { font-size: 12px; font-weight: 600; }
-.day .dot { font-size: 16px; line-height: 1; min-height: 16px; }
-.day.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.day.now:not(.on) { border-color: var(--accent); color: var(--ink); }
-
-.foot { display: flex; justify-content: flex-end; }
-button.link {
-  min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--muted);
-  font-size: 14px; text-decoration: underline; text-underline-offset: 3px;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
 }
 
-.empty {
-  background: var(--card); border: 1px dashed var(--line); border-radius: 16px;
-  padding: 20px 18px; color: var(--muted); text-align: center;
+dai-form select { flex: 0 0 auto; }
+dai-form input { flex: 1 1 12rem; min-width: 0; }
+
+button.primary {
+  min-height: 44px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
 }
-.empty p { margin: 4px 0; }
-.empty strong { color: var(--ink); }
 
-.add { margin-top: 24px; display: grid; gap: 6px; }
-.add label { color: var(--muted); font-size: 14px; }
-.row { display: flex; gap: 8px; }
-input {
-  font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
-  border-radius: 10px; min-height: 44px; padding: 8px 12px; width: 100%; min-width: 0;
+button.primary:hover { filter: brightness(1.06); }
+
+/* Retired habits. */
+details {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
 }
-::placeholder { color: var(--muted); opacity: 0.6; }
 
-.archived { margin-top: 24px; color: var(--muted); }
-.archived summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
-.archived .list { margin-top: 4px; }
-.quietrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 6px 6px 14px; }
-.quietrow .name { font-size: 16px; color: var(--ink); }
+summary {
+  min-height: 44px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
 
-footer { margin-top: 28px; display: flex; justify-content: flex-end; }
+details dai-rows {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 16px 16px;
+}
 
+.retired {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  color: var(--ink);
+}
+
+.retired .what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retired button.quiet { grid-column: auto; }
+
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.total {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+dai-save {
+  display: inline-block;
+  padding: 12px 22px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* On a wide window: a card on a quieter ground. */
 @media (min-width: 720px) {
-  main { padding-top: calc(40px + var(--dai-safe-top, 0px)); }
+  main {
+    margin: 40px auto;
+    min-height: 0;
+    padding: 36px 36px 32px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 24px 60px -24px rgb(0 0 0 / 0.25);
+  }
+  html, body { background: color-mix(in srgb, var(--paper) 88%, #000); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .box { transition: none; }
 }

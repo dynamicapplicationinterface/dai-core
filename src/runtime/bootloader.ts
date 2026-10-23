@@ -31,6 +31,7 @@ import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
 import { FRAME, FRAME_INTERNAL, FRAME_PUBLIC, type FrameNames } from "../frame.js";
 import { SESSION_ID_FUNCTION, sessionIdTools } from "../session-id.js";
 import { scriptTagTools, type ScriptTagTools } from "../script-tags.js";
+import { CHANGES_LOG } from "../changes-log.js";
 
 const APP_PREFIX = "app/";
 const SCHEMA_ENTRY = "runtime/schema.json";
@@ -743,7 +744,7 @@ async function writeContainer(
  * would seal into the next copy. The loader hands this object over by
  * `postMessage` and sets it locally instead.
  */
-function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, seq: unknown, seat: unknown, seats: unknown, close: unknown) => Uint8Array | null }): void {
+function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, seq: unknown, seat: unknown, seats: unknown, close: unknown) => Uint8Array | null }, inWorker = false): void {
   /*
    * The SHA-256 of the merge module this runtime was built against.
    *
@@ -755,6 +756,61 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
 
   type Any = Record<string, any>;
   const host: Any = ((window as unknown as Any).__DAI__ as Any) || {};
+
+  /*
+   * Where this runs (R-Y). A document under the ordinary data interface keeps
+   * its database, and the runtime's authority over it, in a worker the shell
+   * made: `worker` is that copy of this function, which owns the engine, the
+   * capture, the seals and the saves, and has no document. `client` is the
+   * application's frame of such a document: it has the document and none of
+   * the data, and reaches the data only through the port the shell handed it.
+   * `frame` is every other document, which keeps its database here, as it
+   * always has (a session policy's rules: docs/identity.md, rule 3).
+   */
+  const role: "frame" | "client" | "worker" = inWorker ? "worker" : host.authority === true ? "client" : "frame";
+  /** A message to the shell: from a worker, its one channel; from a frame, its parent. */
+  const toShell = (message: Any, transfer: Transferable[] = []): void => {
+    if (inWorker) (globalThis as unknown as { postMessage: (m: unknown, t: Transferable[]) => void }).postMessage(message, transfer);
+    else window.parent.postMessage(message, "*", transfer);
+  };
+  /** Whether a message is the shell's: a dedicated worker hears no one else; a frame checks its parent. */
+  const fromShell = (event: MessageEvent): boolean => inWorker || event.source === window.parent;
+  /*
+   * The application's channel, in the worker: the port the shell paired with
+   * the one it gave the frame. Requests arrive on it (`serveApplication`), and
+   * events for the application leave on it.
+   */
+  const appPort: MessagePort | null = inWorker && host.appPort ? (host.appPort as MessagePort) : null;
+  /** An event for the application: fired on its window, or sent to it from the worker. */
+  const emit = (name: string, detail?: unknown): void => {
+    if (inWorker) {
+      appPort?.postMessage({ event: name, detail });
+      return;
+    }
+    window.dispatchEvent(detail === undefined ? new CustomEvent(name) : new CustomEvent(name, { detail }));
+  };
+  /*
+   * The document's SQL blocks. In a frame, its own `application/sql` scripts.
+   * In the worker, the same blocks as the shell read them from the verified
+   * entry page, before any of the application's code ran: the frame's DOM is
+   * the application's to change, and the schema the runtime runs is not.
+   */
+  type SqlBlock = { schema: boolean; text: string; ran: () => boolean; mark: () => void };
+  const workerBlocks: SqlBlock[] = inWorker
+    ? (Array.isArray(host.sqlBlocks) ? (host.sqlBlocks as Any[]) : []).map((block) => {
+        let done = false;
+        return { schema: block.schema === true, text: String(block.text ?? ""), ran: () => done, mark: () => void (done = true) };
+      })
+    : [];
+  const sqlBlocks = (): SqlBlock[] =>
+    inWorker
+      ? workerBlocks
+      : (Array.from(document.querySelectorAll('script[type="application/sql"]')) as HTMLScriptElement[]).map((block) => ({
+          schema: block.getAttribute("data-dai") === "schema",
+          text: block.textContent || "",
+          ran: () => block.getAttribute("data-dai-ran") === "1",
+          mark: () => block.setAttribute("data-dai-ran", "1"),
+        }));
 
   /**
    * Re-creates a buffer with this frame's intrinsics. A buffer minted in the
@@ -787,6 +843,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   /** Loads the glue via an inline module script: no dynamic import, no eval. */
   const loadGlue = (): Promise<Any> =>
     new Promise((resolve, reject) => {
+      // The worker's glue is part of its own script, put there by the shell from the verified entry.
+      if (inWorker) {
+        const init = (globalThis as unknown as Any).__daiGlue;
+        if (typeof init === "function") resolve(init as Any);
+        else reject(new Error("No Emscripten glue was packaged in this container."));
+        return;
+      }
       if (!glueUrl) {
         reject(new Error("No Emscripten glue was packaged in this container."));
         return;
@@ -848,14 +911,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     const engineStarted = performance.now();
     const reportEngine = (): void => {
       try {
-        window.parent.postMessage(
-          {
-            type: names.TIMING,
-            phase: "engine",
-            took: Math.round((performance.now() - engineStarted) * 10) / 10,
-          },
-          "*",
-        );
+        toShell({
+          type: names.TIMING,
+          phase: "engine",
+          took: Math.round((performance.now() - engineStarted) * 10) / 10,
+        });
       } catch {
         /* A parent that is not listening changes nothing about the boot. */
       }
@@ -1018,11 +1078,58 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const tellSaveStatus = (state: typeof saveStatus, error?: string): void => {
     saveStatus = state;
     try {
-      window.parent.postMessage({ type: names.SAVE_STATE, state, error }, "*");
+      toShell({ type: names.SAVE_STATE, state, error });
+      // The application's frame reads it as window.dai.saveStatus (R-Y).
+      appPort?.postMessage({ saveStatus: state, error });
     } catch {
       /* No parent listening; the status is still readable on the api. */
     }
   };
+
+  /*
+   * No bytes are taken while the application holds a transaction (2a-H1).
+   * They would hold its uncommitted rows, and a rollback after would leave
+   * them in the stored copy: back on reopen, and in no log row, so no other
+   * copy could ever receive them. A save asked then waits for the transaction
+   * to end, by commit or by rollback, and runs after it. Its end is heard where
+   * it happens (the data interface's commit and rollback, the handle's exec),
+   * and asked of SQLite on a short timer for any other way a transaction ends.
+   */
+  const TRANSACTION_POLL_MS = 250;
+  const transactionHeld = (db: Any): boolean => {
+    if (changes && db === liveDb) return changes.inTransaction;
+    try {
+      return sqlite3 !== null && !sqlite3.capi.sqlite3_get_autocommit(db.pointer);
+    } catch {
+      return false;
+    }
+  };
+  const afterTransaction: { db: Any; run: () => void }[] = [];
+  let transactionPoll: ReturnType<typeof setTimeout> | undefined;
+  const transactionEnded = (): void => {
+    for (const waiter of afterTransaction.splice(0)) {
+      if (transactionHeld(waiter.db)) afterTransaction.push(waiter);
+      else waiter.run();
+    }
+    if (afterTransaction.length > 0 && transactionPoll === undefined) {
+      transactionPoll = setTimeout(() => {
+        transactionPoll = undefined;
+        transactionEnded();
+      }, TRANSACTION_POLL_MS);
+    }
+  };
+  /** Resolves once db holds no transaction: at once when it holds none. */
+  const noTransaction = (db: Any): Promise<void> =>
+    new Promise((resolve) => {
+      if (!transactionHeld(db)) return resolve();
+      afterTransaction.push({ db, run: resolve });
+      transactionEnded();
+    });
+  let flushWaits = false;
+  /** A save that found a transaction open by the time its bytes were due: it runs again after. */
+  const HELD: Any = Object.freeze({ heldFor: "the application's transaction" });
+  /** The page is going away; the data interface below rolls back a transaction it holds first. */
+  let leaving = (): void => void flushAutosave();
 
   const flushAutosave = (): Promise<unknown> | undefined => {
     if (autosaveTimer !== undefined) {
@@ -1035,6 +1142,17 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     if (!autosaveDb) return saving ?? undefined;
     // One save in flight at a time; a write during a save is saved after it.
     if (saving) return saving.then((): Promise<unknown> | undefined => flushAutosave());
+    // Kept, and saved once the application's transaction ends (2a-H1).
+    if (transactionHeld(autosaveDb)) {
+      if (!flushWaits) {
+        flushWaits = true;
+        void noTransaction(autosaveDb).then(() => {
+          flushWaits = false;
+          void flushAutosave();
+        });
+      }
+      return undefined;
+    }
     const db = autosaveDb;
     autosaveDb = null;
     tellSaveStatus("saving");
@@ -1065,6 +1183,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // ordinary data interface (Q07): its edit is in the next capture epoch,
         // not yet in any log row, so no row is pending, and only its queued
         // save will log it (R-S).
+        // A transaction the application opened while the signature was out
+        // holds rows that may never commit: no bytes now, and the save runs
+        // again once it ends (2a-H1).
+        if (transactionHeld(db)) {
+          autosaveDb ??= db;
+          return HELD;
+        }
         if (autosaveDb === db && !hasPendingOwn() && !(changes && db === liveDb && changes.dirty)) {
           autosaveDb = null;
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
@@ -1075,6 +1200,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       .then(
       (result: Any) => {
         saving = null;
+        if (result === HELD) {
+          void flushAutosave();
+          return;
+        }
         if (result && result.saved === false) throw new Error(String(result.method || "this page did not save it"));
         failures = 0;
         tellSaveStatus("saved");
@@ -1133,7 +1262,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     let schema = -1;
     try {
       if (typeof db.changes === "function") changes = db.changes(true) as number;
-      if (typeof db.selectValue === "function") schema = db.selectValue("PRAGMA schema_version") as number;
+      // Under the ordinary data interface, read by the runtime's own engine: a statement of the application's
+      // here would become the last one its own count answers for (R-Y's db.run).
+      const live = changesOf(db);
+      if (live) schema = Number(live.rows.all("PRAGMA schema_version")[0]?.["schema_version"]);
+      else if (typeof db.selectValue === "function") schema = db.selectValue("PRAGMA schema_version") as number;
     } catch {
       /* A closed handle, or a statement mid-flight: treated as changed. */
       return String(Math.random());
@@ -1170,13 +1303,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * recipe's rule), and marks each so the kit does not run it twice.
    */
   const runDocumentSql = (db: Any, which: "schema" | "seed"): void => {
-    const blocks = (Array.from(
-      document.querySelectorAll('script[type="application/sql"]'),
-    ) as HTMLScriptElement[]).filter((b) => (b.getAttribute("data-dai") === "schema") === (which === "schema"));
-    for (const block of blocks) {
-      if (block.getAttribute("data-dai-ran") === "1") continue;
-      const sql = (block.textContent || "").trim();
-      block.setAttribute("data-dai-ran", "1");
+    for (const block of sqlBlocks().filter((b) => b.schema === (which === "schema"))) {
+      if (block.ran()) continue;
+      const sql = block.text.trim();
+      block.mark();
       if (sql) db.exec(sql);
     }
   };
@@ -1202,7 +1332,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     trusted(() => db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"));
     const ran = (db.selectObjects("SELECT 1 FROM _dai_meta WHERE key = ?", [SEEDED]) as Any[]).length > 0;
     if (ran) {
-      for (const block of Array.from(document.querySelectorAll('script[type="application/sql"]'))) block.setAttribute("data-dai-ran", "1");
+      for (const block of sqlBlocks()) block.mark();
       return;
     }
     runDocumentSql(db, "seed");
@@ -1225,6 +1355,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * table outside one (T11, P01): the application shares this handle.
    */
   const trusted = <T,>(f: () => T): T => (changes ? (changes.trusted(f) as T) : f());
+  /** The changeset runtime over this handle, when it is the live one. */
+  const changesOf = (db: Any): Any | null => (changes && db === liveDb ? changes : null);
   const startChanges = (db: Any, rawExec: (sql: Any) => unknown): void => {
     if (changes || !mergeModule || !sqlite3) return;
     const merge = mergeModule as Any;
@@ -1234,9 +1366,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     const author = mountReplica ?? (db.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0]?.id as Uint8Array | undefined);
     if (!(author instanceof Uint8Array)) return;
     // The release's schema, as this document declares it and as runDocumentSql ran it (R-W).
-    const schema = (Array.from(document.querySelectorAll('script[type="application/sql"]')) as HTMLScriptElement[])
-      .filter((b) => b.getAttribute("data-dai") === "schema")
-      .map((b) => b.textContent || "")
+    const schema = sqlBlocks()
+      .filter((b) => b.schema)
+      .map((b) => b.text)
       .join(";\n");
     const started: Any = new merge.Changes(sqlite3, db, { author, rawExec, schema });
     changes = started;
@@ -1432,6 +1564,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         const before = storedState(db);
         const result = exec(...args);
         if (storedState(db) !== before) scheduleAutosave(db);
+        // A COMMIT or ROLLBACK here lets a save that waited for it run (2a-H1).
+        if (afterTransaction.length > 0) transactionEnded();
         return result;
       };
     }
@@ -1599,7 +1733,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // deliberate act, unlike a background mailbox pull. A copy joins a session
         // (or rejoins a reseated one) only on a carrier open, never on a mailbox
         // merge (T1-D34), and the application reads this to tell them apart.
-        window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "carrier" } }));
+        emit(names.MERGED, { ...report, via: "carrier" });
         return report;
       } catch (error) {
         if (!committed) liveDb.exec("ROLLBACK");
@@ -1882,7 +2016,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // the application's tables only at the next file merge or reopen.
         if (changes) report.projected = changes.projectAdmitted();
         scheduleAutosave(liveDb);
-        window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
+        emit(names.MERGED, { ...report, via: "mailbox" });
         return report;
       } catch (error) {
         if (!committed) liveDb.exec("ROLLBACK");
@@ -1902,7 +2036,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   /** A nudge to the host that this copy has authored a row worth publishing. */
   const nudgeAuthored = (): void => {
     try {
-      window.parent.postMessage({ type: names.AUTHORED }, "*");
+      toShell({ type: names.AUTHORED });
     } catch (error) {
       void error;
     }
@@ -1932,7 +2066,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const refuseWriteRules = (why: string, detail?: string): void => {
     lastRefusal = detail ? `${why} — ${detail}` : why;
     try {
-      window.parent.postMessage({ type: names.WRITE_RULES_REFUSED, why, detail }, "*");
+      toShell({ type: names.WRITE_RULES_REFUSED, why, detail });
     } catch {
       /* Nothing above to tell; the refusal below still stands. */
     }
@@ -2034,7 +2168,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           reject(error);
         },
       });
-      window.parent.postMessage({ type: names.SIGN, id, header, seq }, "*");
+      toShell({ type: names.SIGN, id, header, seq });
     });
 
   /** Whether this copy's own author has rows written and not yet sealed. */
@@ -2077,7 +2211,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     }
     // Something can be sent now that could not before: said, as a write is, so
     // the host publishes without waiting for the next move.
-    if (any) window.parent.postMessage({ type: names.AUTHORED }, "*");
+    if (any) toShell({ type: names.AUTHORED });
   };
   const sealPending = (): Promise<void> => {
     const run = async (): Promise<void> => {
@@ -2542,7 +2676,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   };
 
   window.addEventListener("pagehide", () => {
-    void flushAutosave();
+    leaving();
   });
 
   const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
@@ -2608,7 +2742,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // From the shell, or from nobody. A verdict saying this data is safe to
         // write to is the one answer an application must not accept from a
         // window that merely knows how to shape a message.
-        if (event.source !== window.parent) return;
+        if (!fromShell(event)) return;
         const data = event.data as Any;
         if (!data || data.type !== names.SCHEMA_VERDICT || data.id !== id) return;
         window.removeEventListener("message", onReply);
@@ -2651,7 +2785,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       }, 10000);
 
       window.addEventListener("message", onReply);
-      window.parent.postMessage({ type: names.SCHEMA, id: id, actual: actual ?? null }, "*");
+      toShell({ type: names.SCHEMA, id: id, actual: actual ?? null });
     });
   };
 
@@ -2683,7 +2817,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       const done = (event: MessageEvent): void => {
         // From the shell, or from nobody. Otherwise a third window can tell an
         // application its work was saved when nothing was written.
-        if (event.source !== window.parent) return;
+        if (!fromShell(event)) return;
         const data = event.data as Any;
         if (!data || data.id !== id) return;
         window.removeEventListener("message", done);
@@ -2696,28 +2830,25 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         else reject(new Error(String(data.error)));
       };
       window.addEventListener("message", done);
-      parent.postMessage(
-        {
-          type: names.SAVE,
-          id: id,
-          sqlite: bytes ? new Uint8Array(bytes) : null,
-          method: (options && options.method) || "auto",
-          // Nothing but the document's own SQL has changed this database since
-          // it opened (D36). Said by the runtime, which ran that SQL and watches
-          // every write; a host cannot tell it from the bytes.
-          setup: Boolean(options && options.setup),
-          // How far this copy's counter has reached: the host raises its floor
-          // for the document to this before it writes the save.
-          seq: (() => {
-            try {
-              return Number(liveDb?.selectObjects("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
-            } catch {
-              return 0;
-            }
-          })(),
-        },
-        "*",
-      );
+      toShell({
+        type: names.SAVE,
+        id: id,
+        sqlite: bytes ? new Uint8Array(bytes) : null,
+        method: (options && options.method) || "auto",
+        // Nothing but the document's own SQL has changed this database since
+        // it opened (D36). Said by the runtime, which ran that SQL and watches
+        // every write; a host cannot tell it from the bytes.
+        setup: Boolean(options && options.setup),
+        // How far this copy's counter has reached: the host raises its floor
+        // for the document to this before it writes the save.
+        seq: (() => {
+          try {
+            return Number(liveDb?.selectObjects("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
+          } catch {
+            return 0;
+          }
+        })(),
+      });
     });
 
   // App Mode state, pushed from the shell. The app can observe it but cannot
@@ -2727,7 +2858,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
 
   window.addEventListener("message", (event: MessageEvent) => {
     // Pushed from the shell, which is the only window that knows.
-    if (event.source !== window.parent) return;
+    if (!fromShell(event)) return;
     const data = event.data as Any;
     if (!data) return;
     if (data.type === names.SIGNED) {
@@ -2767,7 +2898,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
             databaseBytes = undefined;
           }
         }
-        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved: landed(), ...(databaseBytes ? { databaseBytes } : {}) }, "*");
+        toShell({ type: names.FLUSHED, id: data.id, saved: landed(), ...(databaseBytes ? { databaseBytes } : {}) });
       })();
       return;
     }
@@ -2812,7 +2943,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // already listening. The kit owns the sentence.
       if (data.newAuthor === true) {
         (window as unknown as Any).dai.newPlayer = true;
-        window.dispatchEvent(new CustomEvent(names.NEW_PLAYER));
+        emit(names.NEW_PLAYER);
       }
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
@@ -2852,10 +2983,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         .then(({ batch, head, replica, more, held, error }) => {
           // Cloned, not transferred: a batch is a few rows, and a transfer list of
           // one detached buffer is a footgun for the saving it does not make.
-          window.parent.postMessage(
-            { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch, more, held, ...(error ? { error } : {}) },
-            "*",
-          );
+          toShell({ type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch, more, held, ...(error ? { error } : {}) });
         });
       return;
     }
@@ -2871,53 +2999,44 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       } catch {
         replica = null;
       }
-      window.parent.postMessage({ type: names.REPLICA_ID_ANSWER, nonce: data.nonce, replica }, "*");
+      toShell({ type: names.REPLICA_ID_ANSWER, nonce: data.nonce, replica });
       return;
     }
     if (data.type === names.SESSIONS) {
       // The host asking which sessions this copy holds, so it can run one mailbox
       // for each (T1-D30), and which of them have closed. The host knows this
       // runtime answers from `sessionLanes` in the handshake, never by timing.
-      window.parent.postMessage(
-        { type: names.SESSIONS_ANSWER, id: data.id, sessions: heldSessions(), closed: closedSessions() },
-        "*",
-      );
+      toShell({ type: names.SESSIONS_ANSWER, id: data.id, sessions: heldSessions(), closed: closedSessions() });
       return;
     }
     if (data.type === names.APPLY_BATCH) {
       const bytes = data.batch instanceof Uint8Array ? data.batch : new Uint8Array(data.batch as ArrayBuffer);
       void applyBatch(bytes)
         .then((report: Any) => {
-          window.parent.postMessage({ type: names.APPLIED, id: data.id, ...report }, "*");
+          toShell({ type: names.APPLIED, id: data.id, ...report });
         })
         .catch((error: Any) => {
-          window.parent.postMessage(
-            { type: names.APPLIED, id: data.id, applied: 0, refused: (error && error.message) || "APPLY_FAILED" },
-            "*",
-          );
+          toShell({ type: names.APPLIED, id: data.id, applied: 0, refused: (error && error.message) || "APPLY_FAILED" });
         });
       return;
     }
     if (data.type === names.MERGE) {
       void mergeSibling(data)
         .then((report: Any) => {
-          window.parent.postMessage({ type: names.MERGE_RESULT, id: data.id, ...report }, "*");
+          toShell({ type: names.MERGE_RESULT, id: data.id, ...report });
         })
         .catch((error: Any) => {
-          window.parent.postMessage(
-            {
-              type: names.MERGE_RESULT,
-              id: data.id,
-              applied: 0,
-              duplicate: 0,
-              rejected: [],
-              newReplicas: 0,
-              refusedBatches: [],
-              conflicts: 0,
-              refused: (error && error.message) || "MERGE_FAILED",
-            },
-            "*",
-          );
+          toShell({
+            type: names.MERGE_RESULT,
+            id: data.id,
+            applied: 0,
+            duplicate: 0,
+            rejected: [],
+            newReplicas: 0,
+            refusedBatches: [],
+            conflicts: 0,
+            refused: (error && error.message) || "MERGE_FAILED",
+          });
         });
       return;
     }
@@ -2947,6 +3066,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       }
       return;
     }
+    // The shell's page is going away, and the worker has no page of its own to hear it (R-Y).
+    if (data.type === names.PAGEHIDE) {
+      leaving();
+      return;
+    }
     if (data.type !== names.APPMODE) return;
     appMode = !!data.active;
     appModeListeners.forEach((listener) => listener(appMode));
@@ -2954,7 +3078,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
 
   // Now that there is something listening, ask. The host knew these at the
   // handshake, which was before this frame existed.
-  window.parent.postMessage({ type: names.INSETS_ASK }, "*");
+  toShell({ type: names.INSETS_ASK });
 
   /*
    * The colour of the one strip an application cannot paint.
@@ -2994,19 +3118,22 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   };
   const tellGround = (): void => {
     const colour = groundColour();
-    if (colour) window.parent.postMessage({ type: names.GROUND, colour }, "*");
+    if (colour) toShell({ type: names.GROUND, colour });
   };
   // Two frames on: the first is when styles have applied, the second is
   // when they have painted, and a colour read before that is the default.
   const groundSoon = (): void => {
     requestAnimationFrame(() => requestAnimationFrame(tellGround));
   };
-  if (document.readyState === "complete") groundSoon();
-  else window.addEventListener("load", groundSoon);
-  try {
-    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", groundSoon);
-  } catch {
-    /* No matchMedia: the colour was read once, which is the common case. */
+  // The worker has no page to paint.
+  if (!inWorker) {
+    if (document.readyState === "complete") groundSoon();
+    else window.addEventListener("load", groundSoon);
+    try {
+      matchMedia("(prefers-color-scheme: dark)").addEventListener("change", groundSoon);
+    } catch {
+      /* No matchMedia: the colour was read once, which is the common case. */
+    }
   }
 
   const api: Any = {
@@ -3130,10 +3257,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       autosaveTimer = undefined;
       autosaveDb = null;
       // Captured and sealed first, as an automatic save is (identity step 3).
+      // Never inside the application's transaction: it waits for its end (2a-H1).
       const setup = setupOnly(db);
-      return Promise.resolve()
+      return noTransaction(db)
         .then(() => captureSave(db))
         .then(sealPending)
+        .then(() => noTransaction(db))
         .then(() => {
           // Logged before the bytes are taken, as an automatic save is (Q09, D263).
           captureSave(db);
@@ -3170,7 +3299,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // filters the copy it sends to that session's rows (T1-D28). Without one,
       // the host offers the whole document, as its own menu does.
       const invite = typeof session === "string" && /^[0-9a-f]{32}$/i.test(session) ? session.toLowerCase() : undefined;
-      window.parent.postMessage({ type: names.REQUEST_SHARE, ...(invite ? { session: invite } : {}) }, "*");
+      toShell({ type: names.REQUEST_SHARE, ...(invite ? { session: invite } : {}) });
     },
     /*
      * Which games wait on this person: the sessions (hex) where it is their
@@ -3184,13 +3313,579 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       const list = Array.isArray(sessions)
         ? sessions.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/i.test(s)).map((s) => s.toLowerCase())
         : [];
-      window.parent.postMessage({ type: names.WAITING, sessions: list }, "*");
+      toShell({ type: names.WAITING, sessions: list });
     },
   };
 
+  /*
+   * What crosses the port, read the same way at both ends (R-Y): a statement
+   * is its SQL text and its bound values, and nothing else. A bound value is
+   * data — null, a number, a bigint, a string, a boolean or bytes — never a
+   * function, so no code of the application's runs inside the worker.
+   */
+  const DATA_SENTENCE =
+    "This document's data is reached with await window.dai.database(): its calls are asynchronous, and openDatabase() with its synchronous handle belongs only to documents with shared tables.";
+  const boundValue = (v: unknown): boolean =>
+    v === null || typeof v === "number" || typeof v === "bigint" || typeof v === "string" || typeof v === "boolean" || v instanceof Uint8Array;
+  const FUNCTIONS_SENTENCE =
+    "DATA_REFUSED: An application's own SQL functions and callbacks do not run inside the runtime: compute in SQL, or in the page from the rows a query returns.";
+  /** Whether a function is anywhere in what the application handed over: none crosses into the runtime. */
+  const carriesFunction = (v: unknown, depth = 0): boolean =>
+    typeof v === "function" || (depth < 3 && v !== null && typeof v === "object" && !(v instanceof Uint8Array) && Object.values(v as Record<string, unknown>).some((x) => carriesFunction(x, depth + 1)));
+  const statementOf = (s: unknown): { sql: string; bind?: unknown[] | Record<string, unknown> } => {
+    if (carriesFunction(s)) throw new TypeError(FUNCTIONS_SENTENCE);
+    const text = typeof s === "string" ? s : s && typeof s === "object" && typeof (s as Any).sql === "string" ? String((s as Any).sql) : null;
+    const extra = s !== null && typeof s === "object" && Object.keys(s as Record<string, unknown>).some((k) => k !== "sql" && k !== "bind");
+    if (text === null || extra) throw new TypeError("DATA_REFUSED: A statement is its SQL as a string, or { sql, bind }.");
+    const bind = typeof s === "object" ? (s as Any).bind : undefined;
+    if (bind === undefined || bind === null) return { sql: text };
+    if (Array.isArray(bind)) {
+      if (!bind.every(boundValue)) throw new TypeError("DATA_REFUSED: A bound value is null, a number, a bigint, a string, a boolean or a Uint8Array.");
+      return { sql: text, bind: bind.slice() };
+    }
+    if (typeof bind === "object" && !(bind instanceof Uint8Array)) {
+      const named: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(bind as Record<string, unknown>)) {
+        if (!boundValue(v)) throw new TypeError("DATA_REFUSED: A bound value is null, a number, a bigint, a string, a boolean or a Uint8Array.");
+        named[k] = v;
+      }
+      return { sql: text, bind: named };
+    }
+    if (boundValue(bind)) return { sql: text, bind: [bind] };
+    throw new TypeError("DATA_REFUSED: bind is an array for ? or an object for :name.");
+  };
+  /** An error as it crosses the port: its name, message and SQLite code, no more. */
+  const errorShape = (error: unknown): Any => ({
+    name: String((error as Any)?.name || "Error"),
+    message: String((error as Any)?.message ?? error),
+    ...(Number.isInteger((error as Any)?.resultCode) ? { resultCode: (error as Any).resultCode } : {}),
+  });
+
+  /*
+   * The application's requests, in the worker (R-Y). The port the shell paired
+   * with the application's is the only way in: a request names no document and
+   * no database (this worker has one, for this mount), and the application
+   * holds no handle, statement, pointer or memory of the engine's. Every
+   * statement goes through the same refusals a frame's did.
+   *
+   * Requests run one at a time, whole, in the order they arrived. A batch is
+   * one request and one transaction: all of it, or none. A transaction the
+   * application opens (`db.transaction`) belongs to the request sequence that
+   * opened it: until it commits or rolls back, a request that is not part of
+   * it waits, and nothing else runs inside it. One left idle is rolled back.
+   * A request cancelled before it starts never runs; one that has started
+   * finishes, and its answer says what it did.
+   *
+   * What "cancelled" means for the statement in flight: nothing. The worker
+   * runs a statement to its end before it reads its port again, so a cancel
+   * sent while one runs is heard only after it returns, and the request it
+   * belongs to (the rest of its batch with it) runs to its end and is answered
+   * with what it did. A request that carries a signal and has not started
+   * starts only once the application's side, asked in its turn, answers that
+   * its signal is not aborted, so one aborted while it waited behind another
+   * never runs (2a-L1).
+   */
+  let opening: Promise<Any> | null = null;
+  /** The handle, once open: a held transaction is rolled back on it at once, before any other request runs. */
+  let openHandle: Any | null = null;
+  const live = (): Promise<Any> =>
+    (opening ??= api.openDatabase().then((db: Any) => {
+      openHandle = db;
+      return db;
+    }));
+  /** How long a transaction may wait for its next request before it is rolled back. */
+  const TRANSACTION_IDLE_MS = 10_000;
+  /** One statement, as the application's handle runs it: its rows, its columns and what it changed. */
+  const runStatement = (db: Any, statement: { sql: string; bind?: unknown }): Any => {
+    const rows: Any[] = [];
+    const columns: string[] = [];
+    const before = Number(db.changes(true));
+    db.exec({ sql: statement.sql, ...(statement.bind !== undefined ? { bind: statement.bind } : {}), rowMode: "object", resultRows: rows, columnNames: columns });
+    const changed = Number(db.changes(true)) !== before;
+    return {
+      rows,
+      columns,
+      changes: changed ? Number(db.changes()) : 0,
+      lastInsertRowid: db.selectValue("SELECT last_insert_rowid()") ?? 0,
+    };
+  };
+  /*
+   * A statement that would open, end or mark a transaction of its own is not
+   * one of a batch: it would commit half a batch, or outlive the request that
+   * opened it. Read as SQLite reads the text, one complete statement at a
+   * time, so a trigger's BEGIN ... END is the CREATE it belongs to.
+   */
+  const TRANSACTION_WORDS = new Set(["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"]);
+  const FIRST_WORD = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/;
+  /** The statements of a text, as SQLite reads it: each piece's first word, where it has one (a lone ; or a comment has none). */
+  const firstWords = (sql: string): string[] => {
+    const complete = (text: string): boolean => Boolean(sqlite3 && sqlite3.capi.sqlite3_complete(text));
+    let start = 0;
+    const pieces: string[] = [];
+    for (let i = sql.indexOf(";"); i >= 0; i = sql.indexOf(";", i + 1)) {
+      if (complete(sql.slice(start, i + 1))) {
+        pieces.push(sql.slice(start, i + 1));
+        start = i + 1;
+      }
+    }
+    pieces.push(sql.slice(start));
+    return pieces.flatMap((piece) => {
+      const word = FIRST_WORD.exec(piece);
+      return word ? [word[1]!.toUpperCase()] : [];
+    });
+  };
+  const controlsTransaction = (sql: string): boolean => firstWords(sql).some((word) => TRANSACTION_WORDS.has(word));
+  const TRANSACTION_SENTENCE =
+    "DATA_REFUSED: A transaction is await db.transaction(async (tx) => …): BEGIN, COMMIT, ROLLBACK and SAVEPOINT are not statements of a request.";
+  /*
+   * The statements of a request, each run as the application's; all of them,
+   * or none. A text of several statements is several statements: db.run of
+   * two runs inside a transaction as a batch of two does, and a failure in the
+   * second leaves nothing of the first (2a-M1). Only one statement alone runs
+   * without one, as SQLite runs it whole anyway, so a VACUUM can still run.
+   */
+  const runAll = (db: Any, statements: { sql: string; bind?: unknown }[], inside: boolean): Any[] => {
+    if (statements.some((s) => controlsTransaction(s.sql))) throw new Error(TRANSACTION_SENTENCE);
+    const open = inside ? "SAVEPOINT dai_request" : "BEGIN";
+    const close = inside ? "RELEASE dai_request" : "COMMIT";
+    if (statements.length === 1 && !inside && firstWords(statements[0]!.sql).length <= 1) return [runStatement(db, statements[0]!)];
+    db.exec(open);
+    try {
+      const results = statements.map((statement) => runStatement(db, statement));
+      db.exec(close);
+      return results;
+    } catch (error) {
+      try {
+        if (inside) {
+          db.exec("ROLLBACK TO dai_request");
+          db.exec("RELEASE dai_request");
+        } else db.exec("ROLLBACK");
+      } catch {
+        /* SQLite already ended it (an error that rolls a transaction back says so itself). */
+      }
+      throw error;
+    }
+  };
+
+  /** The transaction the application holds, if it holds one: the request that opened it, and its idle timer. */
+  let transaction: { id: number; idle: ReturnType<typeof setTimeout> | undefined } | null = null;
+  /** Transactions that ended without the application: a request still naming one is refused, never run outside it. */
+  const ended = new Map<number, { name: string; message: string }>();
+  const ENDED_IDLE = { name: "Error", message: `DATA_REFUSED: This transaction was rolled back: nothing was asked of it for ${TRANSACTION_IDLE_MS / 1000} seconds.` };
+  const ENDED_CANCELLED = { name: "AbortError", message: "This transaction was cancelled and rolled back." };
+  const ENDED_LEFT = { name: "AbortError", message: "This transaction was rolled back: the page was left while it was open." };
+  const endTransaction = (why: { name: string; message: string } | null): void => {
+    if (!transaction) return;
+    if (transaction.idle !== undefined) clearTimeout(transaction.idle);
+    if (why !== null) ended.set(transaction.id, why);
+    transaction = null;
+    // Committed or rolled back: a save that waited for it runs now (2a-H1).
+    transactionEnded();
+  };
+  const rollBackHeld = (why: { name: string; message: string }): void => {
+    if (!transaction) return;
+    // Not while a request of the transaction's own is running: it finishes, then the rollback comes before anything else.
+    if (running) {
+      rollBackAfter = why;
+      return;
+    }
+    try {
+      openHandle?.exec("ROLLBACK");
+    } catch {
+      /* Already ended. */
+    }
+    endTransaction(why);
+    pump();
+  };
+  let rollBackAfter: { name: string; message: string } | null = null;
+  /*
+   * The page is going away (a close, a hide): a transaction the application
+   * holds is rolled back first, then what committed is saved (2a-H1). The
+   * save never takes the open transaction's rows; without the rollback it
+   * would wait for an end that never comes, and a committed write still to be
+   * saved would be lost with the page.
+   */
+  leaving = (): void => {
+    if (transaction) rollBackHeld(ENDED_LEFT);
+    else if (liveDb && transactionHeld(liveDb)) {
+      try {
+        liveDb.exec("ROLLBACK");
+      } catch {
+        /* Already ended. */
+      }
+    }
+    void flushAutosave();
+  };
+  const touch = (): void => {
+    if (!transaction) return;
+    if (transaction.idle !== undefined) clearTimeout(transaction.idle);
+    transaction.idle = setTimeout(() => rollBackHeld(ENDED_IDLE), TRANSACTION_IDLE_MS);
+  };
+  const inTransaction = (request: Any): boolean => transaction !== null && request.tx === transaction.id;
+  const transactionOf = (request: Any): void => {
+    if (typeof request.tx !== "number") return;
+    const why = ended.get(request.tx);
+    if (why !== undefined) throw Object.assign(new Error(why.message), { name: why.name });
+    if (!inTransaction(request)) throw new Error("DATA_REFUSED: This transaction is not open.");
+  };
+
+  const operations: Record<string, (request: Any) => unknown> = {
+    open: async () => {
+      await live();
+      return { autosaves, author: (api.replicated as Any).author() };
+    },
+    batch: async (request) => {
+      transactionOf(request);
+      const list = Array.isArray(request.statements) ? request.statements : [];
+      const statements = list.map(statementOf);
+      const db = await live();
+      return runAll(db, statements, inTransaction(request));
+    },
+    begin: async (request) => {
+      const db = await live();
+      db.exec("BEGIN");
+      transaction = { id: request.id, idle: undefined };
+      return request.id;
+    },
+    commit: async (request) => {
+      transactionOf(request);
+      const db = await live();
+      try {
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          /* Already ended. */
+        }
+        endTransaction(null);
+        throw error;
+      }
+      endTransaction(null);
+      return true;
+    },
+    rollback: async (request) => {
+      transactionOf(request);
+      const db = await live();
+      try {
+        db.exec("ROLLBACK");
+      } finally {
+        endTransaction(null);
+      }
+      return true;
+    },
+    conflict: async (request) => {
+      await live();
+      return api.conflict(String(request.table), Array.isArray(request.key) ? request.key.filter(boundValue) : [], Array.isArray(request.unit) ? request.unit.map(String) : []);
+    },
+    resolve: async (request) => {
+      await live();
+      return api.resolve(String(request.token), String(request.choice));
+    },
+    save: async (request) => {
+      const db = await live();
+      const method = request.method === "download" || request.method === "picker" ? request.method : "auto";
+      return api.saveDatabase(db, { method });
+    },
+    export: async () => exportDatabase(await live()),
+    writable: () => (api.replicated as Any).writable(),
+    readOnly: () => (api.replicated as Any).readOnly(),
+  };
+
+  /** Requests in arrival order, not yet started. */
+  const queued: { request: Any; resolve: (v: unknown) => void; reject: (e: unknown) => void; asked?: boolean; wanted?: boolean }[] = [];
+  let running = false;
+  /** The port the application's requests arrive on; a request with a signal is confirmed through it before it starts. */
+  let served: MessagePort | null = null;
+  /** The next request that may run: in a held transaction, only that transaction's; otherwise the first. */
+  const nextRunnable = (): number => (transaction ? queued.findIndex((q) => inTransaction(q.request) || ended.has(q.request.tx)) : queued.length > 0 ? 0 : -1);
+  function pump(): void {
+    if (running) return;
+    const at = nextRunnable();
+    if (at < 0) return;
+    /*
+     * A request with a signal starts only once the application's side says it
+     * is still wanted (2a-L1). A cancel sent while a statement ran waits in
+     * the port behind the request it names, and nothing the worker can do
+     * makes it heard sooner: no yield is ordered against the application's
+     * port the same way on every engine. Asked now, the answer is the signal
+     * as it stands now, so a request aborted while it waited never starts.
+     * Nothing behind it starts first.
+     */
+    const next = queued[at]!;
+    if (next.request.signal === true && !next.wanted) {
+      if (!next.asked && served) {
+        next.asked = true;
+        served.postMessage({ start: next.request.id });
+      }
+      return;
+    }
+    queued.splice(at, 1);
+    const { request, resolve, reject } = next;
+    const op = typeof request?.op === "string" && Object.prototype.hasOwnProperty.call(operations, request.op) ? operations[request.op] : undefined;
+    running = true;
+    Promise.resolve()
+      .then(() => {
+        if (!op) throw new TypeError("DATA_REFUSED: no such request.");
+        return op(request);
+      })
+      .then(resolve, reject)
+      .finally(() => {
+        running = false;
+        if (rollBackAfter) {
+          const why = rollBackAfter;
+          rollBackAfter = null;
+          rollBackHeld(why);
+          return;
+        }
+        touch();
+        pump();
+      });
+  }
+  /** One request: queued behind every request before it, and behind a transaction it is not part of. */
+  const perform = (request: Any): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      queued.push({ request, resolve, reject });
+      pump();
+    });
+  /** A request cancelled before it started never runs; a transaction cancelled while held is rolled back. */
+  const cancel = (target: unknown): void => {
+    const at = queued.findIndex((q) => q.request.id === target);
+    if (at >= 0) {
+      const [item] = queued.splice(at, 1);
+      item!.reject(Object.assign(new Error("This request was cancelled before it ran."), { name: "AbortError" }));
+      // What waited behind it may start now.
+      pump();
+      return;
+    }
+    if (transaction && transaction.id === target) rollBackHeld(ENDED_CANCELLED);
+  };
+  /** The application's side says a request with a signal is still wanted: it starts in its turn. */
+  const wanted = (target: unknown): void => {
+    const item = queued.find((q) => q.request.id === target);
+    if (!item) return;
+    item.wanted = true;
+    pump();
+  };
+  const serveApplication = (port: MessagePort): void => {
+    served = port;
+    port.onmessage = (event: MessageEvent) => {
+      const request = event.data as Any;
+      const id = request?.id;
+      if (!Number.isSafeInteger(id)) return;
+      const answer = (message: Any): void => {
+        try {
+          port.postMessage(message);
+        } catch (error) {
+          port.postMessage({ id, ok: false, error: errorShape(error) });
+        }
+      };
+      // Heard at once, never queued: it is about requests already waiting.
+      if (request.op === "cancel") {
+        cancel(request.target);
+        answer({ id, ok: true, value: true });
+        return;
+      }
+      if (request.op === "go") {
+        wanted(request.target);
+        return;
+      }
+      perform(request).then(
+        (value) => answer({ id, ok: true, value }),
+        (error) => answer({ id, ok: false, error: errorShape(error) }),
+      );
+    };
+  };
+
+  /*
+   * The handle the application is given (R-Y): every call a request, every
+   * answer a promise, under names of their own. The synchronous handle's names
+   * stay with the documents that still have one, so no call keeps its name and
+   * changes what it returns.
+   *
+   * `batch` and `transaction` take { signal }: an AbortSignal that, once
+   * aborted, keeps a request that has not started from running (it rejects
+   * with AbortError) and rolls back a transaction still open. A request that
+   * has started finishes, and its promise says what it did.
+   */
+  const aborted = (): Error => Object.assign(new Error("This request was cancelled before it ran."), { name: "AbortError" });
+  const handleOver = (ask: (op: string, args?: Any, signal?: AbortSignal) => Promise<any>, tx?: number): Any => {
+    const extra = (): Any => (tx === undefined ? {} : { tx });
+    const one = (sql: unknown, bind?: unknown): Promise<any> =>
+      Promise.resolve()
+        .then(() => statementOf(bind === undefined ? sql : { sql, bind }))
+        .then((statement) => ask("batch", { statements: [statement], ...extra() }))
+        .then((results: Any[]) => results[0] as Any);
+    const handle: Any = {
+      /** Rows as plain objects. */
+      query: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => r.rows),
+      /** The first row, or undefined. */
+      get: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => r.rows[0]),
+      /** The first column of the first row. */
+      value: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => (r.rows[0] && r.columns[0] !== undefined ? r.rows[0][r.columns[0]] : undefined)),
+      /** A statement that writes: how many rows it changed, and the key it gave a new row. */
+      run: (sql: unknown, bind?: unknown) => one(sql, bind).then((r) => ({ changes: r.changes, lastInsertRowid: r.lastInsertRowid })),
+      /** Several statements as one request, in order: all of them, or none. */
+      batch: (statements: unknown, options?: { signal?: AbortSignal }) =>
+        Promise.resolve()
+          .then(() => {
+            if (!Array.isArray(statements)) throw new TypeError("DATA_REFUSED: Several statements are given as an array of { sql, bind }.");
+            return statements.map(statementOf);
+          })
+          .then((list) => ask("batch", { statements: list, ...extra() }, options?.signal)),
+      /** Not part of the data interface (R-Y): an application's functions do not run inside the runtime. */
+      createFunction: (): never => {
+        throw new Error(FUNCTIONS_SENTENCE);
+      },
+    };
+    if (tx === undefined) {
+      /*
+       * A transaction: fn is given tx, and only tx's requests run until fn's
+       * promise settles. Then it commits, or — when fn throws, a statement it
+       * did not catch fails, or the signal aborts — it rolls back, and the
+       * promise rejects with why. A request on db made from inside fn waits
+       * for the transaction to end; one that keeps it waiting past the idle
+       * limit rolls it back.
+       */
+      handle.transaction = async (fn: unknown, options?: { signal?: AbortSignal }) => {
+        if (typeof fn !== "function") throw new TypeError("DATA_REFUSED: transaction takes a function of tx.");
+        const signal = options?.signal;
+        if (signal?.aborted) throw aborted();
+        const id = (await ask("begin", {}, signal)) as number;
+        const onAbort = (): void => void ask("cancel", { target: id }).catch(() => undefined);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+        try {
+          let value: unknown;
+          try {
+            value = await (fn as (t: Any) => unknown)(handleOver(ask, id));
+          } catch (error) {
+            await ask("rollback", { tx: id }).catch(() => undefined);
+            throw error;
+          }
+          await ask("commit", { tx: id });
+          return value;
+        } finally {
+          signal?.removeEventListener("abort", onAbort);
+        }
+      };
+      /** A conflict observed (R-X): what is shown, the alternatives, and a token; null when nothing is pending. */
+      handle.conflict = (table: unknown, key: unknown, unit: unknown = []) =>
+        ask("conflict", { table: String(table), key: Array.isArray(key) ? key : [key], unit: Array.isArray(unit) ? unit.map(String) : [] });
+      /** Keeps or chooses one alternative a token presented (R-X), logged as it is made. */
+      handle.resolve = (token: unknown, choice: unknown) => ask("resolve", { token: String(token), choice: String(choice) });
+      /** The database as bytes, without saving. */
+      handle.export = () => ask("export");
+    }
+    return Object.freeze(handle);
+  };
+
+  /*
+   * The application's side of the port, in the frame of a document whose data
+   * lives in the worker (R-Y). What it is given about the data is the handle;
+   * what reached the data directly before is refused with the sentence that
+   * names the handle.
+   */
+  const becomeClient = (target: Any, port: MessagePort): void => {
+    let next = 1;
+    let status: typeof saveStatus = "idle";
+    let author: string | null = null;
+    const waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    /** The signal of each request still waiting that has one: the worker asks before it starts one (2a-L1). */
+    const signals = new Map<number, AbortSignal>();
+    port.onmessage = (event: MessageEvent) => {
+      const data = event.data as Any;
+      if (!data || typeof data !== "object") return;
+      if (typeof data.start === "number") {
+        const signal = signals.get(data.start);
+        port.postMessage({ id: next++, op: signal?.aborted ? "cancel" : "go", target: data.start });
+        return;
+      }
+      if (typeof data.event === "string") {
+        if (data.event === names.NEW_PLAYER) target.newPlayer = true;
+        window.dispatchEvent(data.detail === undefined ? new CustomEvent(data.event) : new CustomEvent(data.event, { detail: data.detail }));
+        return;
+      }
+      if (typeof data.saveStatus === "string") {
+        status = data.saveStatus as typeof saveStatus;
+        return;
+      }
+      const waiter = waiting.get(data.id);
+      if (!waiter) return;
+      waiting.delete(data.id);
+      if (data.ok) waiter.resolve(data.value);
+      else waiter.reject(Object.assign(new Error(String(data.error?.message ?? "DATA_FAILED")), { name: String(data.error?.name ?? "Error"), ...(Number.isInteger(data.error?.resultCode) ? { resultCode: data.error.resultCode } : {}) }));
+    };
+    // A signal aborted before the request leaves keeps it here; aborted after, it asks the worker to drop it if it has not started.
+    const ask = (op: string, args: Any = {}, signal?: AbortSignal): Promise<any> =>
+      new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(aborted());
+          return;
+        }
+        const id = next++;
+        const onAbort = (): void => {
+          try {
+            port.postMessage({ id: next++, op: "cancel", target: id });
+          } catch {
+            /* The port is gone; the request's own answer settles it. */
+          }
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal) signals.set(id, signal);
+        const settle = (f: (v: any) => void) => (v: any): void => {
+          signal?.removeEventListener("abort", onAbort);
+          signals.delete(id);
+          f(v);
+        };
+        waiting.set(id, { resolve: settle(resolve), reject: settle(reject) });
+        try {
+          port.postMessage({ ...args, id, op, ...(signal ? { signal: true } : {}) });
+        } catch (error) {
+          waiting.delete(id);
+          signals.delete(id);
+          signal?.removeEventListener("abort", onAbort);
+          reject(error as Error);
+        }
+      });
+    const handle = handleOver(ask);
+    let opened: Promise<Any> | null = null;
+    const refuse = (): never => {
+      throw new Error(DATA_SENTENCE);
+    };
+    target.database = (): Promise<Any> =>
+      (opened ??= ask("open").then((answer: Any) => {
+        author = typeof answer?.author === "string" ? answer.author : null;
+        // The runtime ran these blocks in the worker: the kit never runs them again here.
+        for (const block of sqlBlocks()) block.mark();
+        return handle;
+      }));
+    // Read by the kit: this document's data answers with promises.
+    target.worker = true;
+    target.openDatabase = (): Promise<Any> => Promise.reject(new Error(DATA_SENTENCE));
+    target.exportDatabase = refuse;
+    target.saveState = (): Promise<Any> => Promise.reject(new Error("A document's bytes are saved by the runtime: call window.dai.saveDatabase(db)."));
+    target.saveDatabase = (_db: unknown, options?: Any) => ask("save", { method: options?.method });
+    target.conflict = refuse;
+    target.resolve = refuse;
+    target.initSqlite = (): Promise<Any> => Promise.reject(new Error(DATA_SENTENCE));
+    target.compileSqlite = target.initSqlite;
+    target.instantiateSqlite = target.initSqlite;
+    target.hasSqliteEngine = false;
+    target.hasSqliteGlue = false;
+    Object.defineProperty(target, "saveStatus", { get: () => status, enumerable: true });
+    target.replicated = Object.freeze({
+      author: (): string | null => author,
+      writable: (): Promise<boolean> => ask("writable"),
+      readOnly: (): Promise<boolean> => ask("readOnly"),
+    });
+  };
+
+  if (role === "client") becomeClient(api, host.appPort as MessagePort);
   (window as unknown as Any).dai = api;
   (window as unknown as Any).daiSaveState = (bytes?: Uint8Array, options?: Any) =>
-    saveState(bytes, options);
+    role === "client" ? api.saveState(bytes, options) : saveState(bytes, options);
+  if (appPort) serveApplication(appPort);
 }
 
 /**
@@ -3461,6 +4156,9 @@ function frameLoader(names: FrameNames, tags: ScriptTagTools): void {
       // whatever it is handed — which is the failure this exists to prevent.
       schema: (data.schema as string | null) ?? null,
       hosted: Boolean(data.hosted),
+      // The data lives in the shell's worker (R-Y): this frame reaches it only through this port.
+      authority: data.facts.authority === true,
+      appPort: data.appPort instanceof MessagePort ? data.appPort : null,
     };
 
     /*
@@ -3582,14 +4280,53 @@ let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; docume
 let listeningWindow: Window | null = null;
 
 function deliverRules(): void {
-  if (!pendingRules || !listeningWindow) return;
+  if (!pendingRules || !(dataWorker ? workerListening : listeningWindow)) return;
   const rules = pendingRules;
   pendingRules = null;
-  listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true, arriving: rules.arriving === true, readOnly: rules.readOnly },
-    "*",
-  );
+  toFrame({ type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true, arriving: rules.arriving === true, readOnly: rules.readOnly });
 }
+
+/*
+ * The data's worker, for a document under the ordinary data interface (R-Y).
+ *
+ * This shell made it and holds the only reference to it: the engine, the
+ * capture, the seals and the saves live there, and the application's frame
+ * reaches its data only through the port this shell paired with the worker's.
+ * Every message about the data that this shell would have sent the frame goes
+ * to the worker instead, held until the worker says it is listening, as the
+ * frame's are (D33); and every such message back is taken from the worker
+ * alone (see fromRuntime).
+ */
+let dataWorker: Worker | null = null;
+let workerListening = false;
+let heldForWorker: Record<string, unknown>[] = [];
+/** What the shell sends the runtime about the data: the worker's, when there is one. */
+const DATA_TO_RUNTIME = new Set<string>([
+  FRAME_INTERNAL.FLUSH,
+  FRAME_INTERNAL.REPLICA_ID,
+  FRAME_INTERNAL.MERGE,
+  FRAME_INTERNAL.SIGNED,
+  FRAME_INTERNAL.AUTHORED_SINCE,
+  FRAME_INTERNAL.SESSIONS,
+  FRAME_INTERNAL.APPLY_BATCH,
+  FRAME_INTERNAL.WRITE_RULES,
+  FRAME_INTERNAL.PAGEHIDE,
+]);
+/** What the runtime says to the shell about the data: the worker's alone, when there is one. */
+const DATA_FROM_RUNTIME = new Set<string>([
+  FRAME_INTERNAL.SCHEMA,
+  FRAME_INTERNAL.FLUSHED,
+  FRAME_INTERNAL.MERGE_RESULT,
+  FRAME_INTERNAL.AUTHORED,
+  FRAME_INTERNAL.SESSIONS_ANSWER,
+  FRAME_INTERNAL.AUTHORED_BATCH,
+  FRAME_INTERNAL.SIGN,
+  FRAME_INTERNAL.APPLIED,
+  FRAME_INTERNAL.REPLICA_ID_ANSWER,
+  FRAME_INTERNAL.WRITE_RULES_REFUSED,
+  FRAME_INTERNAL.SAVE_STATE,
+  FRAME_INTERNAL.SAVE,
+]);
 
 /*
  * Every message from this shell to the application's frame, held until the
@@ -3613,11 +4350,21 @@ function deliverRules(): void {
 let heldForFrame: Record<string, unknown>[] = [];
 
 function toFrame(message: Record<string, unknown>): void {
+  if (dataWorker && DATA_TO_RUNTIME.has(String(message.type))) {
+    if (workerListening) dataWorker.postMessage(message);
+    else heldForWorker.push(message);
+    return;
+  }
   if (listeningWindow) listeningWindow.postMessage(message, "*");
   else heldForFrame.push(message);
 }
 
 function deliverHeld(): void {
+  if (dataWorker && workerListening && heldForWorker.length > 0) {
+    const held = heldForWorker;
+    heldForWorker = [];
+    for (const message of held) dataWorker.postMessage(message);
+  }
   if (!listeningWindow || heldForFrame.length === 0) return;
   const held = heldForFrame;
   heldForFrame = [];
@@ -3654,18 +4401,81 @@ function mount(srcdoc: string): HTMLIFrameElement {
    * shell's one sink, and `dai-shell` is its one policy. Without the
    * directive the API is absent or inert and the plain string is used.
    */
-  const tt = (window as unknown as { trustedTypes?: { createPolicy: (n: string, r: { createHTML: (s: string) => string }) => { createHTML: (s: string) => unknown } } }).trustedTypes;
-  let doc: unknown = srcdoc;
-  if (tt) {
-    try {
-      doc = tt.createPolicy("dai-shell", { createHTML: (input: string) => input }).createHTML(srcdoc);
-    } catch {
-      /* Policy already made, or Trusted Types not enforced: the string will do. */
-    }
-  }
+  const policy = shellPolicy();
+  const doc: unknown = policy ? policy.createHTML(srcdoc) : srcdoc;
   (frame as unknown as { srcdoc: unknown }).srcdoc = doc;
   document.body.appendChild(frame);
   return frame;
+}
+
+type ShellPolicy = { createHTML: (input: string) => unknown; createScriptURL: (input: string) => unknown };
+let madePolicy: ShellPolicy | null | undefined;
+/*
+ * The shell's one policy, `dai-shell`, made once: its sinks are the frame's
+ * document (mount) and, for a document whose data lives in a worker, that
+ * worker's script, read here from the verified entries (R-Y). Without the
+ * directive the API is absent or inert and the plain string is used.
+ */
+function shellPolicy(): ShellPolicy | null {
+  if (madePolicy !== undefined) return madePolicy;
+  madePolicy = null;
+  const tt = (window as unknown as { trustedTypes?: { createPolicy: (n: string, r: Record<string, (s: string) => string>) => ShellPolicy } }).trustedTypes;
+  if (tt) {
+    try {
+      madePolicy = tt.createPolicy("dai-shell", { createHTML: (input: string) => input, createScriptURL: (input: string) => input });
+    } catch {
+      /* Trusted Types not enforced: the string will do. */
+    }
+  }
+  return madePolicy;
+}
+
+/*
+ * The data's worker starts here (R-Y), from the same runtime that writes the
+ * frame: the module's glue, as the verified entry carries it, made a classic
+ * script (a worker made from a blob cannot import a module on every engine
+ * this runs on); then `bridgeMain`, which waits for its configuration and the
+ * application's port and then runs as the worker.
+ */
+function workerBoot(names: FrameNames, sessionId: unknown, start: string, main: (n: FrameNames, s: unknown, inWorker: boolean) => void): void {
+  const scope = globalThis as unknown as Record<string, any>;
+  scope.window = scope;
+  scope.onmessage = (event: MessageEvent): void => {
+    const data = event.data as Record<string, any> | null;
+    if (!data || data.type !== start) return;
+    scope.onmessage = null;
+    scope.__DAI__ = data.config;
+    main(names, sessionId, true);
+  };
+  // Speaks first: the shell sends the configuration and the application's port only to a worker that is running.
+  scope.postMessage({ type: start });
+}
+
+/** The glue as a classic script that leaves its initializer on the worker's global, or null if it is not the shape this runtime knows. */
+function classicGlue(glue: string): string | null {
+  const exports = [...glue.matchAll(/export\s*\{([^}]*)\}\s*;?/g)];
+  const last = exports[exports.length - 1];
+  const name = last ? /(?:^|,)\s*([A-Za-z_$][\w$]*)\s+as\s+default\s*(?:,|$)/.exec(String(last[1])) : null;
+  if (!last || !name || last.index === undefined) return null;
+  return glue.slice(0, last.index) + "self.__daiGlue = " + name[1] + ";" + glue.slice(last.index + last[0].length);
+}
+
+/** The worker's whole script. */
+function workerScript(glue: string): string | null {
+  const classic = classicGlue(glue);
+  if (classic === null) return null;
+  const sessionId = "{ name: " + JSON.stringify(SESSION_ID_FUNCTION) + ", of: (" + sessionIdTools.toString() + ")().sessionIdOf }";
+  return classic + "\n;(" + workerBoot.toString() + ")(" + JSON.stringify(FRAME) + ", " + sessionId + ", " + JSON.stringify(FRAME_INTERNAL.DATA_START) + ", (" + bridgeMain.toString() + "));";
+}
+
+/** A document's SQL blocks, read from its verified entry page before any of its code has run (R-Y). */
+function sqlBlocksOf(html: string): { schema: boolean; text: string }[] {
+  const policy = shellPolicy();
+  const parsed = new DOMParser().parseFromString((policy ? policy.createHTML(html) : html) as string, "text/html");
+  return (Array.from(parsed.querySelectorAll('script[type="application/sql"]')) as HTMLScriptElement[]).map((block) => ({
+    schema: block.getAttribute("data-dai") === "schema",
+    text: block.textContent || "",
+  }));
 }
 
 async function boot(): Promise<void> {
@@ -3803,30 +4613,46 @@ async function boot(): Promise<void> {
   }
 
   /*
+   * Whether this document's data lives in a worker of this shell's (R-Y): a
+   * document under the ordinary data interface, whose only replicated table is
+   * the changeset log and which has no session. Its engine, its capture, its
+   * seals and its saves run there, and the application's frame gets a port
+   * and none of the data. Every other document keeps its database in its
+   * frame, as before.
+   */
+  const replicatedTables = Array.isArray(manifest?.replication?.tables) ? (manifest.replication.tables as unknown[]) : [];
+  const authority = replicatedTables.length === 1 && replicatedTables[0] === CHANGES_LOG && !(manifest as { session?: unknown } | null)?.session;
+  const entryHtml = new TextDecoder().decode(entry);
+  // The glue's own `import.meta.url` is neutralized before it travels, for
+  // the same reason application chunks need it: blob:null/<uuid> cannot be
+  // parsed as a base URL.
+  const glueText = files[GLUE_ENTRY]
+    ? new TextDecoder()
+        .decode(files[GLUE_ENTRY])
+        .split("import.meta.url")
+        .join(JSON.stringify(`${SYNTHETIC_ORIGIN}sqlite3.mjs`))
+    : null;
+  const appChannel = authority ? new MessageChannel() : null;
+
+  /*
    * What the frame is sent, once it says it is listening.
    *
    * Bytes rather than URLs, because a blob URL minted here is meaningless at
    * the frame's own origin. Every buffer is a copy and is transferred, so the
    * archive this document keeps for resealing is untouched and nothing is
-   * copied twice on the way across.
+   * copied twice on the way across. A frame whose data lives in the worker is
+   * sent no engine and no database: only the port.
    */
   const framePayload = {
     type: FRAME_INTERNAL.PAYLOAD,
-    entryHtml: new TextDecoder().decode(entry),
+    entryHtml,
     assets: [...assets]
       .filter(([name]) => name !== "index.html")
       .map(([name, bytes]) => [name, toArrayBuffer(bytes)] as [string, ArrayBuffer]),
-    // The glue's own `import.meta.url` is neutralized before it travels, for
-    // the same reason application chunks need it: blob:null/<uuid> cannot be
-    // parsed as a base URL.
-    glueSource: files[GLUE_ENTRY]
-      ? new TextDecoder()
-          .decode(files[GLUE_ENTRY])
-          .split("import.meta.url")
-          .join(JSON.stringify(`${SYNTHETIC_ORIGIN}sqlite3.mjs`))
-      : null,
-    wasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
-    sqlite: toArrayBuffer(files[SQLITE_ENTRY] ?? new Uint8Array(0)),
+    glueSource: authority ? null : glueText,
+    wasm: !authority && files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
+    sqlite: toArrayBuffer(authority ? new Uint8Array(0) : (files[SQLITE_ENTRY] ?? new Uint8Array(0))),
+    appPort: appChannel ? appChannel.port2 : null,
     // Carried across as text: the frame decides whether the data it is about
     // to be handed matches the code that is about to run over it.
     schema: files[SCHEMA_ENTRY] ? new TextDecoder().decode(files[SCHEMA_ENTRY]) : null,
@@ -3854,8 +4680,10 @@ async function boot(): Promise<void> {
        * Read straight off the manifest: this function is serialized and
        * cannot reach the host's helper.
        */
-      replicated:
-        Array.isArray(manifest?.replication?.tables) && manifest.replication.tables.length > 0,
+      // The worker waits for the rules when the data lives there (R-Y); the frame then expects none.
+      replicated: !authority && replicatedTables.length > 0,
+      /** Whether the data lives in this shell's worker, reached through appPort (R-Y). */
+      authority,
       /*
        * A short account of what the manifest actually said about replication,
        * for the one case that has resisted every desk-side reproduction: a
@@ -3875,10 +4703,11 @@ async function boot(): Promise<void> {
     },
   };
 
-  const transfer: ArrayBuffer[] = [
+  const transfer: Transferable[] = [
     ...framePayload.assets.map(([, buffer]) => buffer),
     framePayload.sqlite,
     ...(framePayload.wasm ? [framePayload.wasm] : []),
+    ...(appChannel ? [appChannel.port2] : []),
   ];
 
   // Kept for the persistence layer and for a host cross-checking what mounted.
@@ -3895,6 +4724,10 @@ async function boot(): Promise<void> {
     /** Where the boot spent its time, for whoever is measuring. */
     get timings() {
       return timingTable();
+    },
+    /** For a document whose data lives in a worker (R-Y): whether that worker is running and listening. */
+    get dataWorker(): "none" | "starting" | "running" {
+      return !authority ? "none" : workerListening ? "running" : "starting";
     },
   };
 
@@ -4046,7 +4879,7 @@ async function boot(): Promise<void> {
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
       pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor, arriving: pushed.arriving, readOnly: pushed.readOnly };
-      if (listeningWindow) deliverRules();
+      deliverRules();
       return;
     }
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.MERGE) {
@@ -4150,15 +4983,34 @@ async function boot(): Promise<void> {
      * it was already here to copy.
      */
     if (event.source !== frame.contentWindow) return;
+    fromRuntime(event.data, (message) => (event.source as Window | null)?.postMessage(message, "*"), "frame");
+  });
 
-    const reported = event.data as { type?: string; phase?: string; took?: number };
+  /*
+   * What the runtime's own code says to this shell: the application's frame,
+   * and for a document whose data lives in the worker, the worker (R-Y).
+   *
+   * For such a document every message about the data — a signature asked
+   * for, a save, a flush, a merge's answer, a published batch — is the
+   * worker's alone. The same message from the application's frame is not
+   * acted on: the frame is the application's, and a save it made of bytes of
+   * its own, or a header it asked to have signed, is exactly the authority
+   * R-Y keeps from it. The worker says nothing else.
+   */
+  function fromRuntime(data: unknown, reply: (message: Record<string, unknown>) => void, from: "frame" | "worker"): void {
+    const type = (data as { type?: unknown })?.type;
+    const aboutData = typeof type === "string" && DATA_FROM_RUNTIME.has(type);
+    if (from === "worker" && !aboutData && type !== FRAME_INTERNAL.INSETS_ASK && type !== FRAME_INTERNAL.TIMING) return;
+    if (from === "frame" && aboutData && dataWorker) return;
+
+    const reported = data as { type?: string; phase?: string; took?: number };
     if (reported?.type === FRAME_INTERNAL.TIMING) {
       // Measured inside the frame, which is the only side that can time it.
       mark(String(reported.phase), Number(reported.took));
       return;
     }
 
-    const asked = event.data as { type?: string; id?: string; actual?: string | null };
+    const asked = data as { type?: string; id?: string; actual?: string | null };
     // The probe's findings, passed up to whoever hosts this shell. An
     // isolated frame can address only this window; a host running the probe
     // in CI needs to see the report, alongside what it claimed.
@@ -4182,17 +5034,14 @@ async function boot(): Promise<void> {
         migrations: declaredSchema.migrations,
       });
 
-      (event.source as Window | null)?.postMessage(
-        {
-          type: FRAME_INTERNAL.SCHEMA_VERDICT,
-          id: asked.id,
-          status: verdict.status === "migrate" ? "migrate" : verdict.status,
-          digest: declaredSchema.digest,
-          run: verdict.status === "migrate" ? verdict.run.map((step) => step.sql) : [],
-          reason: verdict.status === "incompatible" ? verdict.reason : "",
-        },
-        "*",
-      );
+      reply({
+        type: FRAME_INTERNAL.SCHEMA_VERDICT,
+        id: asked.id,
+        status: verdict.status === "migrate" ? "migrate" : verdict.status,
+        digest: declaredSchema.digest,
+        run: verdict.status === "migrate" ? verdict.run.map((step) => step.sql) : [],
+        reason: verdict.status === "incompatible" ? verdict.reason : "",
+      });
 
       if (verdict.status === "incompatible") {
         // Recorded where a host can see it. A refusal the application swallows
@@ -4206,7 +5055,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    if (event.data === HANDSHAKE) {
+    if (data === HANDSHAKE) {
       // The application is on screen. This is the only mark that corresponds to
       // anything a person would call ready.
       mark("interactive");
@@ -4242,27 +5091,31 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const relay = event.data as { type?: string; id?: string; session?: unknown; sessions?: unknown };
+    const relay = data as { type?: string; id?: string; session?: unknown; sessions?: unknown };
     // Asked for by the application as it starts, and answered with whatever
     // the host has said so far.
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.INSETS_ASK) {
+    if (relay?.type === FRAME_INTERNAL.INSETS_ASK) {
       // The bridge has a listener now. Anything held for it goes now, and
-      // anything that arrives later goes straight through (see toFrame).
-      listeningWindow = event.source as Window;
-      toFrame({ type: FRAME_INTERNAL.INSETS, ...knownInsets });
+      // anything that arrives later goes straight through (see toFrame). The
+      // worker asks the same way when it is listening (R-Y); it has no insets.
+      if (from === "worker") workerListening = true;
+      else {
+        listeningWindow = frame.contentWindow;
+        toFrame({ type: FRAME_INTERNAL.INSETS, ...knownInsets });
+      }
       deliverRules();
       deliverHeld();
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.FLUSHED) {
+    if (relay?.type === FRAME_INTERNAL.FLUSHED) {
       window.parent.postMessage(
         {
           type: TO_HOST.FLUSHED,
           sessionNonce,
           id: relay.id,
-          saved: (event.data as { saved?: unknown }).saved !== false,
-          ...((event.data as { databaseBytes?: unknown }).databaseBytes instanceof Uint8Array
-            ? { databaseBytes: (event.data as { databaseBytes: Uint8Array }).databaseBytes }
+          saved: (data as { saved?: unknown }).saved !== false,
+          ...((data as { databaseBytes?: unknown }).databaseBytes instanceof Uint8Array
+            ? { databaseBytes: (data as { databaseBytes: Uint8Array }).databaseBytes }
             : {}),
         },
         "*",
@@ -4278,8 +5131,8 @@ async function boot(): Promise<void> {
      * through untouched: this shell has no view of the rows and no business
      * summarising them.
      */
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.MERGE_RESULT) {
-      const { type: _ignored, ...report } = event.data as Record<string, unknown>;
+    if (relay?.type === FRAME_INTERNAL.MERGE_RESULT) {
+      const { type: _ignored, ...report } = data as Record<string, unknown>;
       window.parent.postMessage(
         { type: TO_HOST.MERGE_RESULT, sessionNonce, ...report },
         "*",
@@ -4287,12 +5140,12 @@ async function boot(): Promise<void> {
       return;
     }
     // Track 5: the frame's mailbox messages, on their way to the host.
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.AUTHORED) {
+    if (relay?.type === FRAME_INTERNAL.AUTHORED) {
       window.parent.postMessage({ type: TO_HOST.AUTHORED, sessionNonce }, "*");
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SESSIONS_ANSWER) {
-      const answer = event.data as { id?: string; sessions?: unknown; closed?: unknown };
+    if (relay?.type === FRAME_INTERNAL.SESSIONS_ANSWER) {
+      const answer = data as { id?: string; sessions?: unknown; closed?: unknown };
       const hex = (list: unknown): string[] =>
         Array.isArray(list) ? list.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)) : [];
       window.parent.postMessage(
@@ -4301,8 +5154,8 @@ async function boot(): Promise<void> {
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.AUTHORED_BATCH) {
-      const answer = event.data as {
+    if (relay?.type === FRAME_INTERNAL.AUTHORED_BATCH) {
+      const answer = data as {
         id?: string;
         seq?: number;
         head?: number;
@@ -4330,32 +5183,32 @@ async function boot(): Promise<void> {
       return;
     }
     // The frame asking the host to sign a batch header (identity step 3).
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SIGN) {
-      const ask = event.data as { id?: string; header?: unknown; seq?: unknown };
+    if (relay?.type === FRAME_INTERNAL.SIGN) {
+      const ask = data as { id?: string; header?: unknown; seq?: unknown };
       window.parent.postMessage(
         { type: TO_HOST.SIGN, sessionNonce, id: ask.id, header: ask.header, seq: ask.seq },
         "*",
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.APPLIED) {
-      const { type: _t, ...report } = event.data as Record<string, unknown>;
+    if (relay?.type === FRAME_INTERNAL.APPLIED) {
+      const { type: _t, ...report } = data as Record<string, unknown>;
       window.parent.postMessage({ type: TO_HOST.APPLIED, sessionNonce, ...report }, "*");
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.REPLICA_ID_ANSWER) {
-      const answer = event.data as { nonce?: string; replica?: Uint8Array | null };
+    if (relay?.type === FRAME_INTERNAL.REPLICA_ID_ANSWER) {
+      const answer = data as { nonce?: string; replica?: Uint8Array | null };
       window.parent.postMessage(
         { type: TO_HOST.REPLICA_ID_ANSWER, nonce: answer.nonce, replica: answer.replica ?? null },
         "*",
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.GROUND) {
+    if (relay?.type === FRAME_INTERNAL.GROUND) {
       // The colour at the top of the application, for the strip above it
       // that only the host's page can colour. Passed on as it came; the host
       // decides whether a declared theme-color outranks it.
-      const ground = event.data as { colour?: unknown };
+      const ground = data as { colour?: unknown };
       if (typeof ground.colour === "string" && ground.colour.length <= 64) {
         window.parent.postMessage({ type: TO_HOST.GROUND, sessionNonce, colour: ground.colour }, "*");
       }
@@ -4366,8 +5219,8 @@ async function boot(): Promise<void> {
      * kept in the frame, because the host is the half that chose what to send
      * and the only half with somewhere to put a sentence.
      */
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.WRITE_RULES_REFUSED) {
-      const refusal = event.data as { why?: string; detail?: string };
+    if (relay?.type === FRAME_INTERNAL.WRITE_RULES_REFUSED) {
+      const refusal = data as { why?: string; detail?: string };
       window.parent.postMessage(
         {
           type: TO_HOST.WRITE_RULES_REFUSED,
@@ -4379,8 +5232,8 @@ async function boot(): Promise<void> {
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SAVE_STATE) {
-      const status = event.data as { state?: string; error?: string };
+    if (relay?.type === FRAME_INTERNAL.SAVE_STATE) {
+      const status = data as { state?: string; error?: string };
       window.parent.postMessage(
         { type: TO_HOST.SAVE_STATE, sessionNonce, state: status.state, error: status.error },
         "*",
@@ -4390,7 +5243,7 @@ async function boot(): Promise<void> {
     // The application asking the host to offer its share sheet. Relayed
     // exactly as asked — no data of the application's choosing rides along,
     // because none is needed: the host reads the document it already has.
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.REQUEST_SHARE) {
+    if (relay?.type === FRAME_INTERNAL.REQUEST_SHARE) {
       // The session rides through unchanged when it is well-formed, and is
       // dropped when it is not: the host must never filter on something the
       // application did not plainly say.
@@ -4402,7 +5255,7 @@ async function boot(): Promise<void> {
 
     // The application's games waiting on this person (D34). Only session ids
     // pass, and never more than a document could hold: nothing else rides along.
-    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.WAITING) {
+    if (relay?.type === FRAME_INTERNAL.WAITING) {
       const sessions = Array.isArray(relay.sessions)
         ? (relay.sessions as unknown[]).filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)).slice(0, 256)
         : [];
@@ -4410,7 +5263,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const request = event.data as {
+    const request = data as {
       type?: string;
       id?: string;
       sqlite?: Uint8Array;
@@ -4425,8 +5278,7 @@ async function boot(): Promise<void> {
     // that does not use the kit will ever send.
     noteUse();
 
-    const reply = (payload: Record<string, unknown>): void =>
-      (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
+    const answer = (payload: Record<string, unknown>): void => reply({ id: request.id, ...payload });
 
     if (hostAvailable && request.method !== "download" && request.method !== "picker") {
       // The host is given a finished document, not a database. Splicing a new
@@ -4453,12 +5305,12 @@ async function boot(): Promise<void> {
             window.removeEventListener("message", onHostAck);
             window.clearTimeout(hostTimer);
             if (data.status === "ok") {
-              reply({
+              answer({
                 ok: true,
                 result: { saved: true, method: "host", inPlace: hostClass === "editor" },
               });
             } else {
-              reply({
+              answer({
                 ok: false,
                 error: data.error || "This page could not save the document.",
                 code: data.code,
@@ -4469,7 +5321,7 @@ async function boot(): Promise<void> {
           // A host that never answers must not leave the app waiting forever.
           const hostTimer = window.setTimeout(() => {
             window.removeEventListener("message", onHostAck);
-            reply({ ok: false, error: "This page did not answer the save." });
+            answer({ ok: false, error: "This page did not answer the save." });
           }, 15000);
 
           window.addEventListener("message", onHostAck);
@@ -4493,7 +5345,7 @@ async function boot(): Promise<void> {
             "*",
           );
         })
-        .catch((error: unknown) => reply({ ok: false, error: String(error) }));
+        .catch((error: unknown) => answer({ ok: false, error: String(error) }));
       return;
     }
 
@@ -4529,9 +5381,9 @@ async function boot(): Promise<void> {
         : Promise.resolve();
     checked
       .then(() => writeContainer(files, outgoing, request.method ?? "auto"))
-      .then((result) => reply({ ok: true, result }))
-      .catch((error: unknown) => reply({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-  });
+      .then((result) => answer({ ok: true, result }))
+      .catch((error: unknown) => answer({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+  }
 
   if (window.parent !== window) {
     // What this container verified, for a host that verified the same file
@@ -4574,6 +5426,105 @@ async function boot(): Promise<void> {
    * speaks first. `"*"` as the target origin because the frame has no origin to
    * name; the reply carries no secret the frame did not already hold.
    */
+  /*
+   * The data's worker, before the frame (R-Y): made here, from the verified
+   * entries, and held here alone. It is sent the engine, the stored database,
+   * the SQL blocks as the entry page carries them and the port paired with
+   * the frame's, and from then on it is the only side that writes the data.
+   */
+  if (authority && appChannel) {
+    const script = glueText !== null ? workerScript(glueText) : null;
+    if (script === null) {
+      refuse("BOOT_FAILED", "This document's data could not be started.", "the engine's glue is not one this runtime can run in a worker");
+      return;
+    }
+    const appPort = appChannel.port1;
+    /*
+     * The worker speaks first, as the frame does (FRAME_HELLO): its script
+     * posts DATA_START once it runs, and only then is it sent the engine, the
+     * stored database and the application's port. A worker whose script never
+     * ran (WebKit fails a blob's load while its network is offline, and the
+     * worker reports an error) has been given nothing, so nothing is lost with
+     * it: it is not this document's failure, and it is started again from the
+     * same bytes when the network returns and on a widening schedule. A worker
+     * that started and then failed is a failure of the data, and refuses.
+     */
+    const RETRY_MS = [500, 1000, 2000, 5000, 10000];
+    let attempts = 0;
+    let retry: number | undefined;
+    let started = false;
+    /** Whether an attempt is still waiting to hear from its worker. */
+    let live = false;
+    const start = (): void => {
+      live = true;
+      if (retry !== undefined) window.clearTimeout(retry);
+      retry = undefined;
+      const url = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
+      const scripts = shellPolicy();
+      const worker = new Worker((scripts ? scripts.createScriptURL(url) : url) as string);
+      dataWorker = worker;
+      workerListening = false;
+      let spoke = false;
+      worker.onmessage = (event: MessageEvent): void => {
+        if (!spoke) {
+          if ((event.data as { type?: unknown })?.type !== FRAME_INTERNAL.DATA_START) return;
+          spoke = true;
+          started = true;
+          URL.revokeObjectURL(url);
+          window.removeEventListener("online", again);
+          const wasm = files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null;
+          const stored = toArrayBuffer(documentBytes);
+          worker.postMessage(
+            {
+              type: FRAME_INTERNAL.DATA_START,
+              config: {
+                version: "0.1.0",
+                documentUuid: manifest?.documentUuid ?? null,
+                verified: policy === "required",
+                signature: signatureState,
+                publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
+                replicated: replicatedTables.length > 0,
+                manifestDebug: framePayload.facts.manifestDebug,
+                sqlite: new Uint8Array(stored),
+                sqliteWasm: wasm,
+                schema: files[SCHEMA_ENTRY] ? new TextDecoder().decode(files[SCHEMA_ENTRY]) : null,
+                hosted: window.parent !== window,
+                sqlBlocks: sqlBlocksOf(entryHtml),
+                appPort,
+              },
+            },
+            [appPort, stored, ...(wasm ? [wasm] : [])],
+          );
+          return;
+        }
+        fromRuntime(event.data, (message) => worker.postMessage(message), "worker");
+      };
+      worker.onerror = (event: ErrorEvent): void => {
+        if (spoke) {
+          refuse("BOOT_FAILED", "This document's data could not be started.", String(event.message ?? "the worker failed"));
+          return;
+        }
+        event.preventDefault();
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        live = false;
+        if (started) return;
+        const delay = RETRY_MS[Math.min(attempts, RETRY_MS.length - 1)] as number;
+        attempts += 1;
+        console.info(`dai: the data's worker did not start (${String(event.message || "its script did not load")}); starting it again in ${delay} ms`);
+        retry = window.setTimeout(start, delay);
+      };
+    };
+    // Back online is the likeliest moment a worker that could not load now can.
+    const again = (): void => {
+      if (!started && !live) start();
+    };
+    window.addEventListener("online", again);
+    start();
+    // The page going away flushes the worker's pending save, as a frame's own pagehide does.
+    window.addEventListener("pagehide", () => toFrame({ type: FRAME_INTERNAL.PAGEHIDE }));
+  }
+
   const frame = mount(loaderScript());
 
   /*

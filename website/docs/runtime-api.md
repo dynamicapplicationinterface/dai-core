@@ -11,19 +11,23 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 
 ## Every application
 
-- `await window.dai.openDatabase()` — Opens the database inside this file. It waits for the host's write rules first.
-- `db.exec(sql)` — Runs one or more statements.
-- `db.exec({ sql, bind })` — Runs a statement with bound parameters. Omit bind when there are none: an empty array throws.
-- `db.selectObjects(sql, bind?)` — Returns rows as plain objects. bind is an array for ? or an object for :name.
-- `db.selectValue(sql, bind?)` — The first column of the first row — a count, a setting, a total.
 - `window.dai.autosaves` — True under a host: every write is saved as it happens, and nothing needs pressing.
 - `await window.dai.saveDatabase(db)` — Saves now. Needed only where there is no host (a file opened straight in a browser). Returns { saved, method }.
-- `window.dai.exportDatabase(db)` — The database as bytes, without saving.
 - `window.dai.documentUuid` — This document's identity.
 - `window.dai.signature` — "valid", "unsigned" or "invalid" for this container.
 - `window.dai.onAppModeChange(fn)` — Called when the container enters or leaves full-screen App Mode.
-- `window.dai.requestShare(session?)` — Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send. In a session document, pass the session id to make it an invite into that one session: the copy that travels holds only that session's rows, and none of the other sessions or of this copy's local tables. Without one, the whole document is offered.
 - `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the merge listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
+
+## Ordinary tables (the database lives in the runtime's worker)
+
+- `await window.dai.database()` — Opens the database inside this file and returns db. Every call on db returns a promise: await it.
+- `await db.query(sql, bind?)` — Rows as plain objects. bind is an array for ? or an object for :name.
+- `await db.get(sql, bind?) / await db.value(sql, bind?)` — The first row, or the first column of the first row — a count, a setting, a total.
+- `await db.run(sql, bind?)` — Runs one statement that writes. Returns { changes, lastInsertRowid }.
+- `await db.batch([{ sql, bind }, …])` — Several statements as one request: all of them, or none.
+- `await db.transaction(async (tx) => { … })` — tx's requests run alone and commit when fn returns; a throw rolls back. Inside, call tx, not db.
+- `await db.export()` — The database as bytes, without saving.
+- `window.dai.requestShare()` — Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send.
 
 ## Shared tables (passable and session)
 

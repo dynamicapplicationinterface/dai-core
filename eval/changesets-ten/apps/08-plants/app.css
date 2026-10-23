@@ -1,93 +1,302 @@
+/* Leaf green on paper, with a dark mode that follows the device. */
 :root {
-  color-scheme: light dark;
-  --bg: #f1f5ee;
+  --paper: #f4f7f1;
   --card: #ffffff;
-  --ink: #1d2b21;
-  --muted: #647268;
-  --line: #dde6d8;
-  --accent: #2f7a4b;
-  --on-accent: #ffffff;
-  --thirsty: #a85a00;
-  --thirsty-bg: #fdf0dc;
-  --fine: #2f7a4b;
-  --fine-bg: #e3f1e6;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ink: #1d2a20;
+  --muted: #66766a;
+  --line: #dbe5d6;
+  --accent: #2f7d46;
+  --accent-ink: #ffffff;
+  --thirst: #a93a28;
+  --thirst-bg: #fbe6e1;
+  --soon: #7d5a0c;
+  --soon-bg: #fbefcf;
+  color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #121a14; --card: #1b261e; --ink: #e6eee7; --muted: #9aaa9e; --line: #2b3a2f;
-    --accent: #7cc796; --on-accent: #0f1a12;
-    --thirsty: #f0b35a; --thirsty-bg: #3a2b12; --fine: #8fd3a5; --fine-bg: #1f3526;
+    --paper: #121a14;
+    --card: #1b261e;
+    --ink: #e6efe4;
+    --muted: #94a697;
+    --line: #2b3a2f;
+    --accent: #6cc283;
+    --accent-ink: #0e1a11;
+    --thirst: #ff9d8b;
+    --thirst-bg: #40201b;
+    --soon: #f0cd73;
+    --soon-bg: #3a2f12;
   }
 }
+
 * { box-sizing: border-box; }
-/* A display rule below would otherwise show what the page hid. */
+
 [hidden] { display: none !important; }
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { font-size: 16px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Color runs to every edge; content is pushed clear of the strips a phone covers. */
 main {
-  max-width: 600px;
+  max-width: 640px;
   margin: 0 auto;
+  padding: calc(32px + var(--dai-safe-top, 0px)) calc(18px + var(--dai-safe-right, 0px))
+    calc(48px + var(--dai-safe-bottom, 0px)) calc(18px + var(--dai-safe-left, 0px));
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
-    calc(36px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+  gap: 26px;
 }
-/* The top right corner belongs to the host's menu button. */
-header { display: flex; flex-direction: column; gap: 6px; padding-right: 56px; }
-h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; line-height: 1.1; }
+
+header { display: flex; flex-direction: column; gap: 4px; padding-right: 48px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.pill {
+  margin: 8px 0 0;
+  align-self: flex-start;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 h2 {
-  margin: 0 0 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--muted);
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.thirsty-count { margin: 0; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-dai-rows { display: grid; gap: 10px; }
-dai-rows:not(:has(*)) { color: var(--muted); }
+p { margin: 0; }
 
-.plant, .entry, dai-form.add {
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+dai-rows { display: block; }
+
+dai-rows.plants { display: grid; gap: 12px; }
+
+/* A plant */
+.plant {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
 }
-.plant { padding: 14px 16px; display: grid; gap: 8px; }
-.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.who { display: grid; gap: 2px; min-width: 0; }
-.name { font-size: 18px; overflow-wrap: anywhere; }
-.place { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+
+.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+
+.who { display: flex; flex-direction: column; min-width: 0; }
+
+.name { font-size: 19px; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+
+.place { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+
+.badges { display: flex; gap: 6px; }
+
 .badge {
-  flex: none; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
-  letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.badge.thirsty { background: var(--thirsty-bg); color: var(--thirsty); }
-.badge.fine { background: var(--fine-bg); color: var(--fine); }
-.facts { margin: 0; color: var(--muted); font-size: 14px; }
-.dot { margin: 0 4px; }
-.care { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 
-button {
-  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--accent); background: transparent; color: var(--accent); font-weight: 600;
-}
-button.primary, dai-form button, dai-save { background: var(--accent); color: var(--on-accent); }
-button.link {
-  border: 0; background: none; color: var(--muted); font-weight: 400; text-decoration: underline;
-  text-underline-offset: 3px; padding: 0 8px;
-}
-.care button.link { margin-left: auto; }
+.badge.late { background: var(--thirst-bg); color: var(--thirst); }
+.badge.due { background: var(--soon-bg); color: var(--soon); }
 
-dai-form.add { display: block; padding: 16px; }
-.fields { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 14px; }
-.fields label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
-input {
-  font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
-  border-radius: 10px; min-height: 44px; padding: 8px 12px; width: 100%;
-}
-::placeholder { color: var(--muted); opacity: 0.6; font-style: italic; }
+.status { font-size: 14px; color: var(--muted); }
+.status .next { color: var(--ink); font-weight: 600; }
 
-.entry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 8px 6px 16px; }
-.entry .line { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
-.entry .when { color: var(--muted); font-size: 14px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.act {
+  flex: 1 1 5.5rem;
+  min-height: 44px;
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.act:hover { border-color: var(--accent); }
+
+.act.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.act.danger { color: var(--thirst); flex: 0 1 auto; margin-top: 8px; }
+
+.extras { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+.interval, .every {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.interval input, .every input {
+  width: 4.5em;
+  min-height: 44px;
+  text-align: center;
+}
+
+.note-in { flex: 1 1 12rem; min-width: 0; }
+
+input, select {
+  min-height: 44px;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+input::placeholder { color: var(--muted); }
+
+.more summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* The add form */
+dai-form.add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+dai-form.add > input[name="name"],
+dai-form.add > input[name="place"] { flex: 1 1 12rem; min-width: 0; }
+
+dai-form.add button {
+  flex: 1 1 8rem;
+  min-height: 44px;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+/* The log */
+dai-rows.log {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: 2rem 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px 8px 12px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.entry:first-child { border-top: 0; }
+
+.icon { font-size: 20px; line-height: 1.3; }
+
+.line { overflow-wrap: anywhere; }
+.memo { font-size: 14px; overflow-wrap: anywhere; }
+.when { font-size: 13px; color: var(--muted); }
+
+.undo {
+  width: 44px;
+  height: 44px;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.undo:hover { color: var(--thirst); }
+
+button:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 footer { display: flex; justify-content: flex-end; }
-dai-save { display: inline-block; padding: 12px 22px; border-radius: 10px; font-weight: 600; cursor: pointer; }
+
+dai-save {
+  display: inline-block;
+  padding: 12px 22px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* On a wide screen the page becomes a card on a quieter ground. */
+@media (min-width: 720px) {
+  html, body { background: #e6ede2; }
+  main {
+    margin: 40px auto;
+    padding: 36px 36px 44px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 24px 60px -20px rgb(0 0 0 / 0.18);
+  }
+}
+
+@media (min-width: 720px) and (prefers-color-scheme: dark) {
+  html, body { background: #0b110d; }
+}

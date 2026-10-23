@@ -2,82 +2,182 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Chores for the whole family, ticked off as they get done" />
-  <meta name="dai:does" content="Give each chore to someone and set it to daily or weekly" />
-  <meta name="dai:does" content="Tick chores off and see who is on track this week" />
-  <meta name="dai:does" content="Hand the chart around so everyone's ticks are kept" />
-  <meta name="theme-color" content="#fbf7ee" />
-  <title>Family chores</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Who does which chore, ticked off day by day" />
+  <meta name="dai:does" content="Give each person their own daily and weekly chores" />
+  <meta name="dai:does" content="Tick a chore off and see who is all done for the day" />
+  <meta name="dai:does" content="Add people and chores as the household changes" />
+  <meta name="theme-color" content="#fbf7ef" />
+  <title>Chore chart</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
+  <!--
+    Seed rows. This block runs once, when the document is created. The tables
+    are declared in schema.sql; ids are left out so the runtime chooses them,
+    and chores find their person by name.
+  -->
   <script type="application/sql">
-    -- Local seed only. Shared rows are never seeded with SQL.
-    INSERT OR IGNORE INTO settings (id) VALUES (1);
+    INSERT INTO people (name, emoji) VALUES
+      ('Alex', '🦊'),
+      ('Sam', '🐼'),
+      ('Riley', '🐙');
+
+    INSERT INTO chores (title, person_id, every) VALUES
+      ('Make the bed',            (SELECT id FROM people WHERE name = 'Alex'),  'day'),
+      ('Feed the cat',            (SELECT id FROM people WHERE name = 'Alex'),  'day'),
+      ('Take out the recycling',  (SELECT id FROM people WHERE name = 'Alex'),  'week'),
+      ('Set the table',           (SELECT id FROM people WHERE name = 'Sam'),   'day'),
+      ('Water the plants',        (SELECT id FROM people WHERE name = 'Sam'),   'week'),
+      ('Wipe the bathroom sink',  (SELECT id FROM people WHERE name = 'Sam'),   'week'),
+      ('Dishes after dinner',     (SELECT id FROM people WHERE name = 'Riley'), 'day'),
+      ('Walk the dog',            (SELECT id FROM people WHERE name = 'Riley'), 'day'),
+      ('Vacuum the living room',  (SELECT id FROM people WHERE name = 'Riley'), 'week');
+
+    INSERT INTO completions (chore_id)
+      SELECT id FROM chores
+      WHERE title IN ('Make the bed', 'Set the table', 'Water the plants');
   </script>
 
-  <!-- Nothing to type into until app.js has started: a form on screen before
-       then takes typing the app cannot handle yet, and loses it. -->
   <p id="opening" class="opening" role="status">Opening…</p>
 
   <main id="app" hidden inert>
     <header>
-      <h1>Family chores</h1>
-      <button id="share" type="button" class="quiet">Share</button>
+      <p class="eyebrow">Household</p>
+      <h1>Chore chart</h1>
+      <p class="progress">
+        <dai-value query="SELECT count(*) FROM chore_status WHERE done = 1"></dai-value>
+        of
+        <dai-value query="SELECT count(*) FROM chore_status"></dai-value>
+        chores done
+      </p>
+      <p class="hint">Daily chores reset each morning. Weekly chores reset on Monday.</p>
     </header>
 
-    <p id="notice" class="notice" role="status" hidden></p>
-
-    <section id="week" class="week" aria-live="polite" hidden>
-      <h2>This week</h2>
-      <ul id="progress" class="progress-list"></ul>
+    <section aria-labelledby="h-people">
+      <h2 id="h-people">Who is doing what</h2>
+      <dai-rows id="people-list" empty="Nobody yet. Add the first person below."
+        query="SELECT id, emoji, name, done_n, total_n,
+                      CASE WHEN total_n > 0 AND done_n = total_n THEN 1 ELSE 0 END AS all_done
+               FROM (
+                 SELECT p.id, p.emoji, p.name,
+                        (SELECT count(*) FROM chore_status s WHERE s.person_id = p.id AND s.done = 1) AS done_n,
+                        (SELECT count(*) FROM chore_status s WHERE s.person_id = p.id) AS total_n
+                 FROM people p
+               )
+               ORDER BY name">
+        <template>
+          <div class="person">
+            <span class="avatar" data-text="emoji" aria-hidden="true"></span>
+            <input class="pname" aria-label="Name"
+              data-text="name"
+              data-run="UPDATE people SET name = COALESCE(NULLIF(trim(:typed), ''), name) WHERE id = :id" />
+            <span class="tally">
+              <span class="star" data-when="all_done">All done 🎉</span>
+              <span class="count"><span data-text="done_n"></span> of <span data-text="total_n"></span></span>
+            </span>
+          </div>
+        </template>
+      </dai-rows>
     </section>
 
-    <nav id="chips" class="chips" aria-label="Whose chores" hidden></nav>
-
-    <section>
-      <h2 id="list-title">Chores</h2>
-      <ul id="list" class="list"></ul>
-      <p id="empty" class="empty" hidden></p>
+    <section aria-labelledby="h-daily">
+      <h2 id="h-daily">Every day</h2>
+      <dai-rows empty="No daily chores yet. Add one below."
+        query="SELECT id, title, name, emoji, done, 1 - done AS pending
+               FROM chore_status
+               WHERE every = 'day'
+               ORDER BY done, name, title">
+        <template>
+          <div class="chore">
+            <label class="tick" data-when="pending">
+              <input type="checkbox"
+                data-run="INSERT INTO completions (chore_id) VALUES (:id)" />
+              <span class="box" aria-hidden="true"></span>
+              <span class="what">
+                <span class="t" data-text="title"></span>
+                <span class="by"><span data-text="emoji"></span> <span data-text="name"></span></span>
+              </span>
+            </label>
+            <label class="tick is-done" data-when="done">
+              <input type="checkbox" checked
+                data-run="DELETE FROM completions WHERE chore_id = :id AND date(done_at, 'localtime') >= date('now', 'localtime')" />
+              <span class="box" aria-hidden="true"></span>
+              <span class="what">
+                <span class="t" data-text="title"></span>
+                <span class="by"><span data-text="emoji"></span> <span data-text="name"></span> · done</span>
+              </span>
+            </label>
+            <button type="button" class="remove" aria-label="Remove this chore"
+              data-run="DELETE FROM chores WHERE id = :id">×</button>
+          </div>
+        </template>
+      </dai-rows>
     </section>
 
-    <form id="entry" class="card" autocomplete="off">
-      <h2 id="entry-title">Add a chore</h2>
-      <div class="fields">
-        <label class="wide">Chore <input id="title" required maxlength="80" placeholder="e.g. Empty the dishwasher" /></label>
-        <label>Whose <select id="who"></select></label>
-        <label>How often
-          <select id="cadence">
-            <option value="daily">Every day</option>
-            <option value="weekly">Once a week</option>
-          </select>
-        </label>
-      </div>
-      <div class="actions">
-        <button id="save-entry" type="submit">Add</button>
-        <button id="cancel-edit" type="button" class="quiet" hidden>Cancel</button>
-      </div>
-    </form>
-
-    <section class="card">
-      <h2>Family</h2>
-      <ul id="people" class="people"></ul>
-      <p id="no-people" class="empty" hidden>Add everyone who has chores, starting with yourself.</p>
-      <form id="add-person" class="row" autocomplete="off">
-        <input id="person" required maxlength="30" placeholder="Name" aria-label="Name" />
-        <button type="submit">Add</button>
-      </form>
+    <section aria-labelledby="h-weekly">
+      <h2 id="h-weekly">Once a week</h2>
+      <dai-rows empty="No weekly chores yet. Add one below."
+        query="SELECT id, title, name, emoji, done, 1 - done AS pending
+               FROM chore_status
+               WHERE every = 'week'
+               ORDER BY done, name, title">
+        <template>
+          <div class="chore">
+            <label class="tick" data-when="pending">
+              <input type="checkbox"
+                data-run="INSERT INTO completions (chore_id) VALUES (:id)" />
+              <span class="box" aria-hidden="true"></span>
+              <span class="what">
+                <span class="t" data-text="title"></span>
+                <span class="by"><span data-text="emoji"></span> <span data-text="name"></span></span>
+              </span>
+            </label>
+            <label class="tick is-done" data-when="done">
+              <input type="checkbox" checked
+                data-run="DELETE FROM completions WHERE chore_id = :id AND date(done_at, 'localtime') >= date('now', 'localtime', 'weekday 0', '-6 days')" />
+              <span class="box" aria-hidden="true"></span>
+              <span class="what">
+                <span class="t" data-text="title"></span>
+                <span class="by"><span data-text="emoji"></span> <span data-text="name"></span> · done this week</span>
+              </span>
+            </label>
+            <button type="button" class="remove" aria-label="Remove this chore"
+              data-run="DELETE FROM chores WHERE id = :id">×</button>
+          </div>
+        </template>
+      </dai-rows>
     </section>
 
-    <dialog id="conflict">
-      <h2>Changed on two copies</h2>
-      <p>This chore was edited on both copies before they met. Keep the version that is right.</p>
-      <ul id="versions" class="versions"></ul>
-      <button id="conflict-close" type="button" class="quiet">Decide later</button>
-    </dialog>
+    <section aria-labelledby="h-add-chore">
+      <h2 id="h-add-chore">Add a chore</h2>
+      <dai-form run="INSERT INTO chores (title, person_id, every) VALUES (trim(:title), :person, :every)">
+        <input class="wide" name="title" aria-label="Chore" placeholder="Take out the trash…" required maxlength="80" />
+        <select id="who" name="person" aria-label="Who does it"></select>
+        <select name="every" aria-label="How often">
+          <option value="day">Every day</option>
+          <option value="week">Once a week</option>
+        </select>
+        <button type="button">Add</button>
+      </dai-form>
+    </section>
+
+    <section aria-labelledby="h-add-person">
+      <h2 id="h-add-person">Add a person</h2>
+      <dai-form run="INSERT INTO people (name, emoji) VALUES (trim(:name), COALESCE(NULLIF(trim(:emoji), ''), '🙂'))">
+        <input class="emoji" name="emoji" aria-label="Emoji" placeholder="🙂" maxlength="4" />
+        <input class="wide" name="name" aria-label="Name" placeholder="Name" required maxlength="40" />
+        <button type="button">Add</button>
+      </dai-form>
+    </section>
+
+    <footer>
+      <button type="button" id="share" class="share">Share this chart</button>
+      <dai-save>Save</dai-save>
+    </footer>
   </main>
 
   <script type="module" src="./app.js"></script>
+  <script type="module" src="./dai-kit.js"></script>
 </body>
 </html>

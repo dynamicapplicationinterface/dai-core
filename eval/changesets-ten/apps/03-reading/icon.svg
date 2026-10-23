@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#8a3b2b"/><path d="M50 30c-8-6-18-8-28-6v48c10-2 20 0 28 6z" fill="#f6f1e7"/><path d="M50 30c8-6 18-8 28-6v48c-10-2-20 0-28 6z" fill="#e4dac8"/><path d="M62 24v22l6-5 6 5V26z" fill="#8a3b2b"/></svg>
-```
-
-The two seed rows that sit in "Up next" and the two in other groups are example data. Replace them with your own books.
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="22" fill="#a4472b"/>
+  <path d="M50 28c-8-6-20-8-30-6v50c10-2 22 0 30 6z" fill="#faf6ef"/>
+  <path d="M50 28c8-6 20-8 30-6v50c-10-2-22 0-30 6z" fill="#f0dcc0"/>
+  <path d="M50 28v50" stroke="#a4472b" stroke-width="3"/>
+</svg>

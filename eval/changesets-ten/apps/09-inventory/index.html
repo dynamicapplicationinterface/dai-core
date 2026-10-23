@@ -2,68 +2,156 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="What you have, how many, and where it is" />
-  <meta name="dai:does" content="Keep a list of what you have, with a count and where it lives" />
-  <meta name="dai:does" content="Add or remove one with a single tap as things come and go" />
-  <meta name="dai:does" content="Flag anything running low so it is never a surprise" />
-  <meta name="theme-color" content="#f4f1ea" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Inventory</title>
+  <meta name="description" content="Count what you have and see what is running low" />
+  <meta name="dai:does" content="Track how many of each thing you have, and where it lives" />
+  <meta name="dai:does" content="Record what comes in and what gets used, one tap at a time" />
+  <meta name="dai:does" content="Flag anything running low before it runs out" />
+  <meta name="theme-color" content="#f6f4ef" />
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
   <script type="application/sql">
-    -- Example rows, so the first open is not empty. A second open adds nothing.
-    INSERT OR IGNORE INTO items (id, name, place, qty, low_at) VALUES
-      (1, 'AA batteries', 'Hall drawer', 6, 2),
-      (2, 'Light bulbs', 'Garage shelf', 1, 2),
-      (3, 'Paper towels', 'Pantry', 4, 1),
-      (4, 'Printer paper', 'Study cabinet', 0, 1);
+    -- Example items. The tables are declared in schema.sql.
+    INSERT INTO items (name, place, low_at) VALUES
+      ('Printer paper', 'Supply closet', 2),
+      ('Coffee beans', 'Kitchen shelf', 2),
+      ('AA batteries', 'Desk drawer', 4),
+      ('Hand soap', 'Bathroom cabinet', 2),
+      ('Light bulbs', 'Garage', 3),
+      ('Stamps', 'Desk drawer', 5);
+
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, 10, 'Opening count', datetime('now', '-9 days') FROM items WHERE name = 'Printer paper';
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, -3, 'Used', datetime('now', '-2 days') FROM items WHERE name = 'Printer paper';
+
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, 6, 'Opening count', datetime('now', '-9 days') FROM items WHERE name = 'Coffee beans';
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, -1, 'Used', datetime('now', '-1 days') FROM items WHERE name = 'Coffee beans';
+
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, 8, 'Opening count', datetime('now', '-9 days') FROM items WHERE name = 'AA batteries';
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, -5, 'Used', datetime('now', '-3 hours') FROM items WHERE name = 'AA batteries';
+
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, 4, 'Opening count', datetime('now', '-9 days') FROM items WHERE name = 'Hand soap';
+
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, 12, 'Opening count', datetime('now', '-9 days') FROM items WHERE name = 'Light bulbs';
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, -2, 'Used', datetime('now', '-5 days') FROM items WHERE name = 'Light bulbs';
+
+    INSERT INTO movements (item_id, delta, note, at)
+      SELECT id, 20, 'Opening count', datetime('now', '-9 days') FROM items WHERE name = 'Stamps';
   </script>
 
   <main>
     <header>
+      <p class="eyebrow">What is on the shelf</p>
       <h1>Inventory</h1>
-      <p class="summary">
-        <dai-value query="SELECT count(*) FROM items"></dai-value> items ·
-        <dai-value query="SELECT count(*) FROM items WHERE qty <= low_at"></dai-value> running low
-      </p>
+
+      <div class="summary">
+        <p>
+          <strong><dai-value query="SELECT count(*) FROM items WHERE archived = 0"></dai-value></strong>
+          <span>things</span>
+        </p>
+        <p>
+          <strong><dai-value query="SELECT COALESCE(SUM(m.delta), 0) FROM movements m JOIN items i ON i.id = m.item_id WHERE i.archived = 0"></dai-value></strong>
+          <span>in all</span>
+        </p>
+        <p class="warn">
+          <strong><dai-value query="SELECT count(*) FROM (SELECT i.id FROM items i LEFT JOIN movements m ON m.item_id = i.id WHERE i.archived = 0 GROUP BY i.id HAVING COALESCE(SUM(m.delta), 0) &lt;= i.low_at)"></dai-value></strong>
+          <span>low or out</span>
+        </p>
+      </div>
     </header>
 
-    <dai-rows
-      class="list"
-      query="SELECT id, name, place, qty, qty <= low_at AS low FROM items ORDER BY low DESC, name COLLATE NOCASE"
-      empty="Nothing here yet. Add the first thing you want to keep track of.">
-      <template>
-        <div class="item">
-          <div class="what">
-            <strong data-text="name"></strong>
-            <span class="place" data-text="place"></span>
+    <section aria-labelledby="stock-h">
+      <h2 id="stock-h">Stock</h2>
+      <dai-rows
+        class="list"
+        empty="Nothing here yet. Add the first thing below."
+        query="SELECT i.id AS id, i.name AS name, i.place AS place, COALESCE(SUM(m.delta), 0) AS stock, CASE WHEN COALESCE(SUM(m.delta), 0) &lt;= i.low_at THEN 1 ELSE 0 END AS low FROM items i LEFT JOIN movements m ON m.item_id = i.id WHERE i.archived = 0 GROUP BY i.id ORDER BY low DESC, i.name">
+        <template>
+          <div class="item">
+            <div class="top">
+              <div class="who">
+                <span class="name" data-text="name"></span>
+                <span class="place" data-text="place"></span>
+              </div>
+              <span class="tag" data-when="low">Low</span>
+              <span class="stock" data-text="stock"></span>
+            </div>
+            <div class="actions">
+              <button type="button" class="btn"
+                data-run="INSERT INTO movements (item_id, delta, note) SELECT :id, -1, 'Used one' WHERE (SELECT COALESCE(SUM(delta), 0) FROM movements WHERE item_id = :id) &gt;= 1">Use 1</button>
+              <button type="button" class="btn"
+                data-run="INSERT INTO movements (item_id, delta, note) VALUES (:id, 1, 'Added one')">Add 1</button>
+              <button type="button" class="btn"
+                data-run="INSERT INTO movements (item_id, delta, note) VALUES (:id, 10, 'Added ten')">Add 10</button>
+              <button type="button" class="btn ghost"
+                data-run="UPDATE items SET archived = 1 WHERE id = :id">Archive</button>
+            </div>
           </div>
-          <span class="flag" data-when="low">Low</span>
-          <div class="count">
-            <button type="button" class="step" aria-label="One fewer"
-              data-run="UPDATE items SET qty = max(qty - 1, 0) WHERE id = :id">&minus;</button>
-            <span class="qty" data-text="qty"></span>
-            <button type="button" class="step" aria-label="One more"
-              data-run="UPDATE items SET qty = qty + 1 WHERE id = :id">+</button>
-          </div>
-          <button type="button" class="remove" aria-label="Remove this item"
-            data-run="DELETE FROM items WHERE id = :id">Remove</button>
-        </div>
-      </template>
-    </dai-rows>
+        </template>
+      </dai-rows>
+    </section>
 
-    <dai-form class="add" run="INSERT INTO items (name, place, qty, low_at) VALUES (:name, :place, :qty, :low_at)">
-      <h2>Add something</h2>
-      <label>Name <input name="name" required maxlength="80" placeholder="e.g. Trash bags" autocomplete="off" /></label>
-      <label>Where <input name="place" maxlength="60" placeholder="e.g. Under the sink" autocomplete="off" /></label>
-      <div class="pair">
-        <label>How many <input name="qty" type="number" min="0" step="1" value="1" required inputmode="numeric" /></label>
-        <label>Low at <input name="low_at" type="number" min="0" step="1" value="1" required inputmode="numeric" /></label>
-      </div>
-      <button>Add</button>
-    </dai-form>
+    <section aria-labelledby="add-h">
+      <h2 id="add-h">Add a thing</h2>
+      <dai-form class="add" run="INSERT INTO items (name, place, low_at) VALUES (:name, :place, CAST(:low_at AS INTEGER))">
+        <label>
+          <span>Name</span>
+          <input name="name" required maxlength="80" placeholder="Printer paper" autocomplete="off" />
+        </label>
+        <label>
+          <span>Where it lives</span>
+          <input name="place" maxlength="80" placeholder="Supply closet" autocomplete="off" />
+        </label>
+        <label>
+          <span>Flag it at or below</span>
+          <input name="low_at" type="number" inputmode="numeric" min="0" step="1" placeholder="2" />
+        </label>
+        <button type="button" class="btn primary">Add</button>
+      </dai-form>
+      <p class="hint">A new thing starts at 0. Use Add 1 or Add 10 to count what you have.</p>
+    </section>
+
+    <section aria-labelledby="recent-h">
+      <h2 id="recent-h">Recently</h2>
+      <dai-rows
+        class="list"
+        empty="No changes yet."
+        query="SELECT id, name, shown, note, CASE WHEN 60 &gt; secs THEN 'just now' WHEN 3600 &gt; secs THEN (secs / 60) || ' min ago' WHEN 86400 &gt; secs THEN (secs / 3600) || ' h ago' WHEN 172800 &gt; secs THEN 'yesterday' ELSE (secs / 86400) || ' days ago' END AS ago FROM (SELECT m.id AS id, i.name AS name, CASE WHEN m.delta &gt; 0 THEN '+' || m.delta ELSE CAST(m.delta AS TEXT) END AS shown, m.note AS note, CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', m.at) AS INTEGER) AS secs FROM movements m JOIN items i ON i.id = m.item_id ORDER BY m.at DESC, m.id DESC LIMIT 8) ORDER BY secs, id DESC">
+        <template>
+          <div class="log">
+            <span class="delta" data-text="shown"></span>
+            <span class="what"><span data-text="name"></span> <span class="note" data-text="note"></span></span>
+            <span class="ago" data-text="ago"></span>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section aria-labelledby="archive-h">
+      <h2 id="archive-h">Archived</h2>
+      <dai-rows
+        class="list"
+        empty="Nothing archived."
+        query="SELECT id, name, place FROM items WHERE archived = 1 ORDER BY name">
+        <template>
+          <div class="log">
+            <span class="what"><span data-text="name"></span> <span class="note" data-text="place"></span></span>
+            <button type="button" class="btn ghost"
+              data-run="UPDATE items SET archived = 0 WHERE id = :id">Restore</button>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
 
     <footer>
       <dai-save>Save</dai-save>

@@ -33,15 +33,14 @@ const APP = `<!doctype html>
 <script type="module">
   const out = document.getElementById("out");
   try {
-    const db = await window.dai.openDatabase();
-    db.exec("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
-    db.exec("INSERT INTO tasks (title) VALUES ('a month of work')");
-    const rows = [];
-    db.exec({ sql: "SELECT count(*) FROM tasks", rowMode: "array", resultRows: rows });
+    const db = await window.dai.database();
+    await db.run("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
+    await db.run("INSERT INTO tasks (title) VALUES ('a month of work')");
+    const count = await db.value("SELECT count(*) FROM tasks");
     // Handed out so a test can stage this document's data under a different
     // version of the application, which is the case worth checking.
-    window.__database = Array.from(window.dai.exportDatabase(db));
-    out.textContent = "open:" + rows[0][0];
+    window.__database = Array.from(await db.export());
+    out.textContent = "open:" + count;
   } catch (error) {
     out.textContent = "refused:" + String(error && error.message ? error.message : error);
   }

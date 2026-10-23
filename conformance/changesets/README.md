@@ -35,6 +35,7 @@ One directory per scenario, from the merge scenarios in
 | `unreceived-basis` | 1g-M1 unreceived basis | a third copy, its clock past A's, names A's title version in its title `bases`, though its `received` shows it never had A's batch: refused, `basis-forged`; A's edit stands |
 | `unreceived-seen` | 1g-M1 unreceived seen | the same, named in a delete's `seen`: refused, `basis-forged`; the row and A's edit stand |
 | `counter-over-pending` | D267 counter over a pending total | a trigger-kept total pending between two copies, then a third insert on one, whose trigger raises the total it showed: an edit based on that version, and the alternative it never read stays `pending` (D267, closed by R-X) |
+| `astral-default` | D289 astral default | a table whose default is a character outside the Basic Multilingual Plane (`'🙂'`): one copy inserts a row taking the default, the other writes two more such characters, and every value arrives byte for byte on both readers |
 
 Each holds:
 

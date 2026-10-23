@@ -14,11 +14,11 @@
   "b": null
  },
  "delete": {
-  "a": "Delete Delete this entry  DELETE FROM lifts WHERE id = :id"
+  "a": "Delete Delete this set  DELETE FROM sets WHERE id = :id"
  },
  "ops": {
   "a": {
-   "I": 5,
+   "I": 13,
    "U": 0,
    "D": 1
   },

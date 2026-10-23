@@ -1,0 +1,226 @@
+[
+ {
+  "name": "01-packing",
+  "files": [
+   "app.css",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXV1sXdlVzvxJEFoV9QFGiIcrqxnb0_jm_tiO7SSmSewkniZ2lDiTGUK4urbvtW9i5zq-cSZGakUbgfgRAmmeoC9AJUSlSuWNVpUqpCkIgRBC8wAMUgUSUgHxgAQSCIrg-9Za--f8Xd94ppO09bSxfc7ZZ52919577bXXXutbX"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "02-workout",
+  "files": [
+   "app.css",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXWts3FdWTx8rQVkEWpCoxJfRaIPtEk_mZY_Hbax1Yid1mthV4jYNIYzG43E8iV8Zx0msaqvtBhCLWME3BPuJh1astN-7FRKvZUEVAoT2A1AkxCKkFYgPSCCBFq20v9855_7_9_4fM-M82n20auuZ_9x7_ue-zj333HN-50tPv"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "03-reading",
+  "files": [
+   "app.css",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXVtsndlVTtKpBKFDqz5AH4-spj4OsXMuvh1PEurYTsaZxA6J00yIwtHxuTgniWPHlyQeqRVtNIiCELwCEhJCqoqABx4QVCCE1MIbD1UfoIPERdwRDzwggUBIfN9aa_977__8_znHuUCnTacztv9_7_Xvy9prr732Wt_69aNXu"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "04-budget",
+  "files": [
+   "app.css",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXWtsnOlV3t1uEaQtRf3T8ovRaNNxtvHEM-NrNjZ1YmfXrWOvYqd7Cak1Hs8ks2vHXl-yCVIr2ggESAh-gYBfCAlRiR8gIZUKUSHKpX9AlCK1FAnRCgmBECCBBAIh8TznnPf2XWbG2S5b0aRd29_3ve957-c97znvec7nnnzx5"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "05-recipes",
+  "files": [
+   "app.css",
+   "app.js",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtfVuMXNlV9sxkgsgQBAoP5I1SKVZXT-zqrqq-j92K7W57OuNxD-6eW0amVd1VbZenb1PltrsTJUpiEgUhlIgXri-AQCBFvIaABCgheQMJReKSSAgIEgLxwMNIXCIQ37fW2vvsfS51abeHUeL8P-Ouc_bZ17XXXntdvvV7T7701"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "06-habits",
+  "files": [
+   "app.css",
+   "app.js",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXXtsXNlZ30cr0W0RtEJQhBDD0CjjZf2YmTi2s3FoEju7bjfJKvE2m64Wa2yPk8nGcdbO84-taCMQqLRbUdQWioQqBAUBEghQWyGhqrz-QghV4tFKFax4VkhUCEQFQuL3-33fedy5d8bjNNsubRYaz7333HPP4zvf-c73-H2_9"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "07-chores",
+  "files": [
+   "app.css",
+   "app.js",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 1,
+   "tail": "ReplicationError: The table chores has no closing bracket."
+  },
+  "usesKit": true,
+  "ownScript": true,
+  "oldHandle": false
+ },
+ {
+  "name": "08-plants",
+  "files": [
+   "app.css",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXW2MnNdVtpNUAlME6h_yczrU3XXqnZ2P_Y53Fdu7djaxvZa9iWMss8zOhz3Orne963VsIFFTqwgqUCkgBFRVhZCgkUAI_rRVpaoS0B9ICKH-KAQJUYRAIBD5UQECofI855x733vfj5lZx3EDtdvszNz33vvej3PPPffcc57z1"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "09-inventory",
+  "files": [
+   "app.css",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXWuI3FlWzzwW1jiiDMqu4Iey3NjVs-lKvfpRPUncTncl0zNJ95B0dmYMsaiuR1KT7nRPP5K0OIu7QdEFUT-JDxQRXAXxk6KLIIK63_wgK6gjiAOi-EBFhBVlYX-_c869_3ur_vXqdJhhd1Z30_X_33v-577OPffcc37nt595_"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ },
+ {
+  "name": "10-trip",
+  "files": [
+   "app.css",
+   "app.js",
+   "icon.svg",
+   "index.html",
+   "schema.sql"
+  ],
+  "parseWarnings": [],
+  "check": {
+   "exit": 0,
+   "ok": true,
+   "findings": []
+  },
+  "build": {
+   "exit": 0,
+   "tail": "https://opendai.app/#a=AfGfjpHtXUtspNlVnkmCBJ0gUFiQFRRFOu0e2u56-D1tE3fbPeNJt93pdqczjAarXFV2V4_t8vjR005IRNKAQIiQBSwCC4SQIpAQLCFCQCQeuyxQFoEgIogCKAgBCyQQCInvO-fcx_-qh-2ZiRK3ZlxV_3_f99xzzz33nO_8zrN3Dh5-7"
+  },
+  "usesKit": true,
+  "ownScript": false,
+  "oldHandle": false
+ }
+]

@@ -1,43 +1,47 @@
--- Family chores · shape: passable
+-- Chore chart
 --
--- The decision: several people in one family add chores and tick them off,
--- each on their own phone, and the document is handed around so that every
--- copy's changes are kept. A family is more than two people and has no
--- fixed roster, so this is passable, not a session.
---
--- What that costs, and why:
---   * members, chores and completions are shared. They are written through
---     window.dai.replicated and read through the _current views.
---   * No PRIMARY KEY, UNIQUE or CHECK on them. A chore's identity is its
---     entity. Two people ticking the same chore on the same day is two
---     completions; the page counts the chore as done once.
---   * Nothing derived is stored: whether a chore is done, and each person's
---     progress this week, are computed from the completions every time.
---   * A completion is a fact somebody entered (the day it was done), not a
---     record of when the row was written.
---   * Which person the screen is filtered to is about this copy, so it is
---     local.
+-- People, the chores they own, and one row each time a chore is done.
+-- Nothing is stored as a total: "done today" and "3 of 5" are read from
+-- the completions by the view below and by the queries in index.html.
 
--- dai:replicated
-CREATE TABLE IF NOT EXISTS members (
-  name TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS people (
+  id    INTEGER PRIMARY KEY,
+  name  TEXT NOT NULL,
+  emoji TEXT NOT NULL DEFAULT '🙂'
 );
 
--- dai:replicated
 CREATE TABLE IF NOT EXISTS chores (
+  id        INTEGER PRIMARY KEY,
   title     TEXT NOT NULL,
-  member_id TEXT NOT NULL DEFAULT '',   -- the members row's entity, as hex; '' for anyone
-  cadence   TEXT NOT NULL                 -- 'daily' or 'weekly'
+  person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  every     TEXT NOT NULL DEFAULT 'day' CHECK (every IN ('day', 'week'))
 );
 
--- dai:replicated
 CREATE TABLE IF NOT EXISTS completions (
-  chore_id TEXT NOT NULL,                 -- the chores row's entity, as hex
-  done_on  TEXT NOT NULL                  -- the day it was done, YYYY-MM-DD
+  id       INTEGER PRIMARY KEY,
+  chore_id INTEGER NOT NULL REFERENCES chores(id) ON DELETE CASCADE,
+  done_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Local: never merged. May use keys and checks freely.
-CREATE TABLE IF NOT EXISTS settings (
-  id   INTEGER PRIMARY KEY CHECK (id = 1),
-  view TEXT NOT NULL DEFAULT 'all'        -- 'all', or a member's entity as hex
-);
+CREATE INDEX IF NOT EXISTS completions_by_chore ON completions (chore_id, done_at);
+
+-- A daily chore is done if it was ticked today; a weekly chore if it was
+-- ticked since Monday. Times are stored in UTC and compared in local time.
+CREATE VIEW IF NOT EXISTS chore_status AS
+SELECT
+  c.id,
+  c.title,
+  c.every,
+  c.person_id,
+  p.name,
+  p.emoji,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM completions k
+    WHERE k.chore_id = c.id
+      AND date(k.done_at, 'localtime') >= CASE c.every
+        WHEN 'day' THEN date('now', 'localtime')
+        ELSE date('now', 'localtime', 'weekday 0', '-6 days')
+      END
+  ) THEN 1 ELSE 0 END AS done
+FROM chores c
+JOIN people p ON p.id = c.person_id;

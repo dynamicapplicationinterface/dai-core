@@ -295,6 +295,17 @@ export const SCENARIOS: Record<string, { write: (a: Copy, b: Copy) => unknown; t
       b.db.exec("INSERT INTO items (title) VALUES ('Soap')");
     },
   },
+  // D289: a default outside the Basic Multilingual Plane, a value written with one, and a row taking the default.
+  "D289 astral default": {
+    extra: [
+      "CREATE TABLE marks (id INTEGER PRIMARY KEY, mark TEXT NOT NULL DEFAULT '🙂', label TEXT NOT NULL CHECK (label IN ('a', 'b', 'c')))",
+      "INSERT INTO marks (label) VALUES ('a')",
+    ],
+    write: (a, b) => {
+      a.db.exec("INSERT INTO marks (label) VALUES ('b')");
+      b.db.exec("UPDATE marks SET mark = '🧭' WHERE label = 'a'; INSERT INTO marks (mark, label) VALUES ('🎒', 'c')");
+    },
+  },
   "S1b UNIQUE": {
     write: (a, b) => {
       a.db.exec("INSERT INTO categories (name) VALUES ('Tools'); INSERT INTO items (category_id, title) VALUES (last_insert_rowid(), 'Saw')");

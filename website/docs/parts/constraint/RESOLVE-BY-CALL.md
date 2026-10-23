@@ -3,7 +3,7 @@
 ::: info RESOLVE-BY-CALL
 **Resolve conflicts by the kit's call**
 
-A form may save every field whole (type a REAL column: untyped, 2.0 reads back as 2): a value written back as shown changes and resolves nothing. To keep or choose: c = window.daiKit.conflict(table, [id], [column]); if c is not null, show c.alternatives, then window.daiKit.resolve(c.token, chosen.ver).
+A form may save every field whole (type a REAL column: untyped, 2.0 reads back as 2): a value written back as shown changes and resolves nothing. To keep or choose: c = await db.conflict(table, [id], [column]); if c is not null, show c.alternatives, then await db.resolve(c.token, chosen.ver).
 
 **Why.** A write cannot tell a choice from a field left alone.
 

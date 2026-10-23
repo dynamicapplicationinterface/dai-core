@@ -199,6 +199,7 @@ ${sections}
 function runtimeApiPage() {
   const groups = [
     { title: "Every application", test: (s) => s.length === SHAPE_ORDER.length },
+    { title: "Ordinary tables (the database lives in the runtime's worker)", test: (s) => s.length === 1 && s[0] === "solo" },
     { title: "Shared tables (passable and session)", test: (s) => s.includes("passable") },
     { title: "Sessions", test: (s) => s.length === 1 && s[0] === "session" },
   ];

@@ -187,6 +187,8 @@ test.describe("a new version offered to somebody using the app", () => {
     await page.locator("#card-open:visible, body.loaded").first().waitFor({ timeout: 60_000 });
     if (await page.locator("#card-open").isVisible()) await page.locator("#card-open").click();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    // The kit's own ready signal: a click before it reaches an element nothing has defined yet.
+    await expect(inside(page).locator("html")).toHaveAttribute("data-dai-kit", "ready", { timeout: 60_000 });
     for (const entry of what) {
       await inside(page).locator("#what").fill(entry);
       await inside(page).locator("#add").click();

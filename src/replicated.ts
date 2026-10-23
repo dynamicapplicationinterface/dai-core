@@ -244,7 +244,8 @@ function tableSpans(sql: string): TableSpan[] {
   const isCode = new Set(code.filter((c) => c.code).map((c) => c.index));
   // A copy with every non-code character blanked, so a regex can find keywords
   // without ever matching inside a string or a comment.
-  const bare = [...sql].map((char, index) => (isCode.has(index) ? char : " ")).join("");
+  // By UTF-16 unit, as `scan` reads: by code point, a character outside the BMP moved every later index (D289).
+  const bare = sql.split("").map((char, index) => (isCode.has(index) ? char : " ")).join("");
 
   const spans: TableSpan[] = [];
   const create = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/gi;

@@ -10,15 +10,15 @@
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "Watered   INSERT INTO care_log (plant_id, kind) VALUES (:id, 'water')",
-  "b": "Watered   INSERT INTO care_log (plant_id, kind) VALUES (:id, 'water')"
+  "a": "Water   INSERT INTO care (plant_id, kind) VALUES (:id, :kind)",
+  "b": "Water   INSERT INTO care (plant_id, kind) VALUES (:id, :kind)"
  },
  "delete": {
-  "a": "Remove Remove this plant and its history  DELETE FROM plants WHERE id = :id"
+  "a": "× Remove this entry Remove this entry DELETE FROM care WHERE id = :id"
  },
  "ops": {
   "a": {
-   "I": 10,
+   "I": 15,
    "U": 0,
    "D": 1
   },
