@@ -1086,6 +1086,51 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     }
   };
 
+  /*
+   * No bytes are taken while the application holds a transaction (2a-H1).
+   * They would hold its uncommitted rows, and a rollback after would leave
+   * them in the stored copy: back on reopen, and in no log row, so no other
+   * copy could ever receive them. A save asked then waits for the transaction
+   * to end, by commit or by rollback, and runs after it. Its end is heard where
+   * it happens (the data interface's commit and rollback, the handle's exec),
+   * and asked of SQLite on a short timer for any other way a transaction ends.
+   */
+  const TRANSACTION_POLL_MS = 250;
+  const transactionHeld = (db: Any): boolean => {
+    if (changes && db === liveDb) return changes.inTransaction;
+    try {
+      return sqlite3 !== null && !sqlite3.capi.sqlite3_get_autocommit(db.pointer);
+    } catch {
+      return false;
+    }
+  };
+  const afterTransaction: { db: Any; run: () => void }[] = [];
+  let transactionPoll: ReturnType<typeof setTimeout> | undefined;
+  const transactionEnded = (): void => {
+    for (const waiter of afterTransaction.splice(0)) {
+      if (transactionHeld(waiter.db)) afterTransaction.push(waiter);
+      else waiter.run();
+    }
+    if (afterTransaction.length > 0 && transactionPoll === undefined) {
+      transactionPoll = setTimeout(() => {
+        transactionPoll = undefined;
+        transactionEnded();
+      }, TRANSACTION_POLL_MS);
+    }
+  };
+  /** Resolves once db holds no transaction: at once when it holds none. */
+  const noTransaction = (db: Any): Promise<void> =>
+    new Promise((resolve) => {
+      if (!transactionHeld(db)) return resolve();
+      afterTransaction.push({ db, run: resolve });
+      transactionEnded();
+    });
+  let flushWaits = false;
+  /** A save that found a transaction open by the time its bytes were due: it runs again after. */
+  const HELD: Any = Object.freeze({ heldFor: "the application's transaction" });
+  /** The page is going away; the data interface below rolls back a transaction it holds first. */
+  let leaving = (): void => void flushAutosave();
+
   const flushAutosave = (): Promise<unknown> | undefined => {
     if (autosaveTimer !== undefined) {
       clearTimeout(autosaveTimer);
@@ -1097,6 +1142,17 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     if (!autosaveDb) return saving ?? undefined;
     // One save in flight at a time; a write during a save is saved after it.
     if (saving) return saving.then((): Promise<unknown> | undefined => flushAutosave());
+    // Kept, and saved once the application's transaction ends (2a-H1).
+    if (transactionHeld(autosaveDb)) {
+      if (!flushWaits) {
+        flushWaits = true;
+        void noTransaction(autosaveDb).then(() => {
+          flushWaits = false;
+          void flushAutosave();
+        });
+      }
+      return undefined;
+    }
     const db = autosaveDb;
     autosaveDb = null;
     tellSaveStatus("saving");
@@ -1127,6 +1183,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // ordinary data interface (Q07): its edit is in the next capture epoch,
         // not yet in any log row, so no row is pending, and only its queued
         // save will log it (R-S).
+        // A transaction the application opened while the signature was out
+        // holds rows that may never commit: no bytes now, and the save runs
+        // again once it ends (2a-H1).
+        if (transactionHeld(db)) {
+          autosaveDb ??= db;
+          return HELD;
+        }
         if (autosaveDb === db && !hasPendingOwn() && !(changes && db === liveDb && changes.dirty)) {
           autosaveDb = null;
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
@@ -1137,6 +1200,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       .then(
       (result: Any) => {
         saving = null;
+        if (result === HELD) {
+          void flushAutosave();
+          return;
+        }
         if (result && result.saved === false) throw new Error(String(result.method || "this page did not save it"));
         failures = 0;
         tellSaveStatus("saved");
@@ -1497,6 +1564,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         const before = storedState(db);
         const result = exec(...args);
         if (storedState(db) !== before) scheduleAutosave(db);
+        // A COMMIT or ROLLBACK here lets a save that waited for it run (2a-H1).
+        if (afterTransaction.length > 0) transactionEnded();
         return result;
       };
     }
@@ -2607,7 +2676,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   };
 
   window.addEventListener("pagehide", () => {
-    void flushAutosave();
+    leaving();
   });
 
   const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
@@ -2999,7 +3068,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     }
     // The shell's page is going away, and the worker has no page of its own to hear it (R-Y).
     if (data.type === names.PAGEHIDE) {
-      void flushAutosave();
+      leaving();
       return;
     }
     if (data.type !== names.APPMODE) return;
@@ -3188,10 +3257,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       autosaveTimer = undefined;
       autosaveDb = null;
       // Captured and sealed first, as an automatic save is (identity step 3).
+      // Never inside the application's transaction: it waits for its end (2a-H1).
       const setup = setupOnly(db);
-      return Promise.resolve()
+      return noTransaction(db)
         .then(() => captureSave(db))
         .then(sealPending)
+        .then(() => noTransaction(db))
         .then(() => {
           // Logged before the bytes are taken, as an automatic save is (Q09, D263).
           captureSave(db);
@@ -3384,11 +3455,14 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const ended = new Map<number, { name: string; message: string }>();
   const ENDED_IDLE = { name: "Error", message: `DATA_REFUSED: This transaction was rolled back: nothing was asked of it for ${TRANSACTION_IDLE_MS / 1000} seconds.` };
   const ENDED_CANCELLED = { name: "AbortError", message: "This transaction was cancelled and rolled back." };
+  const ENDED_LEFT = { name: "AbortError", message: "This transaction was rolled back: the page was left while it was open." };
   const endTransaction = (why: { name: string; message: string } | null): void => {
     if (!transaction) return;
     if (transaction.idle !== undefined) clearTimeout(transaction.idle);
     if (why !== null) ended.set(transaction.id, why);
     transaction = null;
+    // Committed or rolled back: a save that waited for it runs now (2a-H1).
+    transactionEnded();
   };
   const rollBackHeld = (why: { name: string; message: string }): void => {
     if (!transaction) return;
@@ -3406,6 +3480,24 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     pump();
   };
   let rollBackAfter: { name: string; message: string } | null = null;
+  /*
+   * The page is going away (a close, a hide): a transaction the application
+   * holds is rolled back first, then what committed is saved (2a-H1). The
+   * save never takes the open transaction's rows; without the rollback it
+   * would wait for an end that never comes, and a committed write still to be
+   * saved would be lost with the page.
+   */
+  leaving = (): void => {
+    if (transaction) rollBackHeld(ENDED_LEFT);
+    else if (liveDb && transactionHeld(liveDb)) {
+      try {
+        liveDb.exec("ROLLBACK");
+      } catch {
+        /* Already ended. */
+      }
+    }
+    void flushAutosave();
+  };
   const touch = (): void => {
     if (!transaction) return;
     if (transaction.idle !== undefined) clearTimeout(transaction.idle);
