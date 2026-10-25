@@ -11330,8 +11330,16 @@ ends mid-flight. On `main` it was a frame document.
   finish" after the opener's "a link arrived while a document was open;
   saving it and opening the link". The trace holds no crash; the other 19
   passed. So the driver loses this reload as a crash or as a hang.
-- **I.** The loss is Playwright's patched Firefox, not Firefox: 0 of 20 in
-  the shipped build against 8 of 45 and 12 of 20 under the driver. It
+- **F. A second path, the same signature.** `held-transaction.spec.ts:196`
+  (2a-r1-M1) holds a worker document, leaves to `about:blank` and back, and
+  reloads. Under Playwright's Firefox the reload failed with `page.reload:
+  Page crashed` on both tries of 40222804586 attempt 2 (it passed on
+  attempt 1) and in 2 of 10 runs locally; every assertion before it held.
+  In real Firefox 157.0.1, driven the same way through the same steps: 0 of
+  10 crashed, and all ten reopened to `base,pending`.
+- **I.** The loss is Playwright's patched Firefox, not Firefox: 0 of 20
+  worker-document runs in the shipped build, against 8 of 45, 12 of 20 and
+  2 of 10 under the driver. It
   started with Build 2a because a worker ending at the reload is what the
   patched build mishandles, which `main`'s frame documents never did.
 
