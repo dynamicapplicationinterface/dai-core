@@ -11257,6 +11257,63 @@ Either one ties the browsers to the `@playwright/test` version in
 **Acceptance:** a month of runs in which no browser job is cancelled in, or
 loses its tests' time to, the browser install.
 
+#### D293 — Firefox under Playwright loses the reload at a link while a worker document is held; real Firefox does not
+
+*Status: open, a reading (non-gating, D32). Filed 25 October, from the review
+of Build 2a-r1. Becomes a defect if a browser a person uses shows it.*
+
+`hint-and-install.spec.ts:39` ("fragment-uuid-mismatch-is-first-sighting")
+holds the chore chart open, then arrives at a link whose hint names it and
+whose payload is another document. The opener saves the open document and
+reloads at the link, and the test waits for the launch card. On Firefox
+under Playwright that wait fails: `locator.waitFor: Target crashed` at line
+80, the content process gone. Since Build 2a (R-Y) the chore chart is a
+worker document: its data lives in the shell's worker, which the reload
+ends mid-flight. On `main` it was a frame document.
+
+- **F. The review's counts** (Playwright 1.63.0, Firefox 155.0, the test
+  alone, one worker, no retries, Windows 11):
+
+  | Code | Crashed |
+  | --- | --- |
+  | `b4313f5d` (Build 2a-r1) | 1 of 5; 1 of 20 (beside an `npm ci`); 6 of 20 on an idle machine. **8 of 45** |
+  | `bdec671f` (Build 2a) | **12 of 20** |
+  | `9fdd9d07` (`main`, before Build 2a) | **0 of 40** |
+
+  CI agrees: both tries crashed on `bdec671f` (39892180415) and on
+  `70f9125e` (39962418846), one try on `f8ee1d86` (39952369056); it passed
+  on `d661504b` and on `main`'s last two runs before Build 2a.
+- **F. Real Firefox, not Playwright**, on `be28f88d` (this tip's code),
+  Firefox 157.0.1 as Mozilla ships it. It was driven over its own WebDriver
+  BiDi port, with a fresh profile and a visible window per run, through the
+  test's steps: the file chosen and its card pressed by pointer input, the
+  link arriving as a new fragment, the card awaited. A crash was looked for
+  three ways: the tab's crash page (BiDi refuses script there, held 3 s),
+  a minidump in the profile, and one in the crash reports.
+  - **The chore chart: 0 of 10 crashed.** The card came 0.3 to 0.9 s after
+    the link, and the linked document then opened.
+  - **The tasks example, a frame document, as the control: 0 of 10.**
+  - In every run the opener did reload at the link (a mark set on the page
+    before it was gone after).
+  - **The detector was shown to fire:** with the tab's content processes
+    killed from outside, it reported the crash, chore chart and tasks both.
+- **F. Playwright's Firefox on the same build**, the same day and machine:
+  1 of 20 failed at line 80, as a 60 s timeout "waiting for navigation to
+  finish" after the opener's "a link arrived while a document was open;
+  saving it and opening the link". The trace holds no crash; the other 19
+  passed. So the driver loses this reload as a crash or as a hang.
+- **I.** The loss is Playwright's patched Firefox, not Firefox: 0 of 20 in
+  the shipped build against 8 of 45 and 12 of 20 under the driver. It
+  started with Build 2a because a worker ending at the reload is what the
+  patched build mishandles, which `main`'s frame documents never did.
+
+**Change:** none to the product. The test stays as it is on Firefox, a
+reading. If a gating engine, or a browser a person uses, ever shows it, the
+first step is the same test with a frame document held, and with a plain
+`page.reload()` in place of the link.
+**Acceptance:** a Playwright upgrade whose Firefox passes it 20 of 20, or a
+month of `main`'s Firefox runs in which it passes on the first try.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
