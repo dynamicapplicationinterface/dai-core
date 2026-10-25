@@ -11328,6 +11328,44 @@ first step is the same test with a frame document held, and with a plain
 **Acceptance:** a Playwright upgrade whose Firefox passes it 20 of 20, or a
 month of `main`'s Firefox runs in which it passes on the first try.
 
+#### D294 — A save asked as the page really leaves does not land in the runner
+
+*Status: open, to be checked on a device. Filed 25 October, from the review
+of Build 2a-r1. It predates PR #11.*
+
+A committed write whose autosave is still to come (within its 800 ms) is
+lost when the page really navigates away. The flush the leave asks for does
+not reach the store, with or without an application transaction, on all
+three engines.
+
+- **F. Ran** on `b4313f5d`, Chromium, Firefox and WebKit, the same on each
+  (the review's P2c). `base` was saved. Then `db.run` of `pending`
+  resolved, and the page went to `about:blank` and back at once
+  (`back_forward`, not restored from the cache). The store read `base`, and
+  the reopened document `base`.
+- **F. The same with a transaction open** (P2b): `base` too. Since 2a-r1-M1
+  a write made before the transaction is saved before it opens, so the
+  transaction no longer widens the window. The leave itself still loses
+  what is due.
+- **F. What does land:** a `pagehide` dispatched on the shell's window while
+  the opener stays (`held-transaction.spec.ts`, test 2). The rollback, then
+  the save, reach the store.
+- **I.** On a real navigation the shell, its data worker and the opener
+  that writes the store all end together, so the flush's bytes have no page
+  left to be written by. It predates this branch by the mechanism: the leave
+  flush and the opener's store are older than R-Y (traced, not run on
+  `main`, whose documents have no data interface to drive the same way).
+- **Not known:** whether a phone's browser, which keeps a page alive longer
+  on a switch away and kills it later, loses the same write. The test
+  runner's navigation is the harshest case and may not be what a person
+  does.
+
+**Change:** none yet. First the reading on a device: write, then leave at
+once by the three ways a person does (switch app, close the tab, navigate),
+and reopen.
+**Acceptance:** the device reading is recorded for each way of leaving, and
+any that loses a write has its own entry with the fix.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
