@@ -294,7 +294,29 @@ jobs:
       # the alternative, skipping those tests off Chromium, would make "green on
       # three engines" a claim that is not true. --with-deps pulls the system
       # libraries each needs. The node job installs Chromium alone.
-      - run: npx playwright install --with-deps ${{ matrix.browser == 'node' && 'chromium' || matrix.browser }} chromium
+      #
+      # Cached, keyed on the installed Playwright version and the engine (D292):
+      # the browsers, and the system packages --with-deps fetches. The install
+      # stalled on the apt mirror's package downloads (25 to 45 minutes, the
+      # index itself in seconds), so caching the browsers alone would leave the
+      # stall in place. On a hit the packages are put where apt looks for them
+      # first, apt downloads none, and the browsers are already there. A version
+      # change is a new key, so the browsers always match @playwright/test.
+      - id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-debs
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
+      - name: Install the browsers
+        run: |
+          if ls ~/.cache/playwright-debs/*.deb > /dev/null 2>&1; then sudo cp ~/.cache/playwright-debs/*.deb /var/cache/apt/archives/; fi
+          npx playwright install --with-deps ${{ matrix.browser == 'node' && 'chromium' || matrix.browser }} chromium
+          mkdir -p ~/.cache/playwright-debs
+          cp /var/cache/apt/archives/*.deb ~/.cache/playwright-debs/ 2> /dev/null || true
+          echo "packages kept for the next run: $(ls ~/.cache/playwright-debs | wc -l)"
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
         timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || matrix.browser == 'webkit' && matrix.part == 'mailbox' && 35 || 25 }}

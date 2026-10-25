@@ -11208,8 +11208,8 @@ a month of Firefox runs passes it.
 
 #### D292 — The browser install stalls CI's browser jobs past their limit
 
-*Status: open, the fix owed in the merge session. Filed 23 October, from
-Build 2a-r1's CI.*
+*Status: changed in Build 2a-r2 (the cache below); open until its
+acceptance. Filed 23 October, from Build 2a-r1's CI.*
 
 Every browser job runs `npx playwright install --with-deps <browser>
 chromium` (`.github/workflows/test.yml`) with no cache of the browsers and
@@ -11256,6 +11256,20 @@ Either one ties the browsers to the `@playwright/test` version in
 
 **Acceptance:** a month of runs in which no browser job is cancelled in, or
 loses its tests' time to, the browser install.
+
+**Done (Build 2a-r2).** The first option, made to cover the libraries too. The
+stalled step's own log (39962418846, WebKit shard 4, 25.0 min) shows where
+the time went: `apt-get update` fetched 12.5 MB in 1 s, then the package
+downloads from the mirror ran for 25 minutes, `Ign:` lines about 30 s apart.
+A cache of the browsers alone would leave that step in place. So each
+browser job caches the browsers and the `.deb` files `--with-deps` fetched,
+keyed on the installed Playwright version and the engine; on a hit the
+packages are put in apt's archive before the install, so apt downloads
+none. The container image was the other option; it was not taken because
+the browser jobs also need what the runner image carries and the
+Playwright image is not shown to (`git`, `python3` for the node job's
+readers, `cargo` for `sectioned-host`). No matrix key changed, so every
+check name the ruleset requires is the same.
 
 #### D293 — Firefox under Playwright loses the reload at a link while a worker document is held; real Firefox does not
 
