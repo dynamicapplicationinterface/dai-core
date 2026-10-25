@@ -302,9 +302,13 @@ jobs:
       # stall in place. On a hit the packages are put where apt looks for them
       # first, apt downloads none, and the browsers are already there. A version
       # change is a new key, so the browsers always match @playwright/test.
+      # Saved as soon as the install is done, not at the job's end: a cache is
+      # kept only from a job that succeeds, and Firefox, a reading that is
+      # often red, would never have kept one.
       - id: playwright
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - id: browsers
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/ms-playwright
@@ -317,6 +321,13 @@ jobs:
           mkdir -p ~/.cache/playwright-debs
           cp /var/cache/apt/archives/*.deb ~/.cache/playwright-debs/ 2> /dev/null || true
           echo "packages kept for the next run: $(ls ~/.cache/playwright-debs | wc -l)"
+      - if: steps.browsers.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-debs
+          key: ${{ steps.browsers.outputs.cache-primary-key }}
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
         timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || matrix.browser == 'webkit' && matrix.part == 'mailbox' && 35 || 25 }}

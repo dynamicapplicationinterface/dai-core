@@ -11271,6 +11271,20 @@ Playwright image is not shown to (`git`, `python3` for the node job's
 readers, `cargo` for `sectioned-host`). No matrix key changed, so every
 check name the ruleset requires is the same.
 
+- **F. Red,** no cache (39962418846, attempt 1): 6 of 12 install steps
+  over two minutes, 508 to 2,567 s; apt needed 26 MB (Chromium) to 119 MB
+  (WebKit) of packages each time.
+- **F. The first run with the cache** (40222804586, attempt 1, on
+  `5e31aedd`): every key missed, the installs took 19 to 58 s on a quick
+  mirror, and Chromium, node and WebKit kept theirs (295, 295 and 478 MB).
+- **F. Green, warm** (the same run, attempt 2): all 11 gating jobs hit, apt
+  fetched "0 B/119 MB" of archives on WebKit and none on the rest, and the
+  install step took 11 to 27 s.
+- **F. Firefox missed on both attempts.** A cache is kept only from a job
+  that succeeds, and the Firefox reading failed both times, so it would
+  never have kept one. The cache is now restored and saved as two steps,
+  the save right after the install, before any test runs.
+
 #### D293 — Firefox under Playwright loses the reload at a link while a worker document is held; real Firefox does not
 
 *Status: open, a reading (non-gating, D32). Filed 25 October, from the review
