@@ -1,7 +1,51 @@
 {
  "name": "07-chores",
- "steps": {},
- "exception": "CompileError: DAI: Its schema marks a table as shared (-- dai:replicated) or declares a session (-- dai:profile session). Remove every -- dai:replicated and -- dai:profile line from schema.sql, keep the tables as ordinary tables with an INTEGER PRIMARY KEY each, and read and write them with plain SQL. |     at compileDirectory (file:///C:/Users/cwhit/Documents/DAI_Protocol/src/compile.ts:343:22) |     at file:///C:/Users/cwhit/Documents/DAI_Protocol/eval/changesets-ten/ten-apps.spec.ts:255:21",
- "errors": {},
- "pass": false
+ "steps": {
+  "openA": true,
+  "openB": true,
+  "wroteBoth": true,
+  "converged": true,
+  "reopened": true,
+  "recovered": true
+ },
+ "shape": "ordinary tables",
+ "update": {
+  "a": "Name  UPDATE people SET name = COALESCE(NULLIF(trim(:typed), ''), name) WHERE id",
+  "b": "Name  UPDATE people SET name = COALESCE(NULLIF(trim(:typed), ''), name) WHERE id"
+ },
+ "delete": {
+  "a": "× Remove this chore  DELETE FROM chores WHERE id = :id"
+ },
+ "ops": {
+  "a": {
+   "I": 19,
+   "U": 0,
+   "D": 1
+  },
+  "b": {
+   "I": 4,
+   "U": 0,
+   "D": 0
+  }
+ },
+ "typed": {
+  "a": 6,
+  "b": 6
+ },
+ "flags": [],
+ "shows": {
+  "aShowsB": true,
+  "bShowsA": true
+ },
+ "recovery": {
+  "equalsA": true,
+  "startedC": true,
+  "aHoldsC": true
+ },
+ "errors": {
+  "A": [],
+  "B": [],
+  "C": []
+ },
+ "pass": true
 }

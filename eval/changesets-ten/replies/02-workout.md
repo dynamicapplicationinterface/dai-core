@@ -1,147 +1,186 @@
-Here is your workout log. It is a solo document: one person, one phone, nothing shared, so there are no merged tables. You add a lift in a few taps (exercise, sets, reps, weight), see this week at a glance, and see your best weight for each exercise. It saves as you go, and it carries three example entries so it does not open empty. Delete those whenever you like.
-
 ```text
 dai bundle v1
 name: Workout log
 
 --- file: schema.sql
--- Workout log · shape: solo
+-- Workout log
 --
--- The decision: one person's training log, kept on their own phone. Nobody
--- else adds to it and no second copy's changes need keeping, so nothing is
--- shared: an ordinary table, written with the kit, key and all. (If it is
--- sent to someone, they get a copy of their own to write in.)
---
--- Times are stored in UTC and shown as words by the queries in index.html.
--- Weight is stored in pounds; 0 means bodyweight.
+-- One row per set. A workout is not stored: it is the sets logged on the same
+-- day, grouped by the queries that show them. Totals are never kept in a
+-- column; every count, best and total on the page is a query over these rows.
 
-CREATE TABLE IF NOT EXISTS lifts (
-  id        INTEGER PRIMARY KEY,
-  exercise  TEXT NOT NULL,
-  sets      INTEGER NOT NULL DEFAULT 1,
-  reps      INTEGER NOT NULL DEFAULT 1,
-  weight    REAL NOT NULL DEFAULT 0,
-  logged    TEXT NOT NULL DEFAULT (datetime('now'))
+CREATE TABLE IF NOT EXISTS sets (
+  id INTEGER PRIMARY KEY,
+  exercise TEXT NOT NULL,
+  reps INTEGER NOT NULL CHECK (reps > 0),
+  weight REAL NOT NULL DEFAULT 0 CHECK (weight >= 0),
+  at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS sets_by_time ON sets (at);
 
 --- file: index.html
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Log your lifts and see your week at a glance" />
-  <meta name="dai:does" content="Log each exercise with sets, reps and weight in a few taps" />
-  <meta name="dai:does" content="Show how many days you trained this week and your total weight lifted" />
-  <meta name="dai:does" content="Keep your best weight for every exercise so you can beat it" />
-  <meta name="theme-color" content="#14181d" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Log every set and see how your lifting adds up" />
+  <meta name="dai:does" content="Log each set with its exercise, reps and weight in a few taps" />
+  <meta name="dai:does" content="Show what you did today, yesterday and across the week" />
+  <meta name="dai:does" content="Track your best weight for every exercise you have logged" />
+  <meta name="theme-color" content="#f5f6f1" />
   <title>Workout log</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
+  <!--
+    A workout log made only from the kit: no JavaScript of its own. Every set
+    is a row, written the moment it is added; the day summaries, the weekly
+    figures and the personal bests are all queries over those rows.
+  -->
   <script type="application/sql">
-    -- Example entries, so the first open is not an empty shell. Fixed ids, so
-    -- a second open adds nothing. The tables are declared in schema.sql.
-    INSERT OR IGNORE INTO lifts (id, exercise, sets, reps, weight, logged) VALUES
-      (1, 'Back squat',  4, 5,  185, datetime('now', '-2 days')),
-      (2, 'Bench press', 3, 8,  135, datetime('now', '-2 days')),
-      (3, 'Pull-up',     3, 8,    0, datetime('now', '-1 days'));
+    -- Seed rows. The table is declared in schema.sql; ids are left to the runtime.
+    INSERT INTO sets (exercise, reps, weight, at) VALUES
+      ('Squat', 8, 60, datetime('now', '-3 days', '-5 minutes')),
+      ('Squat', 8, 60, datetime('now', '-3 days', '-10 minutes')),
+      ('Squat', 6, 70, datetime('now', '-3 days', '-15 minutes')),
+      ('Bench press', 10, 40, datetime('now', '-3 days', '-30 minutes')),
+      ('Bench press', 8, 45, datetime('now', '-3 days', '-35 minutes')),
+      ('Pull-up', 6, 0, datetime('now', '-1 days', '-5 minutes')),
+      ('Pull-up', 5, 0, datetime('now', '-1 days', '-8 minutes')),
+      ('Deadlift', 5, 90, datetime('now', '-1 days', '-20 minutes')),
+      ('Deadlift', 5, 95, datetime('now', '-1 days', '-25 minutes')),
+      ('Bench press', 8, 47.5, datetime('now', '-3 hours')),
+      ('Bench press', 7, 50, datetime('now', '-2 hours', '-50 minutes'));
   </script>
 
   <main>
     <header>
+      <p class="eyebrow">Strength training</p>
       <h1>Workout log</h1>
-      <p class="sub">What you lifted, and how it adds up.</p>
+      <p class="lede">Add a set the moment you finish it.</p>
     </header>
 
-    <section class="stats" aria-label="Last 7 days">
+    <section class="stats" aria-label="The last seven days">
       <div class="stat">
-        <span class="num">
-          <dai-value query="SELECT count(DISTINCT date(logged, 'localtime')) FROM lifts WHERE logged >= datetime('now', '-6 days')"></dai-value>
-        </span>
-        <span class="label">days trained, last 7</span>
+        <dai-value class="num" query="SELECT count(DISTINCT date(at, 'localtime')) FROM sets WHERE at >= datetime('now', '-7 days')"></dai-value>
+        <span class="cap">workout days</span>
       </div>
       <div class="stat">
-        <span class="num">
-          <dai-value query="SELECT CAST(coalesce(sum(sets * reps * weight), 0) AS INTEGER) FROM lifts WHERE logged >= datetime('now', '-6 days')"></dai-value>
-        </span>
-        <span class="label">lb lifted, last 7</span>
+        <dai-value class="num" query="SELECT count(*) FROM sets WHERE at >= datetime('now', '-7 days')"></dai-value>
+        <span class="cap">sets</span>
+      </div>
+      <div class="stat">
+        <dai-value class="num" query="SELECT printf('%d', coalesce(round(sum(weight * reps)), 0)) FROM sets WHERE at >= datetime('now', '-7 days')"></dai-value>
+        <span class="cap">lifted</span>
       </div>
     </section>
 
-    <dai-form run="INSERT INTO lifts (exercise, sets, reps, weight) VALUES (:exercise, :sets, :reps, :weight)">
-      <h2>Log a lift</h2>
-      <label class="wide">Exercise
-        <input name="exercise" list="common" required maxlength="60" placeholder="e.g. Deadlift" autocomplete="off" />
-      </label>
-      <datalist id="common">
-        <option value="Back squat"></option>
-        <option value="Front squat"></option>
-        <option value="Bench press"></option>
-        <option value="Overhead press"></option>
-        <option value="Deadlift"></option>
-        <option value="Barbell row"></option>
-        <option value="Pull-up"></option>
-        <option value="Dip"></option>
-        <option value="Lunge"></option>
-        <option value="Curl"></option>
-      </datalist>
-      <label>Sets
-        <input name="sets" type="number" inputmode="numeric" min="1" max="50" step="1" value="3" required />
-      </label>
-      <label>Reps
-        <input name="reps" type="number" inputmode="numeric" min="1" max="500" step="1" value="8" required />
-      </label>
-      <label>Weight (lb)
-        <input name="weight" type="number" inputmode="decimal" min="0" max="2000" step="any" value="0" required />
-      </label>
-      <button>Add to log</button>
-      <p class="hint">Weight 0 means bodyweight.</p>
-    </dai-form>
+    <section>
+      <h2>Log a set</h2>
+      <dai-form class="add" run="INSERT INTO sets (exercise, reps, weight) VALUES (:exercise, :reps, :weight)">
+        <label class="field wide">
+          <span>Exercise</span>
+          <input name="exercise" placeholder="Bench press" required maxlength="60" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Reps</span>
+          <input name="reps" type="number" inputmode="numeric" min="1" max="999" step="1" placeholder="8" required />
+        </label>
+        <label class="field">
+          <span>Weight</span>
+          <input name="weight" type="number" inputmode="decimal" min="0" step="any" value="0" required />
+        </label>
+        <button type="button" class="primary">Add set</button>
+      </dai-form>
+      <p class="hint">Weight 0 is for bodyweight work.</p>
+    </section>
 
     <section>
-      <h2>Recent</h2>
+      <h2>Days</h2>
       <dai-rows
-        query="SELECT id, exercise,
-                      CASE date(logged, 'localtime')
-                        WHEN date('now', 'localtime') THEN 'Today'
-                        WHEN date('now', 'localtime', '-1 day') THEN 'Yesterday'
-                        ELSE strftime('%a %b %d', logged, 'localtime')
-                      END AS day,
-                      sets || ' x ' || reps ||
-                        CASE WHEN weight = 0 THEN ' · bodyweight'
-                             ELSE ' at ' || CAST(weight AS TEXT) || ' lb' END AS detail
-                 FROM lifts ORDER BY logged DESC, id DESC LIMIT 30"
-        empty="Nothing logged yet. Add your first lift above.">
+        empty="No workouts yet. Log your first set above."
+        query="SELECT day,
+                 CASE CAST(julianday(date('now', 'localtime')) - julianday(day) AS INTEGER)
+                   WHEN 0 THEN 'Today'
+                   WHEN 1 THEN 'Yesterday'
+                   ELSE substr('SunMonTueWedThuFriSat', 1 + 3 * strftime('%w', day), 3) || ' '
+                        || CAST(strftime('%d', day) AS INTEGER) || ' '
+                        || substr('JanFebMarAprMayJunJulAugSepOctNovDec', 1 + 3 * (strftime('%m', day) - 1), 3)
+                 END AS label,
+                 count(*) AS n,
+                 printf('%d', round(sum(weight * reps))) AS lifted,
+                 replace(group_concat(DISTINCT exercise), ',', ', ') AS what
+               FROM (SELECT date(at, 'localtime') AS day, exercise, reps, weight FROM sets)
+               GROUP BY day
+               ORDER BY day DESC
+               LIMIT 14">
         <template>
-          <div class="entry">
-            <div class="what">
-              <strong data-text="exercise"></strong>
-              <span class="detail" data-text="detail"></span>
+          <div class="row day">
+            <div class="grow">
+              <span class="title" data-text="label"></span>
+              <span class="meta" data-text="what"></span>
             </div>
-            <span class="day" data-text="day"></span>
-            <button type="button" class="quiet" aria-label="Delete this entry" data-run="DELETE FROM lifts WHERE id = :id">Delete</button>
+            <div class="figures">
+              <span class="big" data-text="n"></span>
+              <span class="meta">sets</span>
+            </div>
           </div>
         </template>
       </dai-rows>
     </section>
 
     <section>
-      <h2>Your best</h2>
+      <h2>Best by exercise</h2>
       <dai-rows
-        query="SELECT exercise,
-                      CASE WHEN max(weight) = 0 THEN 'bodyweight'
-                           ELSE CAST(max(weight) AS TEXT) || ' lb' END AS best,
-                      count(*) || CASE WHEN count(*) = 1 THEN ' entry' ELSE ' entries' END AS times
-                 FROM lifts GROUP BY exercise ORDER BY max(logged) DESC LIMIT 20"
-        empty="Your best weight for each exercise shows up here.">
+        empty="Your best weights will show up here."
+        query="SELECT exercise, count(*) AS n, printf('%g', max(weight)) AS best, max(weight) > 0 AS weighted
+               FROM sets
+               GROUP BY exercise
+               ORDER BY max(at) DESC">
         <template>
-          <div class="entry best">
-            <div class="what">
-              <strong data-text="exercise"></strong>
-              <span class="detail" data-text="times"></span>
+          <div class="row">
+            <div class="grow">
+              <span class="title" data-text="exercise"></span>
+              <span class="meta"><span data-text="n"></span> sets logged</span>
             </div>
-            <span class="pr" data-text="best"></span>
+            <div class="figures" data-when="weighted">
+              <span class="big" data-text="best"></span>
+              <span class="meta">best</span>
+            </div>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section>
+      <h2>Latest sets</h2>
+      <dai-rows
+        empty="Nothing logged yet."
+        query="SELECT id, exercise,
+                 CASE WHEN weight = 0 THEN reps || ' reps' ELSE reps || ' × ' || printf('%g', weight) END AS detail,
+                 CASE
+                   WHEN m < 1 THEN 'just now'
+                   WHEN m < 60 THEN CAST(m AS INTEGER) || ' min ago'
+                   WHEN m < 120 THEN '1 hour ago'
+                   WHEN m < 1440 THEN CAST(m / 60 AS INTEGER) || ' hours ago'
+                   WHEN dd = 1 THEN 'yesterday'
+                   ELSE dd || ' days ago'
+                 END AS ago
+               FROM (SELECT id, exercise, reps, weight, at,
+                       (julianday('now') - julianday(at)) * 1440.0 AS m,
+                       CAST(julianday(date('now', 'localtime')) - julianday(date(at, 'localtime')) AS INTEGER) AS dd
+                     FROM sets)
+               ORDER BY at DESC, id DESC
+               LIMIT 20">
+        <template>
+          <div class="row">
+            <div class="grow">
+              <span class="title" data-text="exercise"></span>
+              <span class="meta"><span data-text="detail"></span> · <span data-text="ago"></span></span>
+            </div>
+            <button type="button" class="remove" aria-label="Delete this set" data-run="DELETE FROM sets WHERE id = :id">Delete</button>
           </div>
         </template>
       </dai-rows>
@@ -157,51 +196,82 @@ CREATE TABLE IF NOT EXISTS lifts (
 </html>
 
 --- file: app.css
+/* Chalk and iron: a quiet, high-contrast ground with one strong accent. */
 :root {
-  color-scheme: light dark;
-  --bg: #f4f2ee;
+  --paper: #f5f6f1;
   --card: #ffffff;
-  --ink: #1b1f24;
-  --muted: #667078;
-  --line: #e1ddd5;
-  --accent: #d2491f;
-  --on-accent: #ffffff;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ink: #1d2320;
+  --muted: #67716b;
+  --line: #dde2da;
+  --accent: #1f6f4a;
+  --accent-ink: #ffffff;
+  --tint: #e3efe8;
+  --danger: #a63a2b;
+  color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14181d;
-    --card: #1e242b;
-    --ink: #eceff2;
-    --muted: #94a0aa;
-    --line: #2d353e;
-    --accent: #ff7a50;
-    --on-accent: #14181d;
+    --paper: #131715;
+    --card: #1c211e;
+    --ink: #eef2ee;
+    --muted: #97a39b;
+    --line: #2e3631;
+    --accent: #5fc791;
+    --accent-ink: #0c1a12;
+    --tint: #1f2f26;
+    --danger: #ee8c7d;
   }
 }
 
 * { box-sizing: border-box; }
 
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { line-height: 1.45; -webkit-font-smoothing: antialiased; }
-
-/* Color runs to every edge; content is pushed clear of the strips a phone covers. */
-main {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
-    calc(32px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
 }
 
-/* The top right corner belongs to the host's menu button. */
-header { padding-right: 56px; }
-h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; line-height: 1.1; }
-.sub { margin: 4px 0 0; color: var(--muted); }
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The colour runs to every edge; content stays clear of what a phone covers. */
+main {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: calc(28px + var(--dai-safe-top, 0px)) calc(20px + var(--dai-safe-right, 0px))
+    calc(40px + var(--dai-safe-bottom, 0px)) calc(20px + var(--dai-safe-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+header { display: flex; flex-direction: column; gap: 4px; padding-right: 56px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.lede { margin: 4px 0 0; color: var(--muted); }
+
 h2 {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -209,67 +279,37 @@ h2 {
   color: var(--muted);
 }
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { min-width: 0; }
 
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+/* The week at a glance. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
 .stat {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 14px 16px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
-}
-.num { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.label { color: var(--muted); font-size: 14px; }
-
-dai-form {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  background: var(--card);
-  border: 1px solid var(--line);
+  padding: 12px 14px;
+  background: var(--tint);
   border-radius: 14px;
-  padding: 16px;
-}
-dai-form h2, dai-form .wide, dai-form button, dai-form .hint { grid-column: 1 / -1; }
-dai-form label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); min-width: 0; }
-dai-form h2 { margin-bottom: 0; }
-.hint { margin: 0; font-size: 13px; color: var(--muted); }
-
-input {
-  font: inherit;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  min-height: 44px;
-  padding: 8px 12px;
-  width: 100%;
   min-width: 0;
 }
-::placeholder { color: var(--muted); opacity: 0.6; }
 
-button {
-  font: inherit;
-  font-weight: 600;
-  min-height: 44px;
-  padding: 0 18px;
-  border: 1px solid var(--accent);
-  border-radius: 10px;
-  background: var(--accent);
-  color: var(--on-accent);
-  cursor: pointer;
+.stat .num {
+  display: block;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--accent);
 }
-button.quiet {
-  background: transparent;
-  color: var(--muted);
-  border-color: transparent;
-  font-weight: 500;
-  padding: 0 10px;
-}
-button.quiet:hover { color: var(--accent); }
 
+.stat .cap { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+/* Lists. */
 dai-rows {
   display: block;
   background: var(--card);
@@ -277,53 +317,132 @@ dai-rows {
   border-radius: 14px;
   overflow: hidden;
 }
-.entry {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
+
+.row {
+  display: flex;
   align-items: center;
-  gap: 4px 12px;
-  padding: 10px 8px 10px 16px;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 14px;
   border-top: 1px solid var(--line);
 }
-.entry:first-child { border-top: 0; }
-.entry.best { grid-template-columns: 1fr auto; padding-right: 16px; }
-.what { display: grid; gap: 1px; min-width: 0; }
-.what strong { overflow-wrap: anywhere; }
-.detail, .day { color: var(--muted); font-size: 14px; }
-.day { white-space: nowrap; }
-.pr { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap; }
 
-/* The empty line the kit shows when a list has no rows. */
-dai-rows:not(:has(.entry)) { padding: 16px; color: var(--muted); }
+.row:first-child { border-top: 0; }
 
-footer { display: flex; justify-content: flex-end; }
-dai-save {
-  display: inline-block;
-  padding: 12px 22px;
+.grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.title { font-weight: 650; overflow-wrap: anywhere; }
+
+.meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+
+.figures { display: flex; flex-direction: column; align-items: flex-end; }
+
+.big { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+
+/* The empty state the kit shows when a query returns nothing. */
+dai-rows:empty,
+dai-rows > :not(.row):not(template) {
+  padding: 20px 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Adding a set. */
+dai-form.add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field span { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+dai-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
+}
+
+dai-form input::placeholder { color: var(--muted); opacity: 0.7; }
+
+button {
+  min-height: 44px;
+  font: inherit;
   cursor: pointer;
 }
 
-@media (max-width: 360px) {
-  dai-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.primary {
+  grid-column: 1 / -1;
+  padding: 10px 16px;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: 10px;
 }
 
+.remove {
+  min-width: 44px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.hint { margin: 8px 2px 0; font-size: 13px; color: var(--muted); }
+
+/* Keyboard support: a clear ring wherever focus lands. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+footer { display: flex; justify-content: flex-end; }
+
+dai-save {
+  display: inline-block;
+  padding: 12px 22px;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* A card on a quieter ground when the window is wide. */
 @media (min-width: 720px) {
-  main { padding-top: 40px; }
+  html, body { background: color-mix(in srgb, var(--paper) 90%, var(--ink)); }
+  main {
+    margin: 40px auto;
+    padding: 32px 32px 36px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 24px 60px -20px rgb(0 0 0 / 0.18);
+  }
 }
 
 --- file: icon.svg
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#14181d"/><rect x="12" y="40" width="10" height="20" rx="3" fill="#ff7a50"/><rect x="22" y="32" width="10" height="36" rx="3" fill="#ff7a50"/><rect x="32" y="46" width="36" height="8" fill="#eceff2"/><rect x="68" y="32" width="10" height="36" rx="3" fill="#ff7a50"/><rect x="78" y="40" width="10" height="20" rx="3" fill="#ff7a50"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- A barbell on a green ground. -->
+  <rect width="100" height="100" rx="22" fill="#1f6f4a"/>
+  <rect x="30" y="46" width="40" height="8" rx="4" fill="#f5f6f1"/>
+  <rect x="18" y="30" width="12" height="40" rx="5" fill="#f5f6f1"/>
+  <rect x="70" y="30" width="12" height="40" rx="5" fill="#f5f6f1"/>
+  <rect x="8" y="39" width="8" height="22" rx="4" fill="#f5f6f1"/>
+  <rect x="84" y="39" width="8" height="22" rx="4" fill="#f5f6f1"/>
+</svg>
 ```
-
-A few notes on how it works:
-
-- **Solo shape.** The log is yours alone, so the table is ordinary and there is no sharing machinery. To send it to someone, use the Share option in the host's menu. They get a copy of their own to write in.
-- **Saving.** Every entry is written the moment you add it. There is no save button under the opener. A Save button appears only if the file is opened straight in a browser.
-- **Derived numbers.** "Days trained" and "lb lifted" for the last 7 days, and your best weight per exercise, are worked out from your entries each time. None are stored, so deleting a mistaken entry fixes them.
-- **Times.** Entries are stored in UTC and shown as "Today", "Yesterday", or a weekday and date.
-- **Units.** Weight is in pounds, and 0 means bodyweight (pull-ups and the like).
-- **Not included yet.** There is no editing of an entry (delete and re-add), and no per-workout grouping or rest timer. I can add any of these if you want them.

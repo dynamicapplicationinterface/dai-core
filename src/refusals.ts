@@ -145,6 +145,13 @@ export const REFUSALS = {
       "A statement the data interface cannot carry was refused as it ran, before any data was accepted under it " +
       "(R-V, src/changesets.ts). The message carries the rule it broke, as one sentence; nothing was written.",
   },
+  DATA_REFUSED: {
+    recoverable: true,
+    means:
+      "A request to the data interface across R-Y's boundary was refused before it ran: a statement that is not its " +
+      "SQL and bound values, an application's own SQL function or callback, a transaction statement sent as a " +
+      "statement, or a transaction no longer open. The message is one sentence naming what to do; nothing was written.",
+  },
   CHANGES_KEY_UNREWRITABLE: {
     recoverable: false,
     means:

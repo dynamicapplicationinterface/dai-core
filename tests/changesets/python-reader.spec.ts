@@ -47,7 +47,8 @@ test("the Python reader agrees with the runtime in every scenario, both directio
     a.close();
     b.close();
   }
-  const run = spawnSync(PYTHON, ["-I", join(repo, "conformance", "reference", "dai_changes.py"), dir], { encoding: "utf8" });
+  // UTF-8 out, whatever the console's own encoding (-I ignores PYTHONIOENCODING): a value outside the BMP (D289) is printed as it is.
+  const run = spawnSync(PYTHON, ["-I", "-X", "utf8", join(repo, "conformance", "reference", "dai_changes.py"), dir], { encoding: "utf8" });
   expect(run.stderr).toBe("");
   expect(run.status).toBe(0);
   const lines = run.stdout.trim().split(/\r?\n/).map((l) => JSON.parse(l));

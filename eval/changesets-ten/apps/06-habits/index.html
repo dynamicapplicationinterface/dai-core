@@ -2,76 +2,155 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Daily habits, a week at a glance, and streaks that count" />
-  <meta name="dai:does" content="Track the habits you want to keep, one tap a day" />
-  <meta name="dai:does" content="Fix a missed day with a tap if you forgot to mark it" />
-  <meta name="dai:does" content="Show your current streak and how many days you kept each habit this week" />
-  <meta name="theme-color" content="#f4f1ea" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Tick off daily habits and keep your streaks going" />
+  <meta name="dai:does" content="Tick off each habit once a day and watch the streak grow" />
+  <meta name="dai:does" content="Show the last seven days of every habit at a glance" />
+  <meta name="dai:does" content="Add, rename and retire habits whenever your routine changes" />
+  <meta name="theme-color" content="#f3f7f1" />
   <title>Habit tracker</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
+  <!--
+    A habit tracker. No JavaScript for the data: the kit draws the rows and
+    redraws them after every tick. The tables and views are in schema.sql, and
+    the starting habits are the SQL block below, which runs once when the
+    document is created.
+
+    Ticking a habit adds a check-in row for today; unticking removes it. Each
+    habit has two tick controls, and only the one that fits is shown.
+  -->
   <script type="application/sql">
-    -- Local seed only, offered once. A second open adds nothing.
-    INSERT INTO habits (id, name)
-      SELECT id, name FROM (
-        SELECT 1 AS id, 'Drink water' AS name
-        UNION ALL SELECT 2, 'Walk for 20 minutes'
-        UNION ALL SELECT 3, 'Read a few pages'
-      )
-      WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'seeded');
+    -- seed rows; the tables are declared in schema.sql
+    INSERT INTO habits (name, emoji, position) VALUES
+      ('Drink water', '💧', 1),
+      ('Read for 20 minutes', '📖', 2),
+      ('Walk outside', '🏃', 3),
+      ('Stretch', '🧘', 4);
 
-    INSERT INTO checks (habit_id, day)
-      SELECT h, date('now', o) FROM (
-        SELECT 1 AS h, '-1 day' AS o
-        UNION ALL SELECT 1, '-2 day'
-        UNION ALL SELECT 1, '-3 day'
-        UNION ALL SELECT 2, '-1 day'
-        UNION ALL SELECT 3, '-2 day'
-      )
-      WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'seeded');
+    -- a little history so the streaks and the week strip have something to show
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (1), (2), (3), (4), (5)) AS d
+    WHERE h.name = 'Drink water';
 
-    INSERT OR IGNORE INTO meta (key, value) VALUES ('seeded', '1');
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (1), (3), (4)) AS d
+    WHERE h.name = 'Read for 20 minutes';
+
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (0), (1), (2)) AS d
+    WHERE h.name = 'Walk outside';
+
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (2), (5)) AS d
+    WHERE h.name = 'Stretch';
   </script>
 
-  <!-- Nothing to type into or press until app.js has started. -->
-  <p id="opening" class="opening" role="status">Opening…</p>
-
-  <main id="app" hidden inert>
+  <main>
     <header>
-      <h1>Habits</h1>
-      <p id="today" class="today" aria-live="polite"></p>
+      <p class="eyebrow">
+        <dai-value query="SELECT CASE strftime('%w', 'now', 'localtime') WHEN '0' THEN 'Sunday' WHEN '1' THEN 'Monday' WHEN '2' THEN 'Tuesday' WHEN '3' THEN 'Wednesday' WHEN '4' THEN 'Thursday' WHEN '5' THEN 'Friday' ELSE 'Saturday' END"></dai-value>
+      </p>
+      <h1>Today</h1>
+      <p class="progress">
+        <dai-value query="SELECT CASE WHEN count(*) = 0 THEN 'Add your first habit' WHEN sum(done) = count(*) THEN 'All done today' ELSE sum(done) || ' of ' || count(*) || ' done today' END FROM habit_status"></dai-value>
+      </p>
     </header>
 
-    <p id="notice" class="notice" role="status" hidden></p>
+    <section aria-label="Your habits">
+      <dai-rows
+        query="SELECT id, emoji, name, done, notdone, strip,
+                 CASE WHEN streak = 0 THEN 'No streak yet'
+                      WHEN streak = 1 THEN '1 day in a row'
+                      ELSE streak || ' days in a row' END
+                 || ' · ' || week || ' of 7 this week' AS note
+               FROM habit_status
+               ORDER BY position, name"
+        empty="No habits yet. Add one below. Something small is a good place to start.">
+        <template>
+          <div class="habit">
+            <label class="tick" data-when="notdone">
+              <input type="checkbox" aria-label="Mark done today"
+                data-run="INSERT INTO checkins (habit_id, day) VALUES (:id, date('now', 'localtime'))" />
+              <span class="box" aria-hidden="true"></span>
+            </label>
+            <label class="tick is-done" data-when="done">
+              <input type="checkbox" aria-label="Done today. Undo"
+                data-run="DELETE FROM checkins WHERE habit_id = :id AND day = date('now', 'localtime')" />
+              <span class="box" aria-hidden="true"></span>
+            </label>
+            <div class="body">
+              <div class="title">
+                <span class="emoji" data-text="emoji" aria-hidden="true"></span>
+                <input class="name" aria-label="Habit name" maxlength="60"
+                  data-text="name"
+                  data-run="UPDATE habits SET name = coalesce(nullif(trim(:typed), ''), name) WHERE id = :id" />
+              </div>
+              <p class="note" data-text="note"></p>
+              <p class="strip" aria-hidden="true" data-text="strip"></p>
+            </div>
+            <button type="button" class="quiet"
+              data-run="UPDATE habits SET archived = 1 WHERE id = :id">Retire</button>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
 
-    <ul id="list" class="list"></ul>
+    <section aria-label="Add a habit">
+      <h2>New habit</h2>
+      <dai-form run="INSERT INTO habits (name, emoji, position) VALUES (:name, :emoji, (SELECT coalesce(max(position), 0) + 1 FROM habits))">
+        <select name="emoji" aria-label="Icon">
+          <option>⭐</option>
+          <option>💧</option>
+          <option>📖</option>
+          <option>🏃</option>
+          <option>🧘</option>
+          <option>✍️</option>
+          <option>🥗</option>
+          <option>😴</option>
+          <option>🎵</option>
+          <option>🌱</option>
+        </select>
+        <input name="name" placeholder="What do you want to do daily?" required maxlength="60" aria-label="Habit name" />
+        <button type="button" class="primary">Add</button>
+      </dai-form>
+    </section>
 
-    <div id="empty" class="empty" hidden>
-      <p><strong>No habits yet.</strong></p>
-      <p>Add one below, something small you can do every day. A tap each day builds the streak.</p>
-    </div>
-
-    <form id="add" class="add" autocomplete="off">
-      <label for="name">New habit</label>
-      <div class="row">
-        <input id="name" required maxlength="60" placeholder="e.g. Stretch for five minutes" />
-        <button type="submit">Add</button>
-      </div>
-    </form>
-
-    <details id="archived-box" class="archived" hidden>
-      <summary>Archived habits</summary>
-      <ul id="archived" class="list"></ul>
+    <details>
+      <summary>Retired habits</summary>
+      <dai-rows
+        query="SELECT id, emoji, name FROM habits WHERE archived = 1 ORDER BY position, name"
+        empty="Nothing retired. A retired habit keeps its history.">
+        <template>
+          <div class="retired">
+            <span class="emoji" data-text="emoji" aria-hidden="true"></span>
+            <span class="what" data-text="name"></span>
+            <button type="button" class="quiet"
+              data-run="UPDATE habits SET archived = 0 WHERE id = :id">Bring back</button>
+            <button type="button" class="quiet danger"
+              data-run="DELETE FROM habits WHERE id = :id">Delete</button>
+          </div>
+        </template>
+      </dai-rows>
     </details>
 
     <footer>
-      <!-- Shown only when the file is open in a plain browser with no host. -->
-      <button id="save" type="button" class="quiet" hidden>Save to this file</button>
+      <p class="total">
+        <dai-value query="SELECT count(*) FROM checkins"></dai-value>
+        check-ins so far
+      </p>
+      <button type="button" id="share" class="quiet">Share</button>
+      <dai-save>Save</dai-save>
     </footer>
   </main>
 
+  <script type="module" src="./dai-kit.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -63,14 +63,14 @@ function renderSurface(): string {
     .join("\n");
 }
 
-/** A refusal is taught when it can meet an ordinary-table application: nothing about shared tables or sessions. */
-export const TAUGHT_REFUSAL = (r: { code: string; when: string; then: string }): boolean =>
-  !/replicated|_r_|session|seat|roster|SHARED-|IDENTITY-SEAT|SESSION-/i.test(`${r.code} ${r.when} ${r.then}`);
+/** A refusal is taught when it can meet an ordinary-table application: nothing about shared tables or sessions, nor the synchronous handle they keep (R-Y). */
+export const TAUGHT_REFUSAL = (r: { code: string; when: string; then: string; shapes: readonly string[] }): boolean =>
+  r.shapes.includes("solo") && !/replicated|_r_|session|seat|roster|SHARED-|IDENTITY-SEAT|SESSION-/i.test(`${r.code} ${r.when} ${r.then}`);
 
+/** The refusals an ordinary-table application can meet, under their heading; nothing when there are none. */
 function renderRefusals(): string {
-  return APP_REFUSALS.filter(TAUGHT_REFUSAL)
-    .map((r) => `- ${r.code} — ${r.when} ${r.then}`)
-    .join("\n");
+  const taught = APP_REFUSALS.filter(TAUGHT_REFUSAL).map((r) => `- ${r.code} — ${r.when} ${r.then}`);
+  return taught.length === 0 ? "" : `REFUSALS YOU MAY MEET\nWhat an error means, and what to do instead.\n\n${taught.join("\n")}\n\n`;
 }
 
 function bundleOf(name: string, files: Record<string, string>): string {
@@ -106,7 +106,7 @@ function renderChecklist(): string {
 export const RECIPE = `HOW TO ANSWER
 Write a self-contained application that will be sealed into a DAI container: a single file holding the app, its SQLite database and its data, opened by double-clicking or from a link, with no server and no installation. There is no network: the container can reach nothing outside itself.
 
-Write ordinary SQLite tables, with their own keys, and ordinary SQL over them: INSERT, UPDATE, DELETE, joins, transactions, foreign keys. That is the whole data model. Whether the document is kept on one device, moved between a person's devices or handed to somebody else is the host's business, not the application's: the host records what each save changed, signs it, and merges copies, and nothing in the application has to know. Follow every constraint below. Each has an ID in brackets, which is also what a lint finding cites; each says whether anything checks it. A constraint that nothing checks is still a constraint.
+Write ordinary SQLite tables, with their own keys, and ordinary SQL over them: INSERT, UPDATE, DELETE, joins, foreign keys; several as one: call db.batch or db.transaction. That is the whole data model. Whether the document is kept on one device, moved between a person's devices or handed to somebody else is the host's business, not the application's: the host records what each save changed, signs it, and merges copies, and nothing in the application has to know. Follow every constraint below. Each has an ID in brackets, which is also what a lint finding cites; each says whether anything checks it. A constraint that nothing checks is still a constraint.
 
 Content is the kit where the kit can express it: HTML with dai-rows, dai-value, dai-form, dai-attach and dai-save, and SQL in the document. The kit removes the dangerous sinks by construction (no statement built from a value, text-only rendering). Transport is whatever the channel has: when a tool is available, call it with the files as its arguments; when it is not, write the files as one text bundle, in the format under HOW TO HAND IT OVER.
 
@@ -119,20 +119,15 @@ Everything an application is given, and nothing else.
 
 ${renderSurface()}
 
-REFUSALS YOU MAY MEET
-What an error means, and what to do instead.
-
-${renderRefusals()}
-
-PATTERNS
+${renderRefusals()}PATTERNS
 The database, from JavaScript. Parameters are bound, never interpolated.
 
-  const db = await window.dai.openDatabase();
-  db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: ["Buy milk"] });
-  db.exec({ sql: "UPDATE notes SET done = :done WHERE id = :id", bind: { ":done": 1, ":id": 3 } });
-  const rows = db.selectObjects("SELECT * FROM notes ORDER BY id");
-  const one  = db.selectObjects("SELECT * FROM notes WHERE id = ?", [3]);
-  const count = db.selectValue("SELECT count(*) FROM notes WHERE done = 0");
+  const db = await window.dai.database();
+  await db.run("INSERT INTO notes (body) VALUES (?)", ["Buy milk"]);
+  await db.run("UPDATE notes SET done = :done WHERE id = :id", { ":done": 1, ":id": 3 });
+  const rows = await db.query("SELECT * FROM notes ORDER BY id");
+  const one  = await db.get("SELECT * FROM notes WHERE id = ?", [3]);
+  const count = await db.value("SELECT count(*) FROM notes WHERE done = 0");
 
 Pass bind only when there are parameters: an empty array is read as parameters promised and not supplied, and throws. Use SQL for the work — joins, aggregates, ORDER BY — rather than loading everything and filtering in JavaScript.
 
@@ -177,9 +172,10 @@ The kit:
 
   <script type="module" src="./dai-kit.js"></script>
 
-- A form's fields become the :parameters of its statement, by name.
-- Inside a row, :parameters come from that row's columns; data-text writes a column as text; data-when shows an element when a column is truthy.
-- A control's own attributes data-x become :x, and what was typed into an input is :typed.
+- A form's fields become the :parameters of its statement, by name; its button submits it, whatever its type.
+- Inside a row, :parameters come from that row's columns; data-text fills an element's text or a field's value; data-when shows any element when a column is truthy.
+- data-run runs on any element: a button when clicked, an input or select when it changes. Its own attributes data-x become :x, and what was typed is :typed.
+- A select fills its options from a query: <select name="person_id" data-options="SELECT id, name FROM people">, value then label.
 - A picture goes in the document, in a BLOB column, so it travels with the file: <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">Add a photo</dai-attach>, and <img data-blob="photo" alt=""> to show it. Never write a file path or a URL to an image the document does not carry.
 
 When another copy's changes arrive, the host applies them to the same tables and the application hears dai:merged; redraw on it (the kit's elements already do):
@@ -205,7 +201,7 @@ name: Reading list
 CREATE TABLE IF NOT EXISTS books (…);
 
 --- file: app.js
-const db = await window.dai.openDatabase();
+const db = await window.dai.database();
 
 --- file: icon.svg
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">…</svg>

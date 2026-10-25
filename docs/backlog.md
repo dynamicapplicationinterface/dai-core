@@ -902,6 +902,267 @@ All readers must agree on canonical state, pending alternatives, and determinist
 
 The decisive distinction is not finer-grained pending flags. It is an authenticated distinction between “I wrote this field back” and “I chose this value.”
 
+#### R-Y — Ordinary SQL does not grant runtime authority
+
+**Decision**
+
+**Build 2 must separate application-controlled execution from the authority that validates R-X operations, advances receipt chains, authorizes signatures, and constructs acknowledged checkpoints.**
+
+A host-created database/runtime worker is the preferred implementation. The requirement is the authority boundary, not “put everything in a worker.”
+
+Owner enrollment and storage integration can proceed in parallel, but Build 2 must not declare the protected recovery path complete while its authoritative state still depends on replaceable application-realm behavior.
+
+*Why the frozen-exports floor is not that boundary*
+
+The current `Native` implementation closes the identified sqlite-wasm wrapper-replacement path. It also explicitly identifies shared built-ins as the remaining boundary. Its memory-reading path still invokes `TextDecoder`, `DataView`, and typed-array methods in the application’s realm.
+
+There is a second distinction: immutable exported function bindings do not make the memory those functions operate on immutable or inaccessible. WebAssembly exposes memory through a buffer; retaining or freezing an exports object is not access control over that memory. [W3C](https://www.w3.org/TR/wasm-js-api-2/)
+
+Therefore:
+
+> **The frozen-exports floor is defense against a bounded interference class. It is not sufficient evidence that an application that does not cooperate cannot interfere with runtime authority.**
+
+Calling the protected side “host” does not settle this. **Any runtime component whose answer the host trusts when signing, resolving, or acknowledging a checkpoint belongs on the protected side.** Moving only the private key while trusting application-controlled evidence would preserve the signing key but not the meaning of its signature.
+
+**Required architecture contract**
+
+The application may request ordinary SQL operations, obtain results, and request resolutions through the supported interface.
+
+It must not possess a writable reference to authoritative runtime memory, protected database objects, receipt state, observation-token state, or privileged statement handles.
+
+The trusted component must independently:
+
+- Enforce R-W and the permitted SQL interface.
+- Own capture, projection, R-X validation, and token issuance/consumption.
+- Validate receipt references against the authenticated chains.
+- Produce the exact accepted state from which the host signs and checkpoints.
+
+Requests are scoped by the host to a document and mount generation. A document identifier supplied by the app is not authority to select another database.
+
+**A worker must contain trusted runtime code, not arbitrary application JavaScript moved across the boundary.** Evaluating application callbacks inside it, or sharing its writable WASM memory back to the app, would reintroduce the problem.
+
+App-defined JavaScript SQL functions and callbacks therefore need an explicit compatibility decision. Do not silently execute them with runtime privileges.
+
+**The synchronous-interface question**
+
+**There is no transparent, ordinary worker-message bridge that preserves arbitrary main-thread synchronous `exec`/`prepare`/`step` behavior.** SQLite’s worker documentation describes the asynchronous interface and its transaction/queue limitations; the HTML platform allows blocking Atomics operations in dedicated/shared workers, not Window agents. [SQLite](https://sqlite.org/wasm/doc/trunk/api-worker1.md)
+
+But there are three distinct designs—not just “everything synchronous” versus “the whole app runs in a worker.”
+
+| Shape | What remains synchronous? | What owns authority? |
+|---|---|---|
+| **Authoritative database in a trusted worker** | SQL execution inside the worker; application requests are asynchronous | Worker/runtime plus host |
+| **Synchronous application-side projection** | App queries and speculative writes against its local projection | Separate trusted runtime validates and commits proposals |
+| **Private synchronous database capability** | A narrow facade can remain synchronous | An encapsulated, independently reviewed runtime with no leaked memory/raw API and hardened boundary behavior |
+
+The second is the shape that preserves a synchronous handle **without pretending its bytes are authoritative**. However, the trusted runtime must validate proposals against its own state and R-X observations; it cannot accept the app’s changeset, basis, receipt, or database export merely because the app labels it “captured.” Preserving the full promised SQL/trigger semantics may require authoritative execution or additional validation. That is a real protocol between the projection and runtime, not a cheap shim.
+
+The third is possible in principle, but it is substantially more than freezing exports. SQLite’s raw WASM API exposes low-level functions and handles; those cannot remain the application’s unrestricted interface to the authoritative instance. [SQLite](https://sqlite.org/wasm/doc/trunk/api-c-style.md)
+
+**My implementation recommendation is the first shape.** Keep ordinary SQL, introduce an explicit asynchronous application API, and batch operations rather than remotely driving every `step()`.
+
+Transaction ownership, cancellation, and failure must be defined so unrelated requests cannot interleave inside an application transaction. Update the kit, model instructions, and compatibility declaration together; **do not silently change a synchronous method into a Promise-returning one.**
+
+R-O requires authors not to implement replication. It does not require exposing the exact sqlite-wasm handle or preserving every existing JavaScript call pattern.
+
+**Boundary scope**
+
+This ruling does not promise that an application that does not cooperate cannot submit harmful changes to its own permitted data, mislead its own UI, or stop functioning.
+
+It promises that application behavior cannot become **runtime authority**: manufacture receipts, broaden resolutions, rewrite protected evidence, impersonate another mount, or cause an unvalidated state to receive a trusted checkpoint acknowledgment.
+
+A signature still does not prove that a human understood or intended the application’s actions.
+
+#### R-Y red test
+
+**Single required red**
+
+D285: app code cannot re-enter runtime authority
+
+Use one pending-conflict fixture with authentic signed history and a known observation token.
+
+An application that does not cooperate replaces an application-realm intrinsic used by the present native-reading path—for example, `TextDecoder.prototype.decode`. Its replacement delegates normally, but when invoked during runtime processing, it attempts a normally prohibited write to protected provenance state, such as `_cs_shown`.
+
+Then issue an otherwise legitimate application edit and request a checkpoint.
+
+**Required assertions:**
+
+1. Application-controlled code never executes with runtime authority. The attempted protected write cannot succeed.
+2. Trusted inspection—not an app-supplied query method—shows the original history, receipts, and unresolved alternatives intact.
+3. Any accepted batch contains only the legitimate permitted effect; no poisoned provenance reaches a signature or “Kept” checkpoint.
+4. If the operation is refused, the last acknowledged state remains intact. An unmodified control app completes the same edit/checkpoint, preventing “refuse everything” from passing.
+
+First demonstrate that the chosen injection actually reaches the pre-boundary path. Merely crashing the app or failing to invoke the payload is not a meaningful red.
+
+#### Contract I — Resolution semantic continuity
+
+**R-I / Contract I: release activation preserves R-X meaning**
+
+**Decision**
+
+> **A successor changes the application release, not the authorship, causal scope, or resolution meaning of existing document history.**
+
+Keeping the document ID is necessary for continuity, but insufficient by itself.
+
+The current R-X representation already distinguishes observation `basis`, presented alternatives, and signed operation `resolves`. Those distinctions must remain authoritative across release transitions.
+
+**1. Historical resolutions must remain interpretable**
+
+**Yes: the successor’s trusted runtime must be able to validate and interpret every retained prior resolution and its exact `resolves` set.** The successor’s application code does not need a history-reading implementation.
+
+For each historical operation, preserve its original signed bytes and the evidence needed to interpret:
+
+```text
+document and entity identity
+source schema / decision-unit semantics
+basis
+resolves
+typed values
+author sequence and chain digest
+```
+
+The association with source schema and operation semantics must be authenticated and unambiguous. It can use existing signed envelopes or retained release metadata; do not rewrite old operations merely to add fields.
+
+Replay historical operations according to their original semantics, then map their results into the target projection through the approved transition.
+
+**Never reinterpret an old `resolves` set using whatever columns or coupled groups the successor currently declares.**
+
+A checkpoint can accelerate recovery. It cannot silently discard the distinction between an explicit resolution, a normal edit, and a projected winner. Until a semantics-preserving compaction contract exists, retain the referenced evidence.
+
+If the new runtime cannot interpret the required history, activation is refused and the old release remains usable.
+
+**2. An additive release does not resolve or invalidate an alternative**
+
+A supported additive transition must preserve the decision units and interpretation of existing history.
+
+Adding an independent field or table does not:
+
+- Remove a pending alternative.
+- Broaden an old resolution.
+- Turn a schema default into an authored edit.
+- Make an old delete “observe” a subsequently introduced field.
+- Convert the currently projected winner into agreed state.
+
+For example, adding `notes DEFAULT ''` must not make a prior resolution of `qty` resolve `notes`, nor imply that every earlier author explicitly wrote an empty note.
+
+**An SQL-additive change can still be R-X-incompatible.** Adding a column and expanding an existing `dai:coupled` group changes the decision unit. So can changing key equality, a field’s meaning, or the rules that determine valid projection.
+
+Such a change is outside the minimal additive class unless a separate, explicit semantic transition proves preservation. Do not call it additive merely because the SQL uses `ADD COLUMN`.
+
+If a new constraint would exclude a retained pending alternative, either the transition preserves that evidence with a defined pending representation or activation fails. The classifier must not validate only the displayed row.
+
+**3. Observation tokens expire at activation—even for same-schema successors**
+
+An outstanding token is not a durable resolution. It is a runtime-issued capability tied to an observation.
+
+**Every activation creates a new mount generation and retires tokens issued by the old mount.** This includes same-schema activation and rollback to an earlier release.
+
+An old token must fail without producing a signed operation. Suggested sentence:
+
+> **“The app version changed. Review this choice again before applying it.”**
+
+This expiration does **not** invalidate the pending alternatives. They remain available for a new observation.
+
+A newly issued token may present a different set because more evidence has arrived. That set must actually be presented for a new decision; the runtime must not silently replace the old token and retry the old click.
+
+This deliberately avoids token migration as another compatibility problem. An unchanged schema is not proof that a different application version is continuing the same UI decision.
+
+**4. Resolution and activation must have one ordering point**
+
+If `resolve(token)` races activation, exactly one ordering must occur:
+
+**Resolution commits first:** its signed operation and evidence become part of the state staged into the successor.
+
+**Activation retires the mount first:** resolution fails as an old-mount request and logs nothing.
+
+There must be no third state in which the UI receives success but the successor lacks the resolution, or a request issued under the old release is signed against the new release’s interpretation.
+
+Likewise, activation must quiesce or preserve outstanding local capture before replacing the projection baseline. Previously acknowledged work cannot disappear because activation and checkpoint upload completed in different orders.
+
+**5. Activation cannot reset chains or disguise rollback**
+
+Because the document ID remains stable, author sequences, digest chains, receipts, and the checkpoint’s causal frontier continue across activation. A release change does not start a fresh author history.
+
+Rolling back code creates another mount generation; it does not authorize rewinding the document’s accepted history. Preserve newer evidence even if the older application cannot materialize it. Do not revive old observation tokens.
+
+**Amendments to A–H**
+
+Add **Contract I — Resolution semantic continuity**, and strengthen the existing contracts as follows:
+
+| Contract | Required amendment under R-X |
+|---|---|
+| **A — Authoritative declaration** | Include the authenticated interpretation of decision units, coupled groups, key identity, and source schema—not merely table layout. |
+| **B–C — Additive classification and dependencies** | Require preservation of existing decision units and historical operation meaning. Revalidate dependencies without reinterpreting prior decisions. |
+| **D — Pending-conflict preservation** | Preserve alternatives, bases, exact resolves sets, and their validation evidence—not just the projected values. |
+| **E — Old-schema delete versus new-column edit** | A historical delete retains its original observed scope. The new field is not retroactively included. |
+| **F — Successor forks/version skew** | Bind operations to their source interpretation; equal column positions or counts do not establish equivalent decision units. |
+| **G — Atomic activation** | Include token retirement, resolution ordering, capture baseline, chain state, and checkpoint state in the transition contract. |
+| **H — Initialization/defaults** | Schema-provided values remain distinguishable from authored edits and explicit resolutions. |
+
+Each amendment is carried in its entry: A in D276, B in D277, C in D278, D in D279, E in D274, F in D275, G in D280, H in D281.
+
+**Contract I, in one paragraph**
+
+> **Every accepted release transition preserves the validity and exact causal scope of prior signed resolutions. Historical operations are interpreted under their authenticated source semantics; target projection does not rewrite their basis or resolves sets. Pending alternatives remain pending unless an applicable signed decision resolves them. Observation tokens are mount-bound and retire on activation; a resolution racing activation either commits wholly before the transition or fails without an operation.**
+
+#### Contract I red test
+
+**Single required red**
+
+R-I/R-X: decisions survive; old capabilities do not
+
+Run one scenario parameterized over **same-schema** and **independent-additive** successors.
+
+*Arrange*
+
+In release S1, `qty` and `unit` are coupled.
+
+1. A and B produce concurrent tuples `(2, "kg")` and `(3, "kg")`.
+2. A explicitly resolves those alternatives to `(3, "kg")`, producing resolution **R**, whose `resolves` set is exactly `{A1, B1}`.
+3. Deliver C’s independently authored `(4, "kg")`. The pending alternatives are now `{R, C1}`.
+4. Issue an unconsumed observation token **T** for those alternatives.
+5. Hold back another genuine concurrent edit **B2**, based on B’s older state.
+
+Fix the fixture’s ordering so R’s `(3, "kg")` is displayed.
+
+*Activate*
+
+Activate S2, keeping the document ID. In the additive variant, S2 adds an independent `notes` field with a declared default.
+
+Assert immediately:
+
+```text
+R's original signed bytes, basis and resolves are unchanged.
+Pending alternatives are still exactly {R, C1}.
+Author chains and receipt digests retain continuity.
+Activation/default materialization authored no application edit.
+```
+
+*Exercise the token boundary*
+
+Calling `resolve(T, keep-shown)` must fail and append no operation.
+
+Obtain a fresh S2 token and explicitly keep `(3, "kg")`. This must create resolution **R2**, despite unchanged displayed tuple bytes:
+
+```text
+R2 resolves exactly {R, C1}.
+R2 resolves neither B2 nor the newly added field.
+```
+
+Now deliver B2. It must remain a genuine alternative against R2.
+
+Finally checkpoint, clear the local context, and recover under S2. Rebuild with the runtime and Python reader, including permitted delivery orders where B2 arrives before or after R2.
+
+**The oracle is the complete causal result, not just the displayed number:**
+
+```text
+Original R remains verifiable with resolves = {A1, B1}.
+R2 remains verifiable with resolves = {R, C1}.
+R2 and B2 remain the unresolved alternatives.
+No old token was accepted.
+No default or transition was misattributed as an edit.
+```
+
 ### The data interface's runtime rules
 
 What the runtime holds for every document under the ordinary data
@@ -10507,7 +10768,9 @@ recomputed over the merged candidate. **Acceptance:** T08's two workouts give
 Under R-W the schema changes only through a release. These are what a
 release transition must hold, held for Build 2 (successor authority, R-I).
 Each cites external review 2026-10-20 by its id. Contract E is RW-07 and
-contract F is RW-08, so each is filed with its RW entry.
+contract F is RW-08, so each is filed with its RW entry. Contract I
+(resolution semantic continuity, under R-X's rulings) amends A to H; each
+entry carries its amendment.
 
 #### D271 — A prepared statement survives release activation (RW-04)
 
@@ -10522,6 +10785,9 @@ with the migration's privileges.
 **Acceptance:** a statement prepared before activation and stepped after it
 is refused, with nothing written.
 
+**Under Contract I (§3, G):** an observation token is mount-bound in the
+same way, and retires with the mount at activation.
+
 #### D272 — An addition activates a dormant `UPDATE OF` trigger (RW-05)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10533,6 +10799,9 @@ A release that adds that column gives an unchanged trigger new behavior.
 **Change:** release validation rejects a trigger naming a column the table
 does not have. **Acceptance:** such a release is refused at validation, never
 activated.
+
+**Under Contract I (B–C):** one instance of an unchanged object gaining
+behavior; see D278.
 
 #### D273 — Adding a field while another has pending alternatives (RW-06)
 
@@ -10546,6 +10815,9 @@ synthetic edit and resolves nothing implicitly.
 **Acceptance:** a pending row across an additive release keeps both
 alternatives, both signatures and its flag, and the log gains no op.
 
+**Under Contract I (§2):** the addition neither resolves nor invalidates the
+alternatives; Contract I's red test is this entry's acceptance under R-X.
+
 #### D274 — Old-schema DELETE against an edit to a new column (RW-07, contract E)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10558,6 +10830,8 @@ concurrent edit to a column the new schema added.
 **Change:** the causal delete/update policy holds across schemas: the delete's
 `seen` does not cover the new column's version. **Acceptance:** the row is
 kept and flagged `delete-conflict` in both delivery orders.
+
+**Amended by Contract I (E):** A historical delete retains its original observed scope. The new field is not retroactively included.
 
 #### D275 — Two successors append different columns at one ordinal (RW-08, contract F)
 
@@ -10574,6 +10848,8 @@ Two additive successors each append a different column at the same position.
 **Acceptance:** both successors' batches, crossed, keep every value under its
 own column name, or hold it as received; nothing lands in the wrong column.
 
+**Amended by Contract I (F):** Bind operations to their source interpretation; equal column positions or counts do not establish equivalent decision units.
+
 #### D276 — One authoritative declaration chain (contract A)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10588,6 +10864,8 @@ settings (`foreign_keys` and the like) are the host's.
 **Acceptance:** a stored database differing from its signed declaration in
 any of those is repaired by the host or refused, before the application runs.
 
+**Amended by Contract I (A):** Include the authenticated interpretation of decision units, coupled groups, key identity, and source schema—not merely table layout.
+
 #### D277 — "Additive", narrowly (contract B)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10601,6 +10879,8 @@ same behavior, not the same column list.
 **Acceptance:** release validation classifies each of those changes as not
 additive.
 
+**Amended by Contract I (B–C):** Require preservation of existing decision units and historical operation meaning. Revalidate dependencies without reinterpreting prior decisions.
+
 #### D278 — An unchanged object gains behavior from an addition (contract C)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10611,6 +10891,8 @@ dependencies.
 
 **Acceptance:** tests over a widened table for a positional INSERT, `SELECT *`,
 a view's shape and a trigger's inserts.
+
+**Amended by Contract I (B–C):** Require preservation of existing decision units and historical operation meaning. Revalidate dependencies without reinterpreting prior decisions.
 
 #### D279 — Pending conflicts migrate as evidence (contract D)
 
@@ -10624,6 +10906,8 @@ and an authored value stay distinct.
 
 **Acceptance:** each kind of flag crosses a release with its evidence equal
 before and after.
+
+**Amended by Contract I (D):** Preserve alternatives, bases, exact resolves sets, and their validation evidence—not just the projected values.
 
 #### D280 — Activation switches one coherent state (contract G)
 
@@ -10639,6 +10923,8 @@ keeps the successor's branch and never drops fields silently.
 **Acceptance:** a crash at each step of activation reopens as wholly old or
 wholly new.
 
+**Amended by Contract I (G):** Include token retirement, resolution ordering, capture baseline, chain state, and checkpoint state in the transition contract.
+
 #### D281 — Schema installation is not seeding (contract H)
 
 *Status: open, held for Build 2. Filed 20 October, from external review
@@ -10648,6 +10934,8 @@ Installing a schema is separate from seeding. A new column's default is not
 a person's edit.
 
 **Acceptance:** an additive release logs no op for the default it fills.
+
+**Amended by Contract I (H):** Schema-provided values remain distinguishable from authored edits and explicit resolutions.
 
 ### R-X residue (filed 20 October)
 
@@ -10724,8 +11012,11 @@ no pending flag, and the set-aside proposal named in the resolution's
 
 #### D285 — The in-realm defense against the application is bounded by the realm
 
-*Status: open, decided with Build 2's architecture. Filed 21 October, from
-the Build 1h review (1h-H1, 1h-M2).*
+*Status: closed by R-Y, Build 2a. Filed 21 October, from the Build 1h review
+(1h-H1, 1h-M2). A document under the ordinary data interface keeps its
+database, the changeset runtime and every save in a worker the shell makes;
+the application's frame holds a port and no engine, handle or memory, and
+R-Y's red test (`tests/changesets/authority.spec.ts`) holds it.*
 
 The application shares the database handle, and under the ordinary data
 interface the runtime reads, writes and runs a VACUUM through the engine's
@@ -10808,6 +11099,294 @@ removed, the two new ones added), or main refuses every push after it.
 Then the 35 and the 55 go back to 25 and 45.
 **Acceptance:** two WebKit mailbox jobs, each under 15 minutes on the slowest
 runner seen, both required by the ruleset; no part of the gate above 25.
+
+### Build 2a (filed 21 October)
+
+#### D288 — An application's own SQL functions and callbacks are not part of the data interface
+
+*Status: decided, Build 2a (R-Y). Filed 21 October.*
+
+Under R-Y an ordinary document's database lives in the runtime's worker,
+and the application reaches it through `await window.dai.database()`. What
+crosses the port is data: SQL text and bound values (null, numbers,
+bigints, strings, booleans, bytes). A function never crosses. R-Y asked for
+the decision to be explicit: running the application's JavaScript inside
+the worker, as a SQL function SQLite calls or a callback a statement drives,
+would put application code back where the runtime's authority is, the
+problem R-Y removes.
+
+**Decided:** refused, with one sentence, wherever an application could hand
+one over: `db.createFunction`, a function among bound values, and a
+statement carrying a callback (or any field but `sql` and `bind`, such as
+`rowMode` or `resultRows`). The sentence: "An application's own SQL
+functions and callbacks do not run inside the runtime: compute in SQL, or
+in the page from the rows a query returns."
+
+**Compatibility:** an ordinary document written for the synchronous handle
+that registered a function (`db.createFunction`) or iterated rows through
+`exec`'s `callback` stops at the first such call, with the sentence above
+or the one that names `database()`. It is rewritten over the new handle:
+the computation goes into the SQL, or into the page over the rows `query`
+returns. Documents with shared tables keep the synchronous handle and its
+functions, as they keep their database in the frame. Nothing in
+`examples/` and none of the evaluation's apps registers a function.
+
+**Acceptance:** `tests/changesets/interface.spec.ts`, "an application's own
+SQL functions and callbacks are refused, with the sentence", on every
+engine.
+
+#### D289 — A character outside the Basic Multilingual Plane in schema.sql stops the build
+
+*Status: closed, Build 2a. Filed 21 October, from Build 2a's cold run
+(07-chores). The blanked copy is built by UTF-16 unit
+(`tests/changesets/astral.spec.ts`), and the vector `astral-default` carries
+a default outside the BMP through both readers.*
+
+`tableSpans` in `src/replicated.ts` scans the schema by UTF-16 index (`scan`)
+but builds its blanked copy with `[...sql]`, which splits by code point. An
+emoji in a string before a table (`emoji TEXT NOT NULL DEFAULT '🙂'`) puts
+every later index one off, the column list's closing bracket is never found,
+and the build is refused: "The table chores has no closing bracket." The
+same schema with `':)'` builds. It refuses a valid application at compile,
+loses nothing, and reaches every document whose schema carries such a
+character before a table.
+
+**Change:** build the blanked copy by UTF-16 unit, as the scanner reads
+(`sql.split("")`), or scan by code point.
+**Acceptance:** the cold run's chore chart builds as written; a schema with
+an emoji default before a CHECK builds and declares both tables.
+
+#### D290 — The next cold run asks from the amended model file
+
+*Status: open, for the next cold run. Filed 21 October, from Build 2a.*
+
+Build 2a's cold run was asked from the model file of R-Y (33,955 bytes,
+sha256 `e2db23c9…f510`). Every one of its ten apps put `data-run` on a
+plain button, which the file never showed, and two needed a select filled
+from a table, which the kit could not do: the budget redesigned around it
+and the chore chart wrote a script of its own. The kit already ran
+`data-run` on any element and `data-when` on any element; it now also fills
+`<select data-options="SELECT id, name FROM people">`. The model file now
+says all three, and that a kit form's button submits it whatever its type
+(33,959 bytes). Build 2a did not ask again: its rerun used the same
+generations, so the amendment is untested by a cold reader.
+
+**Change:** the next cold run of `eval/changesets-ten` asks the same ten
+prompts from the amended file, fresh generations, and records which file.
+**Acceptance:** the run's record names the model file's digest, and no app
+in it reaches for a kit behavior the file does not show (each subagent's own
+list of assumptions, read, is the check).
+
+#### D291 — Firefox: `ios-relaunch` 242 failed both attempts in Build 2a's CI
+
+*Status: open, a reading (non-gating). Filed 22 October, from Build 2a's CI.*
+
+Run 39727574866, on `a8cf5290` (PR #11), Firefox job:
+`ios-relaunch.spec.ts:242`, "a load that lost its hint, on a device that
+refuses storage, relaunches once", failed on both attempts: the line read
+"iOS reload: not reached" where "taken on the load before this one" was
+expected. Run locally on Firefox it passed 12 of 12 (three repeats of the
+file). It is not on Firefox's known list (D32, D286).
+
+**Likely cause, not confirmed.** The page CI saw was still the opener's
+root ("arrived with DAI Opener → http://localhost:5175/"), its iOS line at
+its first value, "not reached": the first open on an iPhone never reached
+`relaunchAtOwnAddress`. That path mounts the document behind the launch
+screen first and waits on it (the ground colour, `groundSettled`), and its
+document is the packing list, an ordinary document, which since R-Y starts a
+data worker before it is interactive. It is the class the WebKit offline case
+of Build 2a belonged to: a step that waits on the document having started,
+which now starts later; on CI's Firefox, slower than a desk, the wait did not
+end inside the test's 60 seconds on either attempt. Not reproduced locally
+(12 of 12).
+
+**Change:** none yet. If it fails again, time the rehearsal mount on the
+trace (hostMark "prepared" to the relaunch's "reloading at the document's
+address"), against the same test on `main`.
+**Acceptance:** a CI run in which it fails is read and the cause named, or
+a month of Firefox runs passes it.
+
+#### D292 — The browser install stalls CI's browser jobs past their limit
+
+*Status: changed in Build 2a-r2 (the cache below); open until its
+acceptance. Filed 23 October, from Build 2a-r1's CI.*
+
+Every browser job runs `npx playwright install --with-deps <browser>
+chromium` (`.github/workflows/test.yml`) with no cache of the browsers and
+no limit of its own. When the runner's apt mirror or the browser download is
+slow, the step takes the job's whole allowance: the job is cancelled with no
+tally, and the count gate fails because that part sent no count. No test
+failed in any of these runs. Read from the runs' own step timings:
+
+| Run | Commit | Job | `playwright install` |
+|---|---|---|---|
+| 39774895221 | `59a40b27` | Firefox (whole) | cancelled at 60.0 min, the job's limit |
+| 39815514636 | `93a2be93` | WebKit shard 3 | cancelled at 44.9 min, the job's limit |
+| 39888560478 | `d661504b` | WebKit shards 1 and 4 | 28.0 and 33.4 min, then passed |
+| 39952369056, attempt 1 | `f8ee1d86` | WebKit shard 4 | cancelled at 44.9 min |
+| 39952369056, attempt 1 | `f8ee1d86` | WebKit mailbox | cancelled at 55.0 min |
+| 39962418846, attempt 1 | `70f9125e` | WebKit mailbox | 42.8 min; the tests were then cancelled at the job's 55 min |
+
+- On the same runs the install takes about 11 min for Chromium and well
+  under a minute when the mirror is quick (39952369056 attempt 2: 37 s for
+  WebKit mailbox).
+- Each stall above cleared on `gh run rerun --failed`.
+- The run before 39888560478 on the branch, 39888079056 (`1ae80a04`), had
+  none.
+- The workflow's own comment on the job's limit (30 September, beside
+  D174) records the install at 6 to 11 minutes on runners whose apt
+  mirror was slow. The limit was set then to give setup an allowance
+  apart from the tests' budget.
+- **I.** The stall has since outgrown that allowance.
+
+**Change (the merge session, not before).** The install stops depending on
+the mirror at the moment of the run, by one of:
+
+- cache the browsers (`~/.cache/ms-playwright`) keyed on the installed
+  Playwright version, so `playwright install` downloads only on a version
+  change. The system libraries `--with-deps` installs are not in that
+  cache: `install-deps` still runs, or the next option covers them;
+- or run the browser jobs in Playwright's container image for the same
+  version (`mcr.microsoft.com/playwright:v<version>-<distro>`), which
+  carries the browsers and their libraries, so no install step runs.
+
+Either one ties the browsers to the `@playwright/test` version in
+`package-lock.json` (1.63.0 today). The workflow was not changed in Build
+2a-r1.
+
+**Acceptance:** a month of runs in which no browser job is cancelled in, or
+loses its tests' time to, the browser install.
+
+**Done (Build 2a-r2).** The first option, made to cover the libraries too. The
+stalled step's own log (39962418846, WebKit shard 4, 25.0 min) shows where
+the time went: `apt-get update` fetched 12.5 MB in 1 s, then the package
+downloads from the mirror ran for 25 minutes, `Ign:` lines about 30 s apart.
+A cache of the browsers alone would leave that step in place. So each
+browser job caches the browsers and the `.deb` files `--with-deps` fetched,
+keyed on the installed Playwright version and the engine; on a hit the
+packages are put in apt's archive before the install, so apt downloads
+none. The container image was the other option; it was not taken because
+the browser jobs also need what the runner image carries and the
+Playwright image is not shown to (`git`, `python3` for the node job's
+readers, `cargo` for `sectioned-host`). No matrix key changed, so every
+check name the ruleset requires is the same.
+
+- **F. Red,** no cache (39962418846, attempt 1): 6 of 12 install steps
+  over two minutes, 508 to 2,567 s; apt needed 26 MB (Chromium) to 119 MB
+  (WebKit) of packages each time.
+- **F. The first run with the cache** (40222804586, attempt 1, on
+  `5e31aedd`): every key missed, the installs took 19 to 58 s on a quick
+  mirror, and Chromium, node and WebKit kept theirs (295, 295 and 478 MB).
+- **F. Green, warm** (the same run, attempt 2): all 11 gating jobs hit, apt
+  fetched "0 B/119 MB" of archives on WebKit and none on the rest, and the
+  install step took 11 to 27 s.
+- **F. Firefox missed on both attempts.** A cache is kept only from a job
+  that succeeds, and the Firefox reading failed both times, so it would
+  never have kept one. The cache is now restored and saved as two steps,
+  the save right after the install, before any test runs.
+
+#### D293 — Firefox under Playwright loses the reload at a link while a worker document is held; real Firefox does not
+
+*Status: open, a reading (non-gating, D32). Filed 25 October, from the review
+of Build 2a-r1. Becomes a defect if a browser a person uses shows it.*
+
+`hint-and-install.spec.ts:39` ("fragment-uuid-mismatch-is-first-sighting")
+holds the chore chart open, then arrives at a link whose hint names it and
+whose payload is another document. The opener saves the open document and
+reloads at the link, and the test waits for the launch card. On Firefox
+under Playwright that wait fails: `locator.waitFor: Target crashed` at line
+80, the content process gone. Since Build 2a (R-Y) the chore chart is a
+worker document: its data lives in the shell's worker, which the reload
+ends mid-flight. On `main` it was a frame document.
+
+- **F. The review's counts** (Playwright 1.63.0, Firefox 155.0, the test
+  alone, one worker, no retries, Windows 11):
+
+  | Code | Crashed |
+  | --- | --- |
+  | `b4313f5d` (Build 2a-r1) | 1 of 5; 1 of 20 (beside an `npm ci`); 6 of 20 on an idle machine. **8 of 45** |
+  | `bdec671f` (Build 2a) | **12 of 20** |
+  | `9fdd9d07` (`main`, before Build 2a) | **0 of 40** |
+
+  CI agrees: both tries crashed on `bdec671f` (39892180415) and on
+  `70f9125e` (39962418846), one try on `f8ee1d86` (39952369056); it passed
+  on `d661504b` and on `main`'s last two runs before Build 2a.
+- **F. Real Firefox, not Playwright**, on `be28f88d` (this tip's code),
+  Firefox 157.0.1 as Mozilla ships it. It was driven over its own WebDriver
+  BiDi port, with a fresh profile and a visible window per run, through the
+  test's steps: the file chosen and its card pressed by pointer input, the
+  link arriving as a new fragment, the card awaited. A crash was looked for
+  three ways: the tab's crash page (BiDi refuses script there, held 3 s),
+  a minidump in the profile, and one in the crash reports.
+  - **The chore chart: 0 of 10 crashed.** The card came 0.3 to 0.9 s after
+    the link, and the linked document then opened.
+  - **The tasks example, a frame document, as the control: 0 of 10.**
+  - In every run the opener did reload at the link (a mark set on the page
+    before it was gone after).
+  - **The detector was shown to fire:** with the tab's content processes
+    killed from outside, it reported the crash, chore chart and tasks both.
+- **F. Playwright's Firefox on the same build**, the same day and machine:
+  1 of 20 failed at line 80, as a 60 s timeout "waiting for navigation to
+  finish" after the opener's "a link arrived while a document was open;
+  saving it and opening the link". The trace holds no crash; the other 19
+  passed. So the driver loses this reload as a crash or as a hang.
+- **F. A second path, the same signature.** `held-transaction.spec.ts:196`
+  (2a-r1-M1) holds a worker document, leaves to `about:blank` and back, and
+  reloads. Under Playwright's Firefox the reload failed with `page.reload:
+  Page crashed` on both tries of 40222804586 attempt 2 (it passed on
+  attempt 1) and in 2 of 10 runs locally; every assertion before it held.
+  In real Firefox 157.0.1, driven the same way through the same steps: 0 of
+  10 crashed, and all ten reopened to `base,pending`.
+- **I.** The loss is Playwright's patched Firefox, not Firefox: 0 of 20
+  worker-document runs in the shipped build, against 8 of 45, 12 of 20 and
+  2 of 10 under the driver. It
+  started with Build 2a because a worker ending at the reload is what the
+  patched build mishandles, which `main`'s frame documents never did.
+
+**Change:** none to the product. The test stays as it is on Firefox, a
+reading. If a gating engine, or a browser a person uses, ever shows it, the
+first step is the same test with a frame document held, and with a plain
+`page.reload()` in place of the link.
+**Acceptance:** a Playwright upgrade whose Firefox passes it 20 of 20, or a
+month of `main`'s Firefox runs in which it passes on the first try.
+
+#### D294 — A save asked as the page really leaves does not land in the runner
+
+*Status: open, to be checked on a device. Filed 25 October, from the review
+of Build 2a-r1. It predates PR #11.*
+
+A committed write whose autosave is still to come (within its 800 ms) is
+lost when the page really navigates away. The flush the leave asks for does
+not reach the store, with or without an application transaction, on all
+three engines.
+
+- **F. Ran** on `b4313f5d`, Chromium, Firefox and WebKit, the same on each
+  (the review's P2c). `base` was saved. Then `db.run` of `pending`
+  resolved, and the page went to `about:blank` and back at once
+  (`back_forward`, not restored from the cache). The store read `base`, and
+  the reopened document `base`.
+- **F. The same with a transaction open** (P2b): `base` too. Since 2a-r1-M1
+  a write made before the transaction is saved before it opens, so the
+  transaction no longer widens the window. The leave itself still loses
+  what is due.
+- **F. What does land:** a `pagehide` dispatched on the shell's window while
+  the opener stays (`held-transaction.spec.ts`, test 2). The rollback, then
+  the save, reach the store.
+- **I.** On a real navigation the shell, its data worker and the opener
+  that writes the store all end together, so the flush's bytes have no page
+  left to be written by. It predates this branch by the mechanism: the leave
+  flush and the opener's store are older than R-Y (traced, not run on
+  `main`, whose documents have no data interface to drive the same way).
+- **Not known:** whether a phone's browser, which keeps a page alive longer
+  on a switch away and kills it later, loses the same write. The test
+  runner's navigation is the harshest case and may not be what a person
+  does.
+
+**Change:** none yet. First the reading on a device: write, then leave at
+once by the three ways a person does (switch app, close the tab, navigate),
+and reopen.
+**Acceptance:** the device reading is recorded for each way of leaving, and
+any that loses a write has its own entry with the fix.
 
 ### Branch review residue (filed 8 October)
 

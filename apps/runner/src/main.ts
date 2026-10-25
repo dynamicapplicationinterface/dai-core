@@ -3827,10 +3827,13 @@ async function leavingBytes(): Promise<{ doc: Cartridge; mount: Mount | null; db
  * or save failed would carry rows nobody signed (docs/identity.md, step 3).
  */
 async function flushBeforeLeaving(): Promise<void> {
-  const landed = await flushDocument();
-  if (!landed && loaded && declaresReplication(loaded.manifest)) {
+  const { saved, held } = await flushAnswer();
+  if (!saved && loaded && declaresReplication(loaded.manifest)) {
+    // Nothing failed while the app holds a transaction: the save waits for its end (2a-r1-L1).
     throw new Error(
-      "The latest changes here could not be signed and saved, so this was not sent. Try again in a moment.",
+      held
+        ? "This is waiting on the app, which is in the middle of a change, so it was not sent. Try again in a moment."
+        : "The latest changes here could not be signed and saved, so this was not sent. Try again in a moment.",
     );
   }
 }
@@ -3863,24 +3866,29 @@ function frameBytes(): Promise<Uint8Array | null> {
 
 /** Resolves true once the frame confirms its pending writes are stored, false if it did not say so in time. */
 function flushDocument(): Promise<boolean> {
+  return flushAnswer().then((answer) => answer.saved);
+}
+
+/** The frame's answer to a flush: whether its writes are stored, and whether what kept them is the app's open transaction. */
+function flushAnswer(): Promise<{ saved: boolean; held: boolean }> {
   const target = cartridgeFrame.contentWindow;
-  if (!target || !mountedNonce) return Promise.resolve(false);
+  if (!target || !mountedNonce) return Promise.resolve({ saved: false, held: false });
   const id = Math.random().toString(36).slice(2);
   return new Promise((resolve) => {
     // Long enough for a seal: the frame asks this host to sign before it saves
     // (identity step 3), and its own wait for a signature is 15 seconds.
     const timer = window.setTimeout(() => {
       window.removeEventListener("message", onFlushed);
-      resolve(false);
+      resolve({ saved: false, held: false });
     }, 10_000);
     const onFlushed = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; id?: string; sessionNonce?: string; saved?: boolean } | null;
+      const data = event.data as { type?: string; id?: string; sessionNonce?: string; saved?: boolean; held?: boolean } | null;
       if (!data || data.type !== TO_HOST.FLUSHED || data.id !== id) return;
       if (!fromMountedContainer(event, data)) return;
       window.clearTimeout(timer);
       window.removeEventListener("message", onFlushed);
       // An older runtime does not say; its answer meant "done" and is taken so.
-      resolve(data.saved !== false);
+      resolve({ saved: data.saved !== false, held: data.held === true });
     };
     window.addEventListener("message", onFlushed);
     target.postMessage({ type: TO_DOCUMENT.FLUSH, id }, "*");

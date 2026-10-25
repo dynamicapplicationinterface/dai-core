@@ -1,118 +1,140 @@
-I built this as a solo document: a reading list for one person, kept on one device, so nothing in it is shared or merged. It uses only the kit, so there is no JavaScript of its own. You add a book, start it, mark it finished, or remove it. The list is in three groups: Up next, Reading now and Finished. A count at the top shows how many you have finished. There is a dark mode, and the layout holds from phone to desktop. I haven't run it. I only checked it against the rules.
-
 ```text
 dai bundle v1
 name: Reading list
 
 --- file: schema.sql
--- Reading list · shape: solo
+-- Reading list
 --
--- The decision: one person's list of books, kept on one device. Nobody else
--- adds to it and no second copy's changes need keeping, so nothing is shared:
--- ordinary tables, written with the kit, keys and all. If it is sent to
--- someone, they get their own copy to write in.
+-- One table. A book is "next" (on the list), "reading" (in progress) or
+-- "done" (finished). Every count on the page is a query over these rows.
 
 CREATE TABLE IF NOT EXISTS books (
-  id     INTEGER PRIMARY KEY,
-  title  TEXT NOT NULL,
-  author TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'next' CHECK (status IN ('next', 'reading', 'done')),
-  added  TEXT NOT NULL DEFAULT (datetime('now'))
+  id          INTEGER PRIMARY KEY,
+  title       TEXT NOT NULL,
+  author      TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'next' CHECK (status IN ('next', 'reading', 'done')),
+  note        TEXT NOT NULL DEFAULT '',
+  added       TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
 );
+
+CREATE INDEX IF NOT EXISTS books_by_status ON books (status, added);
 
 --- file: index.html
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Books to read next, and the ones you finished" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="What to read next, and what you got through" />
   <meta name="dai:does" content="Keep a list of the books you want to read next" />
-  <meta name="dai:does" content="Move a book to reading now, then mark it finished" />
-  <meta name="dai:does" content="Show how many books you have finished" />
-  <meta name="theme-color" content="#f6f1e7" />
+  <meta name="dai:does" content="Start a book, then finish it with a note to remember it by" />
+  <meta name="dai:does" content="Show how many you have finished and how long ago" />
+  <meta name="theme-color" content="#faf6ef" />
   <title>Reading list</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
   <script type="application/sql">
-    -- Local seed rows, fixed ids, so a second open adds nothing.
-    INSERT OR IGNORE INTO books (id, title, author, status) VALUES
-      (1, 'Middlemarch', 'George Eliot', 'reading'),
-      (2, 'Pride and Prejudice', 'Jane Austen', 'next'),
-      (3, 'Frankenstein', 'Mary Shelley', 'next'),
-      (4, 'The Great Gatsby', 'F. Scott Fitzgerald', 'done');
+    -- seed rows; the table is declared in schema.sql
+    INSERT INTO books (title, author, status, note, added, finished_at) VALUES
+      ('The Remains of the Day', 'Kazuo Ishiguro', 'done', 'Quiet and devastating. Read it again in winter.', datetime('now', '-60 days'), datetime('now', '-12 days')),
+      ('Braiding Sweetgrass', 'Robin Wall Kimmerer', 'done', '', datetime('now', '-40 days'), datetime('now', '-3 days')),
+      ('Piranesi', 'Susanna Clarke', 'reading', '', datetime('now', '-9 days'), NULL),
+      ('The Overstory', 'Richard Powers', 'next', '', datetime('now', '-8 days'), NULL),
+      ('Pachinko', 'Min Jin Lee', 'next', '', datetime('now', '-7 days'), NULL),
+      ('A Month in the Country', 'J. L. Carr', 'next', '', datetime('now', '-6 days'), NULL);
   </script>
 
-  <!-- A page built only from the kit's elements is safe while it starts:
-       none of them is a <form>, so nothing submits before the kit is ready. -->
   <main>
     <header>
+      <p class="eyebrow">Your shelf</p>
       <h1>Reading list</h1>
       <p class="progress">
         <dai-value query="SELECT count(*) FROM books WHERE status = 'done'"></dai-value>
-        finished ·
-        <dai-value query="SELECT count(*) FROM books WHERE status != 'done'"></dai-value>
+        finished
+        <span aria-hidden="true">&middot;</span>
+        <dai-value query="SELECT count(*) FROM books WHERE status = 'next'"></dai-value>
         to go
       </p>
     </header>
 
-    <dai-form run="INSERT INTO books (title, author) VALUES (:title, :author)" class="add">
-      <input name="title" aria-label="Title" placeholder="Title" required maxlength="120" />
-      <input name="author" aria-label="Author" placeholder="Author (optional)" maxlength="80" />
-      <button>Add</button>
-    </dai-form>
-
-    <section>
-      <h2>Reading now</h2>
-      <dai-rows query="SELECT id, title, author FROM books WHERE status = 'reading' ORDER BY id" empty="Nothing in hand. Start a book from Up next.">
+    <section aria-labelledby="h-reading">
+      <h2 id="h-reading">Reading now</h2>
+      <dai-rows
+        query="SELECT id, title, author FROM books WHERE status = 'reading' ORDER BY added, title"
+        empty="Nothing in progress. Start one from the list below.">
         <template>
-          <div class="book">
-            <div class="what">
-              <strong data-text="title"></strong>
-              <span data-text="author"></span>
+          <article class="book">
+            <div class="who">
+              <span class="title" data-text="title"></span>
+              <span class="author" data-text="author" data-when="author"></span>
             </div>
-            <div class="acts">
-              <button data-run="UPDATE books SET status = 'done' WHERE id = :id">Finished</button>
-              <button class="quiet" data-run="UPDATE books SET status = 'next' WHERE id = :id">Put back</button>
+            <div class="actions">
+              <button class="primary" data-run="UPDATE books SET status = 'done', finished_at = datetime('now') WHERE id = :id">Finished</button>
+              <button class="ghost" data-run="UPDATE books SET status = 'next' WHERE id = :id">Put back</button>
             </div>
-          </div>
+          </article>
         </template>
       </dai-rows>
     </section>
 
-    <section>
-      <h2>Up next</h2>
-      <dai-rows query="SELECT id, title, author FROM books WHERE status = 'next' ORDER BY id" empty="Nothing waiting. Add a book above.">
+    <section aria-labelledby="h-next">
+      <h2 id="h-next">Up next</h2>
+      <dai-rows
+        query="SELECT id, title, author FROM books WHERE status = 'next' ORDER BY added, title"
+        empty="The list is empty. Add the next book you hear about.">
         <template>
-          <div class="book">
-            <div class="what">
-              <strong data-text="title"></strong>
-              <span data-text="author"></span>
+          <article class="book">
+            <div class="who">
+              <span class="title" data-text="title"></span>
+              <span class="author" data-text="author" data-when="author"></span>
             </div>
-            <div class="acts">
-              <button data-run="UPDATE books SET status = 'reading' WHERE id = :id">Start</button>
-              <button class="quiet" data-run="DELETE FROM books WHERE id = :id">Remove</button>
+            <div class="actions">
+              <button class="primary" data-run="UPDATE books SET status = 'reading' WHERE id = :id">Start</button>
+              <button class="ghost" data-run="DELETE FROM books WHERE id = :id">Remove</button>
             </div>
-          </div>
+          </article>
         </template>
       </dai-rows>
+
+      <dai-form run="INSERT INTO books (title, author) VALUES (:title, :author)">
+        <input name="title" placeholder="Title" aria-label="Title" required maxlength="120" />
+        <input name="author" placeholder="Author (optional)" aria-label="Author" maxlength="80" />
+        <button>Add</button>
+      </dai-form>
     </section>
 
-    <section>
-      <h2>Finished</h2>
-      <dai-rows query="SELECT id, title, author FROM books WHERE status = 'done' ORDER BY id DESC" empty="No finished books yet.">
+    <section aria-labelledby="h-done">
+      <h2 id="h-done">Finished</h2>
+      <dai-rows
+        query="SELECT id, title, author, note,
+                      CASE WHEN d >= 60 THEN (d / 30) || ' months ago'
+                           WHEN d >= 30 THEN 'last month'
+                           WHEN d >= 2  THEN d || ' days ago'
+                           WHEN d >= 1  THEN 'yesterday'
+                           ELSE 'today' END AS when_done
+               FROM (SELECT id, title, author, note,
+                            cast(julianday('now') - julianday(finished_at) AS integer) AS d,
+                            finished_at
+                       FROM books WHERE status = 'done')
+               ORDER BY finished_at DESC, title"
+        empty="Nothing finished yet. The first one will show up here.">
         <template>
-          <div class="book">
-            <div class="what">
-              <strong data-text="title"></strong>
-              <span data-text="author"></span>
+          <article class="book done">
+            <div class="who">
+              <span class="title" data-text="title"></span>
+              <span class="author" data-text="author" data-when="author"></span>
+              <span class="when" data-text="when_done"></span>
+              <input class="note" aria-label="Your note on this book" placeholder="Add a note&hellip;" maxlength="300"
+                     data-text="note"
+                     data-run="UPDATE books SET note = :typed WHERE id = :id" />
             </div>
-            <div class="acts">
-              <button class="quiet" data-run="UPDATE books SET status = 'next' WHERE id = :id">Read again</button>
-              <button class="quiet" data-run="DELETE FROM books WHERE id = :id">Remove</button>
+            <div class="actions">
+              <button class="ghost" data-run="UPDATE books SET status = 'reading', finished_at = NULL WHERE id = :id">Read again</button>
+              <button class="ghost" data-run="DELETE FROM books WHERE id = :id">Remove</button>
             </div>
-          </div>
+          </article>
         </template>
       </dai-rows>
     </section>
@@ -127,77 +149,218 @@ CREATE TABLE IF NOT EXISTS books (
 </html>
 
 --- file: app.css
+/* Paper and ink. */
 :root {
-  color-scheme: light dark;
-  --bg: #f6f1e7;
+  --paper: #faf6ef;
   --card: #ffffff;
-  --ink: #2a2118;
-  --muted: #7a6c5a;
-  --line: #e4dac8;
-  --accent: #8a3b2b;
-  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --ink: #26211b;
+  --muted: #7a6f62;
+  --line: #e6dccb;
+  --accent: #a4472b;
+  --accent-ink: #ffffff;
+  color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #1c1814; --card: #272019; --ink: #efe6d6; --muted: #b3a48e; --line: #3a3126; --accent: #e59a85; }
+  :root {
+    --paper: #1b1814;
+    --card: #25211c;
+    --ink: #f1e9dc;
+    --muted: #a99d8d;
+    --line: #38322a;
+    --accent: #e08a6b;
+    --accent-ink: #1b1814;
+  }
 }
+
 * { box-sizing: border-box; }
-[hidden] { display: none !important; }
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { line-height: 1.45; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Color runs to every edge; content is pushed clear of what a phone covers.
+   The right side keeps extra room so nothing sits under the host's round
+   button in the top right corner. */
 main {
   max-width: 600px;
   margin: 0 auto;
+  padding: calc(28px + var(--dai-safe-top, 0px)) calc(20px + var(--dai-safe-right, 0px))
+    calc(40px + var(--dai-safe-bottom, 0px)) calc(20px + var(--dai-safe-left, 0px));
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
-    calc(32px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+  gap: 28px;
 }
-/* The top right corner belongs to the host's menu button. */
-header { padding-right: 56px; }
-h1 { margin: 0; font-size: 32px; letter-spacing: -0.01em; }
+
+header { display: flex; flex-direction: column; gap: 4px; padding-right: 48px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.progress {
+  margin: 6px 0 0;
+  align-self: flex-start;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 h2 {
-  margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--muted);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.progress { margin: 6px 0 0; color: var(--muted); }
-button, input {
-  font: inherit; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 16px;
-}
-input {
-  min-height: 44px; padding: 8px 12px; width: 100%; min-width: 0;
-  color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-}
-button {
-  min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--accent); background: var(--accent); color: var(--bg);
-}
-button.quiet { background: transparent; color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-dai-form.add { display: flex; flex-wrap: wrap; gap: 8px; }
-dai-form.add input { flex: 1 1 10em; width: auto; }
+
+section { display: flex; flex-direction: column; }
+
 dai-rows {
-  display: block; background: var(--card); border: 1px solid var(--line);
-  border-radius: 14px; overflow: hidden;
+  display: block;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
 }
+
 .book {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  gap: 8px 12px; padding: 12px 14px; border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
 }
+
 .book:first-child { border-top: 0; }
-.what { display: grid; gap: 2px; flex: 1 1 10em; min-width: 0; overflow-wrap: anywhere; }
-.what span { color: var(--muted); font-size: 14px; font-style: italic; }
-.what span:empty { display: none; }
-.acts { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.who {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 200px;
+  min-width: 0;
+  gap: 1px;
+}
+
+.title { font-weight: 650; overflow-wrap: anywhere; }
+.author { color: var(--muted); font-size: 14px; }
+.when { color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 2px; }
+
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+button.primary,
+dai-form button,
+dai-save {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+button.ghost {
+  background: none;
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+button:hover { filter: brightness(0.95); }
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.note {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-style: italic;
+  color: var(--ink);
+  background: none;
+  border: 1px dashed transparent;
+  border-radius: 8px;
+}
+
+.note:hover,
+.note:focus { border-color: var(--line); }
+.note::placeholder { color: var(--muted); }
+
+dai-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+dai-form input {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
 footer { display: flex; justify-content: flex-end; }
-dai-save { display: inline-block; padding: 12px 22px; border-radius: 10px; background: var(--accent); color: var(--bg); cursor: pointer; }
-@media (min-width: 720px) {
-  main { padding-top: 48px; }
+
+dai-save {
+  display: inline-block;
+  padding: 12px 22px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 --- file: icon.svg
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#8a3b2b"/><path d="M50 30c-8-6-18-8-28-6v48c10-2 20 0 28 6z" fill="#f6f1e7"/><path d="M50 30c8-6 18-8 28-6v48c-10-2-20 0-28 6z" fill="#e4dac8"/><path d="M62 24v22l6-5 6 5V26z" fill="#8a3b2b"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="22" fill="#a4472b"/>
+  <path d="M50 28c-8-6-20-8-30-6v50c10-2 22 0 30 6z" fill="#faf6ef"/>
+  <path d="M50 28c8-6 20-8 30-6v50c-10-2-22 0-30 6z" fill="#f0dcc0"/>
+  <path d="M50 28v50" stroke="#a4472b" stroke-width="3"/>
+</svg>
 ```
-
-The two seed rows that sit in "Up next" and the two in other groups are example data. Replace them with your own books.

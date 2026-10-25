@@ -10,15 +10,15 @@
  },
  "shape": "ordinary tables",
  "update": {
-  "a": "UPDATE items SET packed = 1 WHERE id = :id",
-  "b": "UPDATE items SET packed = 1 WHERE id = :id"
+  "a": "UPDATE items SET packed = 1 - packed WHERE id = :id",
+  "b": "UPDATE items SET packed = 1 - packed WHERE id = :id"
  },
  "delete": {
-  "a": "× Remove from the list  DELETE FROM items WHERE id = :id"
+  "a": "× Remove this item  DELETE FROM items WHERE id = :id"
  },
  "ops": {
   "a": {
-   "I": 11,
+   "I": 16,
    "U": 1,
    "D": 1
   },

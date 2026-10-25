@@ -1,459 +1,648 @@
-Here is a habit tracker. It is a solo document: one person, one phone, nothing merged, so it uses ordinary tables and no shared rows. Each habit gets one tap a day, the last seven days sit under it so you can fix a missed day, and the streak is worked out from the check-ins every time rather than stored.
-
 ```text
 dai bundle v1
 name: Habit tracker
 
 --- file: schema.sql
--- Habit tracker · shape: solo
+-- Habit tracker
 --
--- The decision: one person's habits, kept on one device. Nobody else adds to
--- it and no second copy's changes need keeping, so nothing is shared: ordinary
--- tables, keys and all, written with plain SQL.
+-- Two ordinary tables and two views. A check-in is one row: a habit and the
+-- calendar day it was done. Nothing is counted in a column; the streaks, the
+-- week and the totals are all read from the rows by the views below, so every
+-- copy of the document works them out the same way.
 --
--- Notes:
---   * checks holds one row per habit per calendar day the person means ("I did
---     this on Tuesday"). That day is a fact they entered, in their own local
---     calendar, so it is a plain YYYY-MM-DD and not a write time. When a row
---     was created is stored in UTC (habits.created) and never shown.
---   * No streak, no count, no "done today" flag is stored. They are derived
---     from checks each time the page is drawn.
---   * Archiving a habit keeps its history; nothing is dropped.
+-- "day" is a calendar day the person means (their own today), kept as
+-- YYYY-MM-DD text, not a moment in time. The moments (created) are UTC.
 
 CREATE TABLE IF NOT EXISTS habits (
   id       INTEGER PRIMARY KEY,
   name     TEXT NOT NULL,
+  emoji    TEXT NOT NULL DEFAULT '⭐',
+  position INTEGER NOT NULL DEFAULT 0,
   archived INTEGER NOT NULL DEFAULT 0,
   created  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS checks (
-  habit_id INTEGER NOT NULL,
-  day      TEXT NOT NULL,          -- YYYY-MM-DD, the day the person did it
-  PRIMARY KEY (habit_id, day)
+CREATE TABLE IF NOT EXISTS checkins (
+  id       INTEGER PRIMARY KEY,
+  habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+  day      TEXT NOT NULL,
+  created  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Remembers that the example rows were offered once, so deleting them sticks.
-CREATE TABLE IF NOT EXISTS meta (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
+CREATE INDEX IF NOT EXISTS checkins_by_habit_day ON checkins (habit_id, day);
+
+-- Each active habit, whether it is done today, and the day its streak is
+-- counted back from: today if it is done, otherwise yesterday, so a streak is
+-- not lost before the day is over.
+CREATE VIEW IF NOT EXISTS habit_today AS
+SELECT
+  h.id AS id,
+  h.name AS name,
+  h.emoji AS emoji,
+  h.position AS position,
+  EXISTS (
+    SELECT 1 FROM checkins c
+    WHERE c.habit_id = h.id AND c.day = date('now', 'localtime')
+  ) AS done,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM checkins c
+    WHERE c.habit_id = h.id AND c.day = date('now', 'localtime')
+  ) THEN date('now', 'localtime')
+  ELSE date('now', 'localtime', '-1 day') END AS anchor
+FROM habits h
+WHERE h.archived = 0;
+
+-- Streak: the run of consecutive days that ends on the anchor day. Its first
+-- day is the latest checked day, on or before the anchor, whose previous day
+-- was not checked.
+CREATE VIEW IF NOT EXISTS habit_status AS
+SELECT
+  t.id AS id,
+  t.name AS name,
+  t.emoji AS emoji,
+  t.position AS position,
+  t.done AS done,
+  1 - t.done AS notdone,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM checkins c WHERE c.habit_id = t.id AND c.day = t.anchor
+  ) THEN CAST(julianday(t.anchor) - julianday((
+      SELECT max(c.day) FROM checkins c
+      WHERE c.habit_id = t.id
+        AND c.day <= t.anchor
+        AND NOT EXISTS (
+          SELECT 1 FROM checkins p
+          WHERE p.habit_id = t.id AND p.day = date(c.day, '-1 day')
+        )
+    )) AS INTEGER) + 1
+  ELSE 0 END AS streak,
+  (
+    SELECT count(DISTINCT c.day) FROM checkins c
+    WHERE c.habit_id = t.id
+      AND c.day >= date('now', 'localtime', '-6 days')
+      AND c.day <= date('now', 'localtime')
+  ) AS week,
+  (
+    SELECT group_concat(
+      CASE WHEN EXISTS (
+        SELECT 1 FROM checkins c
+        WHERE c.habit_id = t.id
+          AND c.day = date('now', 'localtime', '-' || d.column1 || ' days')
+      ) THEN '●' ELSE '○' END, '')
+    FROM (VALUES (6), (5), (4), (3), (2), (1), (0)) AS d
+  ) AS strip
+FROM habit_today t;
 
 --- file: index.html
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Daily habits, a week at a glance, and streaks that count" />
-  <meta name="dai:does" content="Track the habits you want to keep, one tap a day" />
-  <meta name="dai:does" content="Fix a missed day with a tap if you forgot to mark it" />
-  <meta name="dai:does" content="Show your current streak and how many days you kept each habit this week" />
-  <meta name="theme-color" content="#f4f1ea" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Tick off daily habits and keep your streaks going" />
+  <meta name="dai:does" content="Tick off each habit once a day and watch the streak grow" />
+  <meta name="dai:does" content="Show the last seven days of every habit at a glance" />
+  <meta name="dai:does" content="Add, rename and retire habits whenever your routine changes" />
+  <meta name="theme-color" content="#f3f7f1" />
   <title>Habit tracker</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
+  <!--
+    A habit tracker. No JavaScript for the data: the kit draws the rows and
+    redraws them after every tick. The tables and views are in schema.sql, and
+    the starting habits are the SQL block below, which runs once when the
+    document is created.
+
+    Ticking a habit adds a check-in row for today; unticking removes it. Each
+    habit has two tick controls, and only the one that fits is shown.
+  -->
   <script type="application/sql">
-    -- Local seed only, offered once. A second open adds nothing.
-    INSERT INTO habits (id, name)
-      SELECT id, name FROM (
-        SELECT 1 AS id, 'Drink water' AS name
-        UNION ALL SELECT 2, 'Walk for 20 minutes'
-        UNION ALL SELECT 3, 'Read a few pages'
-      )
-      WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'seeded');
+    -- seed rows; the tables are declared in schema.sql
+    INSERT INTO habits (name, emoji, position) VALUES
+      ('Drink water', '💧', 1),
+      ('Read for 20 minutes', '📖', 2),
+      ('Walk outside', '🏃', 3),
+      ('Stretch', '🧘', 4);
 
-    INSERT INTO checks (habit_id, day)
-      SELECT h, date('now', o) FROM (
-        SELECT 1 AS h, '-1 day' AS o
-        UNION ALL SELECT 1, '-2 day'
-        UNION ALL SELECT 1, '-3 day'
-        UNION ALL SELECT 2, '-1 day'
-        UNION ALL SELECT 3, '-2 day'
-      )
-      WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'seeded');
+    -- a little history so the streaks and the week strip have something to show
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (1), (2), (3), (4), (5)) AS d
+    WHERE h.name = 'Drink water';
 
-    INSERT OR IGNORE INTO meta (key, value) VALUES ('seeded', '1');
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (1), (3), (4)) AS d
+    WHERE h.name = 'Read for 20 minutes';
+
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (0), (1), (2)) AS d
+    WHERE h.name = 'Walk outside';
+
+    INSERT INTO checkins (habit_id, day)
+    SELECT h.id, date('now', 'localtime', '-' || d.column1 || ' days')
+    FROM habits h CROSS JOIN (VALUES (2), (5)) AS d
+    WHERE h.name = 'Stretch';
   </script>
 
-  <!-- Nothing to type into or press until app.js has started. -->
-  <p id="opening" class="opening" role="status">Opening…</p>
-
-  <main id="app" hidden inert>
+  <main>
     <header>
-      <h1>Habits</h1>
-      <p id="today" class="today" aria-live="polite"></p>
+      <p class="eyebrow">
+        <dai-value query="SELECT CASE strftime('%w', 'now', 'localtime') WHEN '0' THEN 'Sunday' WHEN '1' THEN 'Monday' WHEN '2' THEN 'Tuesday' WHEN '3' THEN 'Wednesday' WHEN '4' THEN 'Thursday' WHEN '5' THEN 'Friday' ELSE 'Saturday' END"></dai-value>
+      </p>
+      <h1>Today</h1>
+      <p class="progress">
+        <dai-value query="SELECT CASE WHEN count(*) = 0 THEN 'Add your first habit' WHEN sum(done) = count(*) THEN 'All done today' ELSE sum(done) || ' of ' || count(*) || ' done today' END FROM habit_status"></dai-value>
+      </p>
     </header>
 
-    <p id="notice" class="notice" role="status" hidden></p>
+    <section aria-label="Your habits">
+      <dai-rows
+        query="SELECT id, emoji, name, done, notdone, strip,
+                 CASE WHEN streak = 0 THEN 'No streak yet'
+                      WHEN streak = 1 THEN '1 day in a row'
+                      ELSE streak || ' days in a row' END
+                 || ' · ' || week || ' of 7 this week' AS note
+               FROM habit_status
+               ORDER BY position, name"
+        empty="No habits yet. Add one below. Something small is a good place to start.">
+        <template>
+          <div class="habit">
+            <label class="tick" data-when="notdone">
+              <input type="checkbox" aria-label="Mark done today"
+                data-run="INSERT INTO checkins (habit_id, day) VALUES (:id, date('now', 'localtime'))" />
+              <span class="box" aria-hidden="true"></span>
+            </label>
+            <label class="tick is-done" data-when="done">
+              <input type="checkbox" aria-label="Done today. Undo"
+                data-run="DELETE FROM checkins WHERE habit_id = :id AND day = date('now', 'localtime')" />
+              <span class="box" aria-hidden="true"></span>
+            </label>
+            <div class="body">
+              <div class="title">
+                <span class="emoji" data-text="emoji" aria-hidden="true"></span>
+                <input class="name" aria-label="Habit name" maxlength="60"
+                  data-text="name"
+                  data-run="UPDATE habits SET name = coalesce(nullif(trim(:typed), ''), name) WHERE id = :id" />
+              </div>
+              <p class="note" data-text="note"></p>
+              <p class="strip" aria-hidden="true" data-text="strip"></p>
+            </div>
+            <button type="button" class="quiet"
+              data-run="UPDATE habits SET archived = 1 WHERE id = :id">Retire</button>
+          </div>
+        </template>
+      </dai-rows>
+    </section>
 
-    <ul id="list" class="list"></ul>
+    <section aria-label="Add a habit">
+      <h2>New habit</h2>
+      <dai-form run="INSERT INTO habits (name, emoji, position) VALUES (:name, :emoji, (SELECT coalesce(max(position), 0) + 1 FROM habits))">
+        <select name="emoji" aria-label="Icon">
+          <option>⭐</option>
+          <option>💧</option>
+          <option>📖</option>
+          <option>🏃</option>
+          <option>🧘</option>
+          <option>✍️</option>
+          <option>🥗</option>
+          <option>😴</option>
+          <option>🎵</option>
+          <option>🌱</option>
+        </select>
+        <input name="name" placeholder="What do you want to do daily?" required maxlength="60" aria-label="Habit name" />
+        <button type="button" class="primary">Add</button>
+      </dai-form>
+    </section>
 
-    <div id="empty" class="empty" hidden>
-      <p><strong>No habits yet.</strong></p>
-      <p>Add one below, something small you can do every day. A tap each day builds the streak.</p>
-    </div>
-
-    <form id="add" class="add" autocomplete="off">
-      <label for="name">New habit</label>
-      <div class="row">
-        <input id="name" required maxlength="60" placeholder="e.g. Stretch for five minutes" />
-        <button type="submit">Add</button>
-      </div>
-    </form>
-
-    <details id="archived-box" class="archived" hidden>
-      <summary>Archived habits</summary>
-      <ul id="archived" class="list"></ul>
+    <details>
+      <summary>Retired habits</summary>
+      <dai-rows
+        query="SELECT id, emoji, name FROM habits WHERE archived = 1 ORDER BY position, name"
+        empty="Nothing retired. A retired habit keeps its history.">
+        <template>
+          <div class="retired">
+            <span class="emoji" data-text="emoji" aria-hidden="true"></span>
+            <span class="what" data-text="name"></span>
+            <button type="button" class="quiet"
+              data-run="UPDATE habits SET archived = 0 WHERE id = :id">Bring back</button>
+            <button type="button" class="quiet danger"
+              data-run="DELETE FROM habits WHERE id = :id">Delete</button>
+          </div>
+        </template>
+      </dai-rows>
     </details>
 
     <footer>
-      <!-- Shown only when the file is open in a plain browser with no host. -->
-      <button id="save" type="button" class="quiet" hidden>Save to this file</button>
+      <p class="total">
+        <dai-value query="SELECT count(*) FROM checkins"></dai-value>
+        check-ins so far
+      </p>
+      <button type="button" id="share" class="quiet">Share</button>
+      <dai-save>Save</dai-save>
     </footer>
   </main>
 
+  <script type="module" src="./dai-kit.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
 
 --- file: app.js
-// Habit tracker: a solo document. Every tap is written to the database as it
-// happens; the page is drawn from the database and redrawn after each write.
-// Streaks and counts are derived from the check-ins every time, never stored.
+// The only script of the application's own: the Share button. Everything
+// else is the kit and SQL. Sharing is the host's: this opens its share sheet
+// and shares nothing itself.
+const share = document.getElementById("share");
 
-const $ = (id) => document.getElementById(id);
-let db; // opened by the start-up at the end of this file
-
-const rows = (sql, bind) => (bind === undefined ? db.selectObjects(sql) : db.selectObjects(sql, bind));
-
-// ---- days -----------------------------------------------------------------
-
-const pad = (n) => String(n).padStart(2, "0");
-/** A calendar day in the person's own time zone, as YYYY-MM-DD. */
-const ymd = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-const daysAgo = (n) => {
-  const d = new Date();
-  d.setHours(12, 0, 0, 0); // noon, so a daylight-saving shift never lands on the wrong day
-  d.setDate(d.getDate() - n);
-  return d;
-};
-
-function say(text) {
-  $("notice").textContent = text;
-  $("notice").hidden = !text;
-}
-
-/** Runs a write and says what went wrong, rather than failing silently. */
-function write(fn) {
-  try {
-    fn();
-    say("");
-    return true;
-  } catch (error) {
-    say(`That did not save: ${String(error?.message ?? error)}`);
-    return false;
+if (share) {
+  if (!window.dai || typeof window.dai.requestShare !== "function") {
+    share.hidden = true;
+  } else {
+    share.addEventListener("click", () => {
+      try {
+        window.dai.requestShare();
+      } catch (err) {
+        console.error("Could not open the share sheet", err);
+      }
+    });
   }
-}
-
-// ---- reading --------------------------------------------------------------
-
-function loadChecks() {
-  const byHabit = new Map();
-  for (const { habit_id, day } of rows("SELECT habit_id, day FROM checks")) {
-    if (!byHabit.has(habit_id)) byHabit.set(habit_id, new Set());
-    byHabit.get(habit_id).add(day);
-  }
-  return byHabit;
-}
-
-/** Consecutive days kept, ending today, or yesterday if today is not marked yet. */
-function streakOf(days) {
-  let back = days.has(ymd(daysAgo(0))) ? 0 : 1;
-  let count = 0;
-  while (days.has(ymd(daysAgo(back)))) {
-    count += 1;
-    back += 1;
-  }
-  return count;
-}
-
-// ---- drawing --------------------------------------------------------------
-
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function toggle(habitId, day, isDone) {
-  const ok = write(() =>
-    isDone
-      ? db.exec({ sql: "DELETE FROM checks WHERE habit_id = ? AND day = ?", bind: [habitId, day] })
-      : db.exec({ sql: "INSERT OR IGNORE INTO checks (habit_id, day) VALUES (?, ?)", bind: [habitId, day] }),
-  );
-  if (ok) draw();
-}
-
-function drawHabit(habit, days) {
-  const today = ymd(daysAgo(0));
-  const doneToday = days.has(today);
-  const streak = streakOf(days);
-  const week = [6, 5, 4, 3, 2, 1, 0].map((n) => daysAgo(n));
-  const keptThisWeek = week.filter((d) => days.has(ymd(d))).length;
-
-  const item = el("li", "habit" + (doneToday ? " done" : ""));
-
-  const top = el("div", "top");
-  const title = el("div", "title");
-  title.append(el("strong", "name", habit.name));
-  const meta =
-    streak > 1
-      ? `${streak}-day streak · ${keptThisWeek} of 7 this week`
-      : `${keptThisWeek} of 7 this week`;
-  title.append(el("span", "meta", meta));
-
-  const big = el("button", "today-btn", doneToday ? "Done today ✓" : "Mark done today");
-  big.type = "button";
-  big.setAttribute("aria-pressed", String(doneToday));
-  big.addEventListener("click", () => toggle(habit.id, today, doneToday));
-  top.append(title, big);
-
-  const strip = el("div", "strip");
-  for (const date of week) {
-    const day = ymd(date);
-    const done = days.has(day);
-    const cell = el("button", "day" + (done ? " on" : "") + (day === today ? " now" : ""));
-    cell.type = "button";
-    cell.setAttribute("aria-pressed", String(done));
-    cell.setAttribute(
-      "aria-label",
-      `${date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}: ${done ? "done" : "not done"}`,
-    );
-    cell.append(
-      el("span", "dow", date.toLocaleDateString("en-US", { weekday: "narrow" })),
-      el("span", "dot", done ? "✓" : ""),
-    );
-    cell.addEventListener("click", () => toggle(habit.id, day, done));
-    strip.append(cell);
-  }
-
-  const foot = el("div", "foot");
-  const archive = el("button", "link", "Archive");
-  archive.type = "button";
-  archive.setAttribute("aria-label", `Archive ${habit.name}`);
-  archive.addEventListener("click", () => {
-    if (write(() => db.exec({ sql: "UPDATE habits SET archived = 1 WHERE id = ?", bind: [habit.id] }))) draw();
-  });
-  foot.append(archive);
-
-  item.append(top, strip, foot);
-  return item;
-}
-
-function draw() {
-  const checks = loadChecks();
-  const today = ymd(daysAgo(0));
-  const habits = rows("SELECT id, name FROM habits WHERE archived = 0 ORDER BY id");
-
-  const list = $("list");
-  list.replaceChildren(...habits.map((h) => drawHabit(h, checks.get(h.id) ?? new Set())));
-  $("empty").hidden = habits.length > 0;
-
-  const done = habits.filter((h) => checks.get(h.id)?.has(today)).length;
-  $("today").textContent =
-    habits.length === 0
-      ? ""
-      : done === habits.length
-        ? `All ${habits.length} done today`
-        : `${done} of ${habits.length} done today`;
-  $("today").classList.toggle("all", habits.length > 0 && done === habits.length);
-
-  const archived = rows("SELECT id, name FROM habits WHERE archived = 1 ORDER BY id");
-  $("archived-box").hidden = archived.length === 0;
-  $("archived").replaceChildren(
-    ...archived.map((h) => {
-      const item = el("li", "habit quietrow");
-      item.append(el("span", "name", h.name));
-      const back = el("button", "quiet", "Bring back");
-      back.type = "button";
-      back.setAttribute("aria-label", `Bring back ${h.name}`);
-      back.addEventListener("click", () => {
-        if (write(() => db.exec({ sql: "UPDATE habits SET archived = 0 WHERE id = ?", bind: [h.id] }))) draw();
-      });
-      item.append(back);
-      return item;
-    }),
-  );
-}
-
-// ---- acting ---------------------------------------------------------------
-
-$("add").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const name = $("name").value.trim();
-  if (!name) return;
-  if (write(() => db.exec({ sql: "INSERT INTO habits (name) VALUES (?)", bind: [name] }))) {
-    $("name").value = "";
-    draw();
-    $("name").focus();
-  }
-});
-
-// Only a file opened straight in a browser, with no host, needs this.
-$("save").addEventListener("click", async () => {
-  try {
-    await window.dai.saveDatabase(db);
-    say("");
-  } catch (error) {
-    say(`That did not save: ${String(error?.message ?? error)}`);
-  }
-});
-
-// The date rolls over while the page is open: redraw when it comes back to the front.
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && db) draw();
-});
-
-// Start-up: nothing can be typed into until this has finished, and if it fails
-// the person is told, not left at "Opening…".
-try {
-  db = await window.dai.openDatabase();
-  draw();
-  $("save").hidden = window.dai.autosaves;
-  $("opening").hidden = true;
-  $("app").hidden = false;
-  $("app").inert = false;
-} catch (error) {
-  $("opening").classList.add("failed");
-  $("opening").textContent =
-    `The habit tracker could not be opened: ${error?.message ?? error}. ` +
-    "Try opening the document again, or ask whoever sent it for a new copy.";
 }
 
 --- file: app.css
+/* A calm green page that gets out of the way of the ticks. */
 :root {
-  color-scheme: light dark;
-  --bg: #f4f1ea;
+  --paper: #f3f7f1;
   --card: #ffffff;
-  --ink: #1f2a24;
-  --muted: #667069;
-  --line: #e1dccf;
-  --accent: #2f7d54;
+  --ink: #17251c;
+  --muted: #667a6c;
+  --line: #dbe6d9;
+  --accent: #1f9d6b;
   --accent-ink: #ffffff;
-  --glow: #dcefe3;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --accent-soft: #dff2e8;
+  --danger: #b3382c;
+  color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #151a17; --card: #1e2520; --ink: #e8ece8; --muted: #9aa39c;
-    --line: #2d362f; --accent: #6fc493; --accent-ink: #10231a; --glow: #20352a;
+    --paper: #101a14;
+    --card: #17251c;
+    --ink: #e8f2ea;
+    --muted: #93a99a;
+    --line: #26382c;
+    --accent: #3fc08b;
+    --accent-ink: #07130d;
+    --accent-soft: #1e3a2b;
+    --danger: #f0897d;
   }
 }
+
 * { box-sizing: border-box; }
-/* A display rule below would otherwise show what the page hid. */
+
 [hidden] { display: none !important; }
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { line-height: 1.45; -webkit-font-smoothing: antialiased; }
 
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The color runs to every edge; the content is pushed clear of the strips a
+   phone covers. */
 main {
-  max-width: 560px;
+  max-width: 600px;
+  min-height: 100vh;
   margin: 0 auto;
-  padding: calc(24px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
-    calc(40px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+  padding:
+    calc(28px + var(--dai-safe-top, 0px))
+    calc(20px + var(--dai-safe-right, 0px))
+    calc(40px + var(--dai-safe-bottom, 0px))
+    calc(20px + var(--dai-safe-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
 }
-/* The top right corner belongs to the host's menu button. */
-header { padding-right: 56px; margin-bottom: 18px; }
-h1 { margin: 0; font-size: 32px; letter-spacing: -0.02em; line-height: 1.1; }
-.today { margin: 6px 0 0; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
-.today.all { color: var(--accent); }
 
-.opening {
-  margin: 0; color: var(--muted); text-align: center;
-  padding: calc(28px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px)) 0
-    calc(16px + var(--dai-safe-left, 0px));
+header { display: flex; flex-direction: column; gap: 4px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
-.opening.failed { color: var(--ink); text-align: left; max-width: 36em; margin: 0 auto; }
-.notice { background: var(--card); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; }
 
-.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.progress {
+  margin: 8px 0 0;
+  align-self: flex-start;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* The lists are cards. Rows draw their own dividers. */
+dai-rows {
+  display: block;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .habit {
-  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 14px; display: grid; gap: 12px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
 }
-.habit.done { border-color: var(--accent); }
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
-.title { display: grid; gap: 2px; flex: 1 1 11em; min-width: 0; }
-.name { font-size: 18px; overflow-wrap: anywhere; }
-.meta { color: var(--muted); font-size: 14px; }
+
+.habit:first-child { border-top: 0; }
+
+/* Both tick controls share the first column; only one is shown. */
+.tick {
+  grid-column: 1;
+  grid-row: 1;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.tick input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.box {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.tick:hover .box { border-color: var(--accent); }
+.tick:active .box { transform: scale(0.92); }
+
+.tick.is-done .box {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.tick.is-done .box::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 4px;
+  width: 7px;
+  height: 14px;
+  border: solid var(--accent-ink);
+  border-width: 0 3px 3px 0;
+  transform: rotate(45deg);
+}
+
+.tick:has(input:focus-visible) .box {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.body {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+.emoji { font-size: 20px; line-height: 1; }
+
+/* The name is a control that reads as the line it replaced until touched. */
+input.name {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+input.name:hover { border-bottom-color: var(--muted); }
+input.name:focus { outline: none; border-bottom-color: var(--accent); background: var(--accent-soft); }
+
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.strip {
+  margin: 2px 0 0;
+  font-size: 13px;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+}
 
 button {
-  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
 }
-button.quiet { background: transparent; color: var(--accent); }
-.today-btn { flex: 0 0 auto; font-weight: 600; }
-.habit.done .today-btn { background: var(--glow); color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Seven days, oldest first, today on the right. */
-.strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.day {
-  display: grid; justify-items: center; align-content: center; gap: 2px;
-  min-height: 52px; padding: 4px 0; background: transparent; color: var(--muted);
+button.quiet {
+  grid-column: 3;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+button.quiet:hover { background: var(--accent-soft); color: var(--accent); }
+button.quiet.danger:hover { background: none; color: var(--danger); }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Adding a habit. */
+dai-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+dai-form select,
+dai-form input {
+  min-height: 44px;
+  padding: 8px 12px;
+  font: inherit;
   border: 1px solid var(--line);
-}
-.day .dow { font-size: 12px; font-weight: 600; }
-.day .dot { font-size: 16px; line-height: 1; min-height: 16px; }
-.day.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.day.now:not(.on) { border-color: var(--accent); color: var(--ink); }
-
-.foot { display: flex; justify-content: flex-end; }
-button.link {
-  min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--muted);
-  font-size: 14px; text-decoration: underline; text-underline-offset: 3px;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
 }
 
-.empty {
-  background: var(--card); border: 1px dashed var(--line); border-radius: 16px;
-  padding: 20px 18px; color: var(--muted); text-align: center;
+dai-form select { flex: 0 0 auto; }
+dai-form input { flex: 1 1 12rem; min-width: 0; }
+
+button.primary {
+  min-height: 44px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
 }
-.empty p { margin: 4px 0; }
-.empty strong { color: var(--ink); }
 
-.add { margin-top: 24px; display: grid; gap: 6px; }
-.add label { color: var(--muted); font-size: 14px; }
-.row { display: flex; gap: 8px; }
-input {
-  font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
-  border-radius: 10px; min-height: 44px; padding: 8px 12px; width: 100%; min-width: 0;
+button.primary:hover { filter: brightness(1.06); }
+
+/* Retired habits. */
+details {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
 }
-::placeholder { color: var(--muted); opacity: 0.6; }
 
-.archived { margin-top: 24px; color: var(--muted); }
-.archived summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
-.archived .list { margin-top: 4px; }
-.quietrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 6px 6px 14px; }
-.quietrow .name { font-size: 16px; color: var(--ink); }
+summary {
+  min-height: 44px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
 
-footer { margin-top: 28px; display: flex; justify-content: flex-end; }
+details dai-rows {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 16px 16px;
+}
 
+.retired {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  color: var(--ink);
+}
+
+.retired .what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retired button.quiet { grid-column: auto; }
+
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.total {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+dai-save {
+  display: inline-block;
+  padding: 12px 22px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* On a wide window: a card on a quieter ground. */
 @media (min-width: 720px) {
-  main { padding-top: calc(40px + var(--dai-safe-top, 0px)); }
+  main {
+    margin: 40px auto;
+    min-height: 0;
+    padding: 36px 36px 32px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 24px 60px -24px rgb(0 0 0 / 0.25);
+  }
+  html, body { background: color-mix(in srgb, var(--paper) 88%, #000); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .box { transition: none; }
 }
 
 --- file: icon.svg
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#2f7d54"/><g fill="#dcefe3"><circle cx="24" cy="68" r="7"/><circle cx="42" cy="68" r="7"/><circle cx="60" cy="68" r="7"/><circle cx="78" cy="68" r="7" opacity="0.4"/></g><path d="M26 38l16 16 32-30" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- A bold check mark in a ring, on green. -->
+  <rect width="100" height="100" rx="22" fill="#1f9d6b"/>
+  <circle cx="50" cy="50" r="30" fill="none" stroke="#dff2e8" stroke-width="7"/>
+  <path d="M35 51l11 11 20-23" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
 ```
-
-How it works:
-
-- **Shape:** solo. It's one person's habits on one device, so nothing is shared or merged. A copy you send someone is an ordinary document they can write to.
-- **Each habit** has a "Mark done today" button and a row of the last seven days. Tap any day to mark it or unmark it, which is how you fix a day you forgot.
-- **Streaks and counts** are worked out from the check-ins each time the screen is drawn. Nothing like that is stored.
-- **A streak** counts back from today, or from yesterday if today isn't marked yet. A streak doesn't break until a whole day has passed unmarked.
-- **Every tap** is saved to the document as you make it. There's no Save button under the DAI opener. A small "Save to this file" button appears only if the file is opened directly in a browser with no host.
-- **Archive** hides a habit but keeps its history, and "Bring back" restores it.
-- **Three example habits** with a few check-ins are added on first open, once. If you delete them they stay deleted.

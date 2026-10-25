@@ -2,82 +2,271 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Plan a trip day by day, with the stops in each" />
-  <meta name="dai:does" content="Lay out your trip as days, each with its own list of stops" />
-  <meta name="dai:does" content="Add a time and a note to any stop, and tick it off when you have been" />
-  <meta name="dai:does" content="Keep the whole plan in one file you can open anywhere, offline" />
-  <meta name="theme-color" content="#f5f1e8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Days, spending and to-dos for every trip you plan" />
+  <meta name="dai:does" content="Lay out each day of a trip with times and places" />
+  <meta name="dai:does" content="Track what you spend against a budget for the trip" />
+  <meta name="dai:does" content="Tick off what to do before you leave" />
+  <meta name="theme-color" content="#f7f3ec" />
   <title>Trip planner</title>
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
+  <!--
+    A trip planner. Every trip is a row; the chips choose which one is on
+    screen. No JavaScript here except the Share button (app.js); the kit does
+    the rest, and everything on the page is a query over the tables.
+  -->
   <script type="application/sql">
-    -- Local seed only, written so a second open adds nothing.
-    INSERT OR IGNORE INTO trip (id, title) VALUES (1, 'Lisbon long weekend');
-    INSERT OR IGNORE INTO days (id, label, on_date) VALUES
-      (1, 'Arrive and wander', ''),
-      (2, 'Alfama and the river', '');
-    INSERT OR IGNORE INTO stops (id, day_id, at_time, name, note, done) VALUES
-      (1, 1, '15:00', 'Check in', 'Rua Augusta, ask about luggage storage', 0),
-      (2, 1, '17:30', 'Miradouro de Santa Luzia', 'Sunset view over the rooftops', 0),
-      (3, 1, '20:00', 'Dinner in Bairro Alto', '', 0),
-      (4, 2, '09:00', 'Tram 28 from Martim Moniz', 'Go early, before the queue', 0),
-      (5, 2, '11:00', 'Castelo de Sao Jorge', '', 0);
+    -- Which trip is showing. Empty means "the earliest one".
+    INSERT INTO settings (name, value) VALUES ('trip', '');
+
+    INSERT INTO trips (name, destination, starts, ends, budget) VALUES
+      ('Lisbon', 'Lisbon, Portugal', '2027-02-12', '2027-02-15', 900),
+      ('Lake cabin', 'Lake Tahoe, California', '2027-03-19', '2027-03-21', 350);
+
+    INSERT INTO plans (trip_id, day, time, what, place, done) VALUES
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-12', '09:40', 'Land and take the metro in', 'Airport', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-12', '12:00', 'Check in and drop the bags', 'Alfama apartment', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-12', '19:30', 'Dinner by the river', 'Cais do Sodre', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-13', '10:00', 'Tram 28 up to the viewpoint', 'Graca', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-13', '13:00', 'Pasteis de nata and a long lunch', 'Belem', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-13', '16:00', 'The tower and the monastery', 'Belem', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-14', '09:00', 'Day trip to Sintra by train', 'Sintra', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-14', '18:00', 'Back in time for sunset', 'Senhora do Monte', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-15', '11:00', 'Last coffee and souvenirs', 'Baixa', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), '2027-02-15', '14:30', 'Flight home', 'Airport', 0),
+      ((SELECT id FROM trips WHERE name = 'Lake cabin'), '2027-03-19', '17:00', 'Drive up and light the stove', 'Cabin', 0),
+      ((SELECT id FROM trips WHERE name = 'Lake cabin'), '2027-03-20', '10:00', 'Walk the lake loop', 'North shore trail', 0),
+      ((SELECT id FROM trips WHERE name = 'Lake cabin'), '2027-03-21', '11:00', 'Check out and head home', 'Cabin', 0);
+
+    INSERT INTO expenses (trip_id, what, category, amount) VALUES
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Flights', 'Transport', 310),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Apartment, 3 nights', 'Stay', 285.5),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Sintra train tickets', 'Transport', 18.4),
+      ((SELECT id FROM trips WHERE name = 'Lake cabin'), 'Cabin, two nights', 'Stay', 240);
+
+    INSERT INTO tasks (trip_id, what, done) VALUES
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Book the apartment', 1),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Check that the passports are valid', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Buy the Sintra train tickets', 1),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Tell the bank we are traveling', 0),
+      ((SELECT id FROM trips WHERE name = 'Lisbon'), 'Print the boarding passes', 0),
+      ((SELECT id FROM trips WHERE name = 'Lake cabin'), 'Book the cabin', 1),
+      ((SELECT id FROM trips WHERE name = 'Lake cabin'), 'Bring firewood and board games', 0);
   </script>
 
-  <!-- Nothing to type into until app.js has started. -->
-  <p id="opening" class="opening" role="status">Opening…</p>
-
-  <main id="app" hidden inert>
-    <header>
-      <input id="trip-title" class="trip-title" aria-label="Trip name" maxlength="60" autocomplete="off" />
-      <p id="summary" class="summary" aria-live="polite"></p>
+  <main>
+    <header class="hero">
+      <dai-rows
+        query="SELECT id, name, destination, starts_label, ends_label, days_text, when_text FROM trip_cards WHERE current"
+        empty="No trips yet. Open New trip below and add your first one.">
+        <template>
+          <div class="row-hero">
+            <p class="when" data-text="when_text"></p>
+            <h1 data-text="name"></h1>
+            <p class="meta">
+              <span data-text="destination"></span>
+              <span class="dates"><span data-text="starts_label"></span> to <span data-text="ends_label"></span>,
+              <span data-text="days_text"></span></span>
+            </p>
+          </div>
+        </template>
+      </dai-rows>
     </header>
 
-    <p id="notice" class="notice" role="status" hidden></p>
+    <section aria-labelledby="trips-h">
+      <h2 id="trips-h">Your trips</h2>
+      <dai-rows class="chips" query="SELECT id, name, current FROM trip_cards ORDER BY starts, name" empty="Nothing planned yet.">
+        <template>
+          <button type="button" class="chip" data-run="UPDATE settings SET value = :id WHERE name = 'trip'">
+            <span class="cur" data-when="current">&#10003;<span class="sr"> selected</span></span>
+            <span data-text="name"></span>
+          </button>
+        </template>
+      </dai-rows>
 
-    <section id="days" class="days" aria-label="Days"></section>
+      <details class="more">
+        <summary>New trip</summary>
+        <dai-form run="INSERT INTO trips (name, destination, starts, ends, budget) VALUES (:name, :destination, :starts, :ends, coalesce(nullif(:budget, ''), 0))">
+          <label class="fld wide"><span>Trip name</span>
+            <input name="name" required maxlength="60" placeholder="Lisbon" />
+          </label>
+          <label class="fld wide"><span>Where</span>
+            <input name="destination" maxlength="80" placeholder="City or region" />
+          </label>
+          <label class="fld"><span>From</span>
+            <input name="starts" type="date" required />
+          </label>
+          <label class="fld"><span>To</span>
+            <input name="ends" type="date" required />
+          </label>
+          <label class="fld wide"><span>Budget (optional)</span>
+            <input name="budget" type="number" inputmode="decimal" min="0" step="any" placeholder="0" />
+          </label>
+          <button>Add trip</button>
+        </dai-form>
+      </details>
+    </section>
 
-    <p id="empty" class="empty" hidden>No days yet. Add the first day below, then add stops to it.</p>
+    <section aria-labelledby="plan-h">
+      <h2 id="plan-h">Itinerary</h2>
+      <dai-rows class="list"
+        query="SELECT id, day_label, first_of_day, time_text, what, place, done FROM plan_items WHERE trip_id = (SELECT id FROM current_trip) ORDER BY day, time, id"
+        empty="Nothing planned for these days yet. Add the first stop below.">
+        <template>
+          <div class="row plan">
+            <h3 class="day" data-when="first_of_day" data-text="day_label"></h3>
+            <div class="entry">
+              <label class="tick">
+                <input type="checkbox" data-run="UPDATE plans SET done = 1 - done WHERE id = :id" />
+                <span class="box" aria-hidden="true"></span>
+                <span class="body">
+                  <span class="line">
+                    <span class="time" data-text="time_text"></span>
+                    <span class="what" data-text="what"></span>
+                    <span class="state" data-when="done">done</span>
+                  </span>
+                  <span class="place" data-text="place"></span>
+                </span>
+              </label>
+              <button type="button" class="x" aria-label="Remove this stop" data-run="DELETE FROM plans WHERE id = :id">&times;</button>
+            </div>
+          </div>
+        </template>
+      </dai-rows>
 
-    <form id="add-day" class="panel" autocomplete="off">
-      <h2>Add a day</h2>
-      <div class="fields">
-        <label>What is the day about
-          <input id="day-label" required maxlength="80" placeholder="e.g. Museums and lunch" />
+      <dai-form run="INSERT INTO plans (trip_id, day, time, what, place) VALUES ((SELECT id FROM current_trip), :day, coalesce(:time, ''), :what, coalesce(:place, ''))">
+        <label class="fld"><span>Day</span>
+          <input name="day" type="date" required />
         </label>
-        <label>Date <span class="optional">· optional</span>
-          <input id="day-date" type="date" />
+        <label class="fld"><span>Time (optional)</span>
+          <input name="time" type="time" />
         </label>
-      </div>
-      <div class="actions"><button type="submit">Add day</button></div>
-    </form>
+        <label class="fld wide"><span>What</span>
+          <input name="what" required maxlength="100" placeholder="Boat to the island" />
+        </label>
+        <label class="fld wide"><span>Where (optional)</span>
+          <input name="place" maxlength="100" placeholder="Pier 4" />
+        </label>
+        <button>Add to itinerary</button>
+      </dai-form>
+    </section>
 
-    <form id="add-stop" class="panel" autocomplete="off" hidden>
-      <h2>Add a stop</h2>
-      <div class="fields">
-        <label>Day
-          <select id="stop-day" required></select>
+    <section aria-labelledby="budget-h">
+      <h2 id="budget-h">Budget</h2>
+      <dai-rows class="boxed"
+        query="SELECT id, budget, spent_text, budget_note, over FROM trip_cards WHERE current"
+        empty="Add a trip to set a budget.">
+        <template>
+          <div class="budget">
+            <label class="fld"><span>Budget for this trip</span>
+              <input type="number" inputmode="decimal" min="0" step="any" data-text="budget"
+                data-run="UPDATE trips SET budget = :typed WHERE id = :id" />
+            </label>
+            <p class="figures">
+              Spent <b data-text="spent_text"></b>
+              <span class="dot" aria-hidden="true">&middot;</span>
+              <span data-text="budget_note"></span>
+              <span class="flag" data-when="over">Over budget</span>
+            </p>
+          </div>
+        </template>
+      </dai-rows>
+
+      <dai-rows class="pills"
+        query="SELECT category, printf('%.2f', sum(amount)) AS total FROM expenses WHERE trip_id = (SELECT id FROM current_trip) GROUP BY category ORDER BY sum(amount) DESC"
+        empty="">
+        <template>
+          <span class="pill"><span data-text="category"></span> <b data-text="total"></b></span>
+        </template>
+      </dai-rows>
+
+      <dai-rows class="list"
+        query="SELECT id, what, category, amount_text, added_text FROM expense_items WHERE trip_id = (SELECT id FROM current_trip) ORDER BY added DESC, id DESC"
+        empty="No spending yet. Add what you have paid for below.">
+        <template>
+          <div class="row expense">
+            <span class="body">
+              <span class="what" data-text="what"></span>
+              <span class="place"><span data-text="category"></span>, <span data-text="added_text"></span></span>
+            </span>
+            <b class="amount" data-text="amount_text"></b>
+            <button type="button" class="x" aria-label="Remove this expense" data-run="DELETE FROM expenses WHERE id = :id">&times;</button>
+          </div>
+        </template>
+      </dai-rows>
+
+      <dai-form run="INSERT INTO expenses (trip_id, what, category, amount) VALUES ((SELECT id FROM current_trip), :what, :category, :amount)">
+        <label class="fld wide"><span>Paid for</span>
+          <input name="what" required maxlength="80" placeholder="Museum tickets" />
         </label>
-        <label>Time <span class="optional">· optional</span>
-          <input id="stop-time" type="time" />
+        <label class="fld"><span>Amount</span>
+          <input name="amount" type="number" inputmode="decimal" min="0" step="0.01" required placeholder="0.00" />
         </label>
-        <label class="wide">Stop
-          <input id="stop-name" required maxlength="80" placeholder="e.g. Pastéis de Belém" />
+        <label class="fld"><span>Kind</span>
+          <select name="category">
+            <option>Stay</option>
+            <option>Food</option>
+            <option>Transport</option>
+            <option>Activities</option>
+            <option selected>Other</option>
+          </select>
         </label>
-        <label class="wide">Note <span class="optional">· optional</span>
-          <input id="stop-note" maxlength="200" placeholder="e.g. Book ahead" />
+        <button>Add expense</button>
+      </dai-form>
+    </section>
+
+    <section aria-labelledby="todo-h">
+      <h2 id="todo-h">Before you go</h2>
+      <p class="sub">
+        <dai-value query="SELECT count(*) FROM tasks WHERE done = 1 AND trip_id = (SELECT id FROM current_trip)"></dai-value>
+        of
+        <dai-value query="SELECT count(*) FROM tasks WHERE trip_id = (SELECT id FROM current_trip)"></dai-value>
+        done
+      </p>
+      <dai-rows class="list"
+        query="SELECT id, what, done FROM tasks WHERE trip_id = (SELECT id FROM current_trip) ORDER BY done, what"
+        empty="Nothing to do before you leave. Add a reminder below.">
+        <template>
+          <div class="row">
+            <div class="entry">
+              <label class="tick">
+                <input type="checkbox" data-run="UPDATE tasks SET done = 1 - done WHERE id = :id" />
+                <span class="box" aria-hidden="true"></span>
+                <span class="body">
+                  <span class="line">
+                    <span class="what" data-text="what"></span>
+                    <span class="state" data-when="done">done</span>
+                  </span>
+                </span>
+              </label>
+              <button type="button" class="x" aria-label="Remove this reminder" data-run="DELETE FROM tasks WHERE id = :id">&times;</button>
+            </div>
+          </div>
+        </template>
+      </dai-rows>
+
+      <dai-form run="INSERT INTO tasks (trip_id, what) VALUES ((SELECT id FROM current_trip), :what)">
+        <label class="fld wide"><span>Reminder</span>
+          <input name="what" required maxlength="100" placeholder="Pack the charger" />
         </label>
-      </div>
-      <div class="actions"><button type="submit">Add stop</button></div>
-    </form>
+        <button>Add reminder</button>
+      </dai-form>
+    </section>
 
     <footer>
+      <button type="button" id="share" class="secondary" hidden>Share this trip</button>
+      <dai-rows query="SELECT id FROM trip_cards WHERE current">
+        <template>
+          <button type="button" class="quiet" data-run="DELETE FROM trips WHERE id = :id">Delete this trip</button>
+        </template>
+      </dai-rows>
       <dai-save>Save</dai-save>
     </footer>
   </main>
 
   <script type="module" src="./app.js"></script>
+  <script type="module" src="./dai-kit.js"></script>
 </body>
 </html>

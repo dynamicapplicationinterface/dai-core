@@ -38,6 +38,10 @@ test.describe("the menu offers an update when a newer build is live", () => {
       buffer: Buffer.from(html, "utf8"),
     });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    // Started, not only loaded: the launch screen stands until the document is interactive. An ordinary
+    // document starts a data worker (R-Y), and on WebKit going offline before that has finished leaves the
+    // splash over the menu the next step taps.
+    await expect(page.locator("#launch")).toBeHidden({ timeout: 60_000 });
   };
 
   /** The commit the running shell reports, from its build stamp. */
