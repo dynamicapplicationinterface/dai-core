@@ -29,9 +29,9 @@
  * `tests/fixture/fixture.dai.html` (generated) claims the fixture.
  *
  * What it cannot see, it cannot claim: a module loaded by a computed
- * specifier. That is why the map only chooses subsets for the inner tiers. The
- * push tier runs everything and CI runs everything on three engines; neither
- * reads this file.
+ * specifier. That is why the map only chooses subsets for the local tiers. CI runs
+ * everything on three engines on every push that changes code (D296), and
+ * the full tier runs everything here; neither reads this file.
  *
  * `--check` fails on three things:
  *

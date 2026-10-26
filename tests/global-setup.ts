@@ -148,8 +148,10 @@ export default async function globalSetup(): Promise<void> {
   /*
    * The inner loop may reuse the last build — only when asked
    * (DAI_REUSE_BUILD, which the iterate tier sets) and only when nothing the
-   * build reads has changed since it ran. The push tier and CI never set it,
-   * so every run that stands behind a push or a merge builds from scratch.
+   * build reads has changed since it ran. CI and the full tier never set it,
+   * so every run that stands behind a merge builds from scratch; the push
+   * tier sets it only for its second run, the node project, a minute after
+   * its first built (D296).
    */
   const digest = inputsDigest();
   const built = resolve(fixture, "fixture.dai.html");

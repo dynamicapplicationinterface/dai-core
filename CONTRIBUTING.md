@@ -31,14 +31,15 @@ met every other line and missed this one.
 
 ## The test loop
 
-Four tiers, each run less often than the one before it and each checking more.
+Five tiers. The push tier is the gate before a push and CI is the gate before a merge; the push tier does not repeat what CI runs on the same commit (D296).
 
 | Tier | When | Command | What runs |
 | --- | --- | --- | --- |
 | Iterate | while editing | `npm run test:iterate -- tests/x.spec.ts` | the specs named, chromium and node, reusing the last build if nothing it reads changed |
 | Commit | before a commit | `npm run test:commit` | the specs that claim what changed against `HEAD` (`scripts/impact.mjs`), or everything when a shared file changed |
-| Push | before a push | `npm run test:push` | the checks CI's checks job runs (the build, then the conformance, dictionary, confusable-table and merge-fixture checks), then the whole suite on chromium and node, through the count gate |
-| CI | every push | `.github/workflows/test.yml` | the whole suite on all three engines, the node project once, typecheck and the reference readers |
+| Push | before a push | `npm run test:push` | drift without the merge fixtures, the typecheck, the dictionary and confusable-table checks; then the node project and the changesets suite whole, and the specs the branch's diff reaches (`scripts/impact.mjs`) on chromium; a diff that reaches everything runs the whole chromium and node suite through the count gate. Minutes, not an hour |
+| Full | when you choose | `npm run test:full` | the checks CI's checks jobs run (drift with the merge fixtures, the readers, the hold-outs, the properties), then the whole suite on chromium and node, through the count gate. The push tier before D296 |
+| CI | every push that changes code | `.github/workflows/test.yml` | the whole suite on all three engines, the node project once, the count, typecheck, the readers and the properties. A commit that changes only prose skips the engine matrix, the count and the properties (D296) |
 
 Three engines are CI's job. Running them all locally is what made the loop
 too slow to use; a local run that checks one engine well is worth more than
@@ -52,9 +53,10 @@ The rule every tier answers to:
 
 What that means in practice:
 
-- **The two subset tiers say so.** They print that the count floor was not
-  checked. A green subset is evidence about the subset, never about the suite.
-- **The push tier cannot be satisfied without the gate.** It refuses a
+- **The subset tiers say so.** Commit, and push unless its diff reaches
+  everything, print that the count floor was not checked; CI's count gate
+  checks it on every push that changes code. A green subset is evidence about the subset, never about the suite.
+- **The full tier cannot be satisfied without the gate.** It refuses a
   filter, a shard, a project list, named specs or a `--reporter` (which would
   replace the gate), and it fails unless the count gate reports that it
   checked the run (`test-results/count-gate.json`). A run where the gate
@@ -65,8 +67,9 @@ What that means in practice:
   file so it gets a check or a stated reason. It reads the tracked files only,
   as CI does from the pushed tree: `git add` a new spec before `--write`, and
   a file left untracked on disk never enters the map.
-- **Build reuse is the inner loop's only.** The push tier and CI always build
-  from scratch.
+- **Build reuse is the inner loop's only.** The push and full tiers and CI
+  build from scratch; the push tier's second run, the node project, reuses the
+  build its first made a minute before.
 
 Run the tiers by habit — there is no hook forcing them. CI is the backstop:
 a push that skipped a tier is still checked there, on every engine, before

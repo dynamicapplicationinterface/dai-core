@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "@playwright/test";
+// No product import: a change here reaches only the specs that import this file (scripts/impact.mjs).
 
 /**
  * Why an offline-reload test does not run on WebKit.

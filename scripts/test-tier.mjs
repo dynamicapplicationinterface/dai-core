@@ -3,9 +3,16 @@
  *
  *     npm run test:iterate -- tests/sender.spec.ts   # the specs you are touching
  *     npm run test:commit                             # what the change can affect
- *     npm run test:push                               # everything, one engine, gated
+ *     npm run test:push                               # the fast gate before a push
+ *     npm run test:full                               # everything, one engine, gated
  *
- * CI is the fourth tier: every engine, on every push (.github/workflows/test.yml).
+ * CI is the gate: every engine, on every push that changes code
+ * (.github/workflows/test.yml). The push tier is the fast tier (D296): the
+ * typecheck, drift without the merge fixtures, the node project whole, the
+ * changesets suite, and the specs the branch's diff reaches by the impact map,
+ * in minutes. It does not repeat what CI runs on the same commit: the engine
+ * matrix, the merge-fixture check, the readers and the properties are CI's.
+ * The full tier is the old push tier, kept for a deliberate local check.
  *
  * Each tier runs chromium and the node project. Firefox and webkit are CI's;
  * running all three here is what made the loop too slow to use.
@@ -43,8 +50,8 @@ const CI_SUITE_JOBS = [
 
 const [tier, ...rest] = process.argv.slice(2);
 
-function playwright(args, env = {}) {
-  const run = spawnSync("npx", ["playwright", "test", ...PROJECTS, ...args], {
+function playwright(args, env = {}, projects = PROJECTS) {
+  const run = spawnSync("npx", ["playwright", "test", ...projects, ...args], {
     cwd: repo,
     stdio: "inherit",
     shell: process.platform === "win32",
@@ -57,7 +64,78 @@ function playwright(args, env = {}) {
 const relativeTo = (arg) => (arg.startsWith(repo) ? arg.slice(repo.length + 1).split("\\").join("/") : arg);
 
 const floorNotChecked = () =>
-  console.log("\ntest-tier: a subset ran, so the count floor was NOT checked. `npm run test:push` checks it.");
+  console.log("\ntest-tier: a subset ran, so the count floor was NOT checked. CI's count-gate checks it, and `npm run test:full` does here.");
+
+/**
+ * A failed run's evidence, kept before anything else can run (D47). The next
+ * run clears test-results/, and a rerun that passes is exactly what erased
+ * every earlier static-opener failure unread.
+ */
+function keepEvidence(reasons, note) {
+  let commit = "unknown";
+  try {
+    commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+  } catch {
+    /* Not a repository; the run is still worth keeping. */
+  }
+  const { kept, error } = keepEvidenceSafely({ results: join(repo, "test-results"), into: join(repo, "test-runs"), reasons, commit, note });
+  if (kept) console.error(`\ntest-tier ${note}: this run failed; its results are kept in ${kept}. Read them before rerunning.`);
+  if (error) console.error(`\ntest-tier ${note}: this run failed, and its results could NOT be kept (${error}). Copy test-results/ by hand before rerunning.`);
+  if (!kept && !error) console.error(`\ntest-tier ${note}: this run failed, and there was no test-results/ to keep.`);
+}
+
+/** Refuses what would make a gated tier's run something other than what it says it is. */
+function refuseFilters(name, why) {
+  const refused = rest.filter(
+    (arg) =>
+      arg === "-g" ||
+      arg.startsWith("--grep") ||
+      arg.startsWith("--reporter") ||
+      arg.startsWith("--shard") ||
+      arg.startsWith("--project") ||
+      !arg.startsWith("-"),
+  );
+  if (refused.length > 0) {
+    console.error(`test-tier ${name}: refusing ${refused.join(" ")} — ${why} Use test:iterate for a subset.`);
+    process.exit(2);
+  }
+}
+
+/** Runs each check, all of them whatever failed, and returns the ones that failed, named by the CI job that runs it. */
+function runChecks(name, list) {
+  const failed = [];
+  for (const [command, args, job] of list) {
+    // A shell only for npm, which is npm.cmd on Windows. Node itself is spawned
+    // directly: through a shell its path ("C:\Program Files\...") is split at
+    // the space, node never starts, and every tree is refused.
+    const run = spawnSync(command, args, { cwd: repo, stdio: "inherit", shell: command === "npm" && process.platform === "win32" });
+    if (run.status !== 0) {
+      const line = `${job}: ${[command, ...args.map((arg) => relativeTo(arg))].join(" ")}`;
+      console.error(`test-tier ${name}: ${line} failed — CI's ${job} job would refuse this too.`);
+      failed.push(line);
+    }
+  }
+  return failed;
+}
+
+/** The suite through the count gate: chromium and node whole, and why it failed, if it did. */
+function gatedSuite() {
+  rmSync(REPORT, { force: true });
+  const status = playwright(rest);
+  let report = null;
+  try {
+    if (existsSync(REPORT)) report = JSON.parse(readFileSync(REPORT, "utf8"));
+  } catch {
+    /* An unreadable report is no report: whyFailed says so. */
+  }
+  /*
+   * One verdict, read by both the evidence keeper and the exit. The keeper once
+   * decided "failed" for itself, from Playwright's exit alone, and so kept
+   * nothing when Playwright passed and the count gate refused (review of
+   * 454858c..7abb896, item 4).
+   */
+  return { status, report, reasons: whyFailed({ status, report, projects: ["chromium", "node"] }) };
+}
 
 if (tier === "iterate") {
   if (rest.filter((arg) => !arg.startsWith("-")).length === 0) {
@@ -114,22 +192,88 @@ if (tier === "commit") {
 }
 
 if (tier === "push" || process.argv[2] === "push") {
-  const refused = rest.filter(
-    (arg) =>
-      arg === "-g" ||
-      arg.startsWith("--grep") ||
-      arg.startsWith("--reporter") ||
-      arg.startsWith("--shard") ||
-      arg.startsWith("--project") ||
-      !arg.startsWith("-"),
-  );
-  if (refused.length > 0) {
-    console.error(
-      `test-tier push: refusing ${refused.join(" ")} — the push tier is the whole suite through the config's reporters, ` +
-        "or its count means nothing. Use test:iterate for a subset.",
-    );
-    process.exit(2);
+  refuseFilters("push", "the push tier chooses its own specs from the branch's diff.");
+  /*
+   * The branch's diff: every commit since it left main, and what is not yet
+   * committed. The specs it reaches run on chromium; the node project and the
+   * changesets suite run whole whatever changed, since both are quick and the
+   * data interface is what most builds touch. A change the impact map says
+   * reaches everything runs the whole chromium and node suite through the
+   * count gate, as the full tier's suite does.
+   */
+  const git = (args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+  let base = "HEAD";
+  for (const main of ["origin/main", "main"]) {
+    try {
+      base = git(["merge-base", main, "HEAD"]).trim();
+      break;
+    } catch {
+      /* No such ref here; try the next. */
+    }
   }
+  const changed = [
+    ...new Set(
+      [git(["diff", "--name-only", base]), git(["ls-files", "--others", "--exclude-standard"])]
+        .join("\n")
+        .split(/\r?\n/)
+        .filter(Boolean),
+    ),
+  ];
+  const picked = changed.length
+    ? execFileSync(process.execPath, [join(repo, "scripts", "impact.mjs"), "--explain"], {
+        cwd: repo,
+        input: changed.join("\n"),
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "inherit"],
+      })
+        .split(/\r?\n/)
+        .filter(Boolean)
+    : [];
+  // A list past what a Windows command line holds runs the whole suite instead.
+  const everything = picked.includes("ALL") || picked.join(" ").length > 6000;
+  const specs = picked.filter((line) => line !== "ALL" && !line.startsWith("check:"));
+  console.log(`test-tier push: ${changed.length} path(s) changed since ${base.slice(0, 8)}; ${everything ? "they reach every spec" : `${specs.length} spec(s) reach them`}.`);
+
+  /*
+   * What CI's checks-fast job checks that is quick: drift without the merge
+   * fixtures (about twenty minutes, CI's on every commit), the typecheck chain,
+   * and the two generated tables. The readers, the hold-outs and the
+   * properties are CI's too; `npm run test:full` runs every one of them here.
+   */
+  const checksFailed = runChecks("push", [
+    [process.execPath, [join(repo, "scripts", "drift.mjs"), "--no-fixtures"], "checks-fast"],
+    ["npm", ["run", "typecheck"], "checks-fast"],
+    [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"], "checks-fast"],
+    [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"], "checks-fast"],
+  ]);
+
+  const reasons = checksFailed.map((line) => `a check failed: ${line}`);
+  if (everything) {
+    const suite = gatedSuite();
+    reasons.push(...suite.reasons);
+    if (reasons.length > 0) keepEvidence(reasons, "push");
+    else console.log(`\ntest-tier push: whole run, count gate checked: ${JSON.stringify(suite.report.passed)}`);
+  } else {
+    // Each run clears test-results/, so a failed one's evidence is kept before the next starts.
+    const chromium = playwright(["tests/changesets/", ...specs], {}, ["--project=chromium"]);
+    if (chromium !== 0) {
+      reasons.push(`chromium: the changesets suite and the specs the diff reaches failed (exit ${chromium})`);
+      keepEvidence(reasons, "push");
+    }
+    const node = playwright([], { DAI_REUSE_BUILD: "1" }, ["--project=node"]);
+    if (node !== 0) {
+      reasons.push(`node: the node project failed (exit ${node})`);
+      keepEvidence(reasons, "push");
+    }
+    floorNotChecked();
+  }
+  for (const reason of reasons) console.error(`test-tier push: failed: ${reason}`);
+  if (reasons.length === 0) console.log("test-tier push: passed. CI runs the engine matrix, the merge fixtures, the readers and the properties.");
+  process.exit(reasons.length > 0 ? 1 : 0);
+}
+
+if (tier === "full" || process.argv[2] === "full") {
+  refuseFilters("full", "the full tier is the whole suite through the config's reporters, or its count means nothing.");
   /*
    * What CI's checks job checks, before any browser starts. Without this the
    * push tier ran green on a tree CI then failed: a runtime change moved the
@@ -185,7 +329,7 @@ if (tier === "push" || process.argv[2] === "push") {
   ]) {
     const have = tool === "npm" || tool === process.execPath || spawnSync(tool, ["--version"], { cwd: repo, stdio: "ignore", shell: process.platform === "win32" }).status === 0;
     if (have) checks.push([tool, args, job]);
-    else console.log(`test-tier push: no ${tool} here, so ${what} (${job}) is left to CI.`);
+    else console.log(`test-tier full: no ${tool} here, so ${what} (${job}) is left to CI.`);
   }
   /*
    * Every check runs, and the suite after them, whatever failed: CI reports its
@@ -193,68 +337,20 @@ if (tier === "push" || process.argv[2] === "push") {
    * first red check says nothing about the rest. The tier still fails if any
    * check did.
    */
-  const checksFailed = [];
-  for (const [command, args, job] of checks) {
-    // A shell only for npm, which is npm.cmd on Windows. Node itself is spawned
-    // directly: through a shell its path ("C:\Program Files\...") is split at
-    // the space, node never starts, and every tree is refused.
-    const run = spawnSync(command, args, { cwd: repo, stdio: "inherit", shell: command === "npm" && process.platform === "win32" });
-    if (run.status !== 0) {
-      const line = `${job}: ${[command, ...args.map((arg) => relativeTo(arg))].join(" ")}`;
-      console.error(`test-tier push: ${line} failed — CI's ${job} job would refuse this too.`);
-      checksFailed.push(line);
-    }
-  }
-
-  rmSync(REPORT, { force: true });
-  const status = playwright(rest);
-  let report = null;
-  try {
-    if (existsSync(REPORT)) report = JSON.parse(readFileSync(REPORT, "utf8"));
-  } catch {
-    /* An unreadable report is no report: whyFailed says so. */
-  }
-  /*
-   * One verdict, read by both the evidence keeper and the exit. The keeper once
-   * decided "failed" for itself, from Playwright's exit alone, and so kept
-   * nothing when Playwright passed and the count gate refused (review of
-   * 454858c..7abb896, item 4).
-   */
-  const reasons = [
-    ...checksFailed.map((line) => `a check failed: ${line}`),
-    ...whyFailed({ status, report, projects: ["chromium", "node"] }),
-  ];
+  const checksFailed = runChecks("full", checks);
+  const suite = gatedSuite();
+  const reasons = [...checksFailed.map((line) => `a check failed: ${line}`), ...suite.reasons];
   if (reasons.length > 0) {
-    /*
-     * A failure's evidence, kept before anything else can run (D47). The next
-     * run clears test-results/, and a rerun that passes is exactly what erased
-     * every earlier static-opener failure unread.
-     */
-    let commit = "unknown";
-    try {
-      commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
-    } catch {
-      /* Not a repository; the run is still worth keeping. */
-    }
-    const { kept, error } = keepEvidenceSafely({
-      results: join(repo, "test-results"),
-      into: join(repo, "test-runs"),
-      reasons,
-      commit,
-      note: "tier: push",
-    });
-    if (kept) console.error(`\ntest-tier push: this run failed; its results are kept in ${kept}. Read them before rerunning.`);
-    if (error) console.error(`\ntest-tier push: this run failed, and its results could NOT be kept (${error}). Copy test-results/ by hand before rerunning.`);
-    if (!kept && !error) console.error("\ntest-tier push: this run failed, and there was no test-results/ to keep.");
-    for (const reason of reasons) console.error(`test-tier push: failed: ${reason}`);
+    keepEvidence(reasons, "full");
+    for (const reason of reasons) console.error(`test-tier full: failed: ${reason}`);
     if (reasons.length > checksFailed.length) {
-      console.error(`test-tier push: the suite stands for CI's ${CI_SUITE_JOBS.join(", ")}; one of them would refuse this too.`);
+      console.error(`test-tier full: the suite stands for CI's ${CI_SUITE_JOBS.join(", ")}; one of them would refuse this too.`);
     }
-    process.exit(status !== 0 ? status : 1);
+    process.exit(suite.status !== 0 ? suite.status : 1);
   }
-  console.log(`\ntest-tier push: whole run, count gate checked: ${JSON.stringify(report.passed)} (CI: ${CI_SUITE_JOBS.join(", ")})`);
+  console.log(`\ntest-tier full: whole run, count gate checked: ${JSON.stringify(suite.report.passed)} (CI: ${CI_SUITE_JOBS.join(", ")})`);
   process.exit(0);
 }
 
-console.error("usage: node scripts/test-tier.mjs iterate <specs…> | commit | push");
+console.error("usage: node scripts/test-tier.mjs iterate <specs…> | commit | push | full");
 process.exit(2);

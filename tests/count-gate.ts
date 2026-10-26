@@ -109,7 +109,8 @@ export default class CountGate implements Reporter {
     // The rule itself is shared with the sum of CI's parts (scripts/lib/count-check.mjs).
     const complaints: string[] = filtered ? [] : countComplaints(Object.fromEntries(this.passed), held, this.unexplained);
 
-    // Proof the gate ran, for the push tier (scripts/test-tier.mjs): it
+    // Proof the gate ran, for the full tier (scripts/test-tier.mjs), and the
+    // push tier when its diff reaches everything: it
     // deletes this before the run and refuses to pass without it, so a run
     // where the gate silently did not happen — a --reporter flag, a filter —
     // cannot be mistaken for a checked one. A filtered run's report says it

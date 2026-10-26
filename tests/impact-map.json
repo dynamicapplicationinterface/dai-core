@@ -944,6 +944,18 @@
       "tests/session-db.ts",
       "tsup.config.ts"
     ],
+    "tests/ci-changes.spec.ts": [
+      "apps/runner/README.md",
+      "scripts/ci-changes.mjs",
+      "src/kit.ts",
+      "tests/ci-changes.spec.ts",
+      "tests/rules.spec.ts",
+      "website/docs/"
+    ],
+    "tests/ci-install-times.spec.ts": [
+      "scripts/ci-install-times.mjs",
+      "tests/ci-install-times.spec.ts"
+    ],
     "tests/ci-verdict.spec.ts": [
       "scripts/ci-verdict.mjs",
       "tests/ci-verdict.spec.ts"

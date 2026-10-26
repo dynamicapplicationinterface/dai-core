@@ -95,6 +95,7 @@
     "test:iterate": "node scripts/test-tier.mjs iterate",
     "test:commit": "node scripts/test-tier.mjs commit",
     "test:push": "node scripts/test-tier.mjs push",
+    "test:full": "node scripts/test-tier.mjs full",
     "test:headed": "playwright test --headed"
   },
   "dependencies": {

@@ -85,6 +85,8 @@ export function newestGreen(runs, { isAncestor, jobsOf, logOf }) {
       const count = carrying.reduce((sum, job) => sum + (countsFrom(logOf(job))[project] ?? 0), 0);
       if (count > 0) found[project] = { count, run: run.databaseId, sha: run.headSha };
     }
+    // A green run that ran no tests (a docs-only run, D296) measures nothing; the one before it does.
+    if (Object.keys(found).length === 0) continue;
     return found;
   }
   return {};

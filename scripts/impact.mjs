@@ -20,8 +20,10 @@
  *     reaches it";
  *   - a changed spec always runs itself.
  *
- * This chooses the subset for the inner tiers only. The push tier and CI run
- * everything and never ask it. Run less must not become check less.
+ * This chooses the subset for the local tiers (commit, and push since D296).
+ * The full tier and CI run everything on a code change; CI asks it only to
+ * widen, so that prose a spec reads is not skipped as prose
+ * (scripts/ci-changes.mjs). Run less must not become check less.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { build, covers } from "./impact-map.mjs";
