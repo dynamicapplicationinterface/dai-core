@@ -11756,6 +11756,51 @@ install time and whether its cache hit (D292's measure, by hand until now).
 prose commit after it shows every required check satisfied and the PR
 mergeable; and the next build's PR shows one matrix run.
 
+### Build 2b-1 (filed 26 October)
+
+#### D297 — An application's own write as it opens can bring the offer to keep
+
+*Status: open. Filed 26 October, from Build 2b-1, item 2.*
+
+The offer to keep beyond this browser follows the first landed save that
+carries a batch of this author's (R-Z sentence 3, `considerKeepOffer`). The
+seed, an echo, a remote apply and the runtime's bookkeeping carry none
+(`tests/keep-offer.spec.ts`). An application that inserts a row of its own as
+it opens does: under R-X it is this author's change, though no person made
+it, and the offer can appear before anyone has used the document. So does a
+join under the policy layer: the seat row a joining copy writes is this
+author's, and the offer follows it (seen in `push-e2e.spec.ts`, where the
+line appeared as Bo joined).
+
+A reading of whether a person used the page cannot come from the shell: the
+host's own controls (the card's Open) activate it, since user activation
+reaches same-origin descendants, and the shell is the host's origin. Only the
+application's frame, which has an opaque origin, is activated by the person
+alone. **Change:** the application's frame says, once, when it is first
+activated by a trusted event, and a save carries it; an application that
+forges it only brings its own offer early, which R-Y's boundary allows.
+**Acceptance:** an application that writes a row as it opens shows no offer
+until the person types (the test removed from `keep-offer.spec.ts` in Build
+2b-1, restored).
+
+#### D298 — On Safari the keychain secret is never offered to the keychain
+
+*Status: open, owed with the iPhone reading. Filed 26 October, from Build
+2b-1, item 1.*
+
+Enrollment makes the keychain wrap whatever happens to the secret, because
+no page can know whether a keychain kept it (`offerToKeychain`,
+`apps/runner/src/owner.ts`). Where the Credential Management API is present
+(Chromium) the secret is offered through it. Safari has none, so there the
+secret is offered to nothing, and the keychain wrap is under a secret no
+keychain holds: on an iPhone, recovery has the passkey path alone. The
+spike reached Safari's keychain through a form submission it offers to save,
+which reloads the page ("Owner/author spike", probe fault 2). **Change:** that
+form path, with the enrollment's state kept across the reload. **Acceptance:**
+on an iPhone, in Safari and a Home Screen app, the keychain wrap alone
+recovers the owner key after a website-data wipe (R-Z, "Each recovery path,
+where it can run").
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
