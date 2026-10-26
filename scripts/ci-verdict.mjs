@@ -117,6 +117,29 @@ export const BROWSER_PARTS = [
 export const EXPECTED_JOBS = [...BROWSER_PARTS, ...CHECKS_JOBS, COUNT_JOB];
 
 /**
+ * The jobs a docs-only run skips (D296, scripts/ci-changes.mjs): the browser
+ * matrix, the count gate and the property checks. checks-fast and
+ * checks-holdout run on every commit.
+ */
+export const DOCS_SKIPPED = [...BROWSER_PARTS, COUNT_JOB, "checks-properties-node", "checks-properties-python"];
+
+/**
+ * What the run's `changes` job decided, from its log: the line
+ * scripts/ci-changes.mjs prints, "changes: docs only since <sha> (run <id>): …".
+ * Null when the run has no such line (a run from before D296, or one that
+ * decided code), so nothing is excused.
+ */
+export function docsOnlyFrom(log) {
+  const match = /changes: docs only since ([0-9a-f]+) \(run (\d+)\): (.*)/.exec(log);
+  return match ? { since: match[1], run: match[2], reason: match[3].trim() } : null;
+}
+
+/** Whether a job's name is one a docs-only run skips. */
+export function skippedOnDocs(name) {
+  return DOCS_SKIPPED.some((expected) => isJob(name, expected)) || /^browser\b/.test(name);
+}
+
+/**
  * The name of the count report a browser part keeps, as test.yml names it:
  * count-<browser>-<part>, from "browser (<browser>, <part>…".
  */
@@ -149,8 +172,11 @@ export function missingJobs(names) {
  * It said "RED on chromium, webkit and checks" whatever was red, so a red
  * checks job read as three engines down.
  */
-export function gateLine(status, red) {
+export function gateLine(status, red, docsOnly = null) {
   if (status !== "completed") return `gate: not finished (${status})`;
+  if (docsOnly && red.length === 0) {
+    return `gate: docs only since ${docsOnly.since} (green run ${docsOnly.run}); checks-fast and checks-holdout green, the engine matrix, count and properties not run`;
+  }
   if (red.length === 0) return "gate: green on chromium, node, webkit, every checks job and the count; firefox above is a reading";
   return `gate: RED on ${red.join(", ")}; firefox above is a reading`;
 }
@@ -192,6 +218,15 @@ function main(argv) {
 
   console.log(`run ${runId}  ${run.headSha.slice(0, 7)}  ${run.headBranch}  ${run.conclusion ?? run.status}`);
   console.log(run.url);
+  /*
+   * A docs-only run (D296) skips the browser matrix, the count gate and the
+   * properties by design, so those jobs are excused here, by name, and only
+   * when the run's own `changes` job says it decided docs only. A skip in any
+   * other run is red, as before.
+   */
+  const docsOnly = docsOnlyFrom((perJob.get("changes") ?? []).join("\n"));
+  if (docsOnly) console.log(`docs only since ${docsOnly.since}, green run ${docsOnly.run}: ${docsOnly.reason}`);
+  const excused = (job) => Boolean(docsOnly) && job.conclusion === "skipped" && skippedOnDocs(job.name);
   console.log("");
 
   /*
@@ -219,8 +254,13 @@ function main(argv) {
   let anyMissing = false;
   // The gate's jobs that are not green, by name: the summary names only these.
   const red = [];
+  const skippedRow = (job) => console.log(`  SKIP   ${job.name.padEnd(28)} docs only`);
   console.log("  gate (chromium, node, webkit):");
   for (const job of browserJobs.filter((j) => !isReading(j.name))) {
+    if (excused(job)) {
+      skippedRow(job);
+      continue;
+    }
     const r = row(job);
     if (!r.hasTally) anyMissing = true;
     if (r.failed || (job.conclusion && !r.hasTally)) red.push(job.name);
@@ -229,6 +269,10 @@ function main(argv) {
   if (readings.length) {
     console.log("  reading, not blocking (firefox, D32):");
     for (const job of readings) {
+      if (excused(job)) {
+        skippedRow(job);
+        continue;
+      }
       const r = row(job);
       if (!r.hasTally) anyMissing = true;
     }
@@ -236,18 +280,27 @@ function main(argv) {
 
   console.log("  checks:");
   for (const job of otherJobs) {
+    if (excused(job)) {
+      console.log(`  SKIP   ${job.name}  docs only`);
+      continue;
+    }
     const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? job.status ?? "?").toUpperCase();
     if (job.conclusion && job.conclusion !== "success") red.push(job.name);
     console.log(`  ${mark.padEnd(6)} ${job.name}${wall(job)}`);
   }
   // A run lacking an expected job gave no verdict on it.
+  // A docs-only run may also lack a skipped matrix job's expanded names.
   for (const name of missingJobs(run.jobs.map((job) => job.name))) {
+    if (docsOnly && DOCS_SKIPPED.includes(name)) {
+      console.log(`  SKIP   ${name} (not expanded: docs only)`);
+      continue;
+    }
     red.push(name);
     console.log(`  MISSING ${name} (not in this run)`);
   }
 
   console.log("");
-  console.log(gateLine(run.status, red));
+  console.log(gateLine(run.status, red, docsOnly));
 
   if (anyMissing) {
     console.log("");

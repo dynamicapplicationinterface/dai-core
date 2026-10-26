@@ -15,6 +15,30 @@ permissions:
   actions: read
 
 jobs:
+  # Whether this run needs the browser matrix, decided once (D296). A commit
+  # that changes only prose (docs/, website/docs/, a `.md` file) since the
+  # nearest ancestor with a green run, and no prose a spec reads, does not
+  # change what the browser jobs, the count gate or the property checks test,
+  # so they skip; checks-fast and checks-holdout run on every commit. The
+  # skipped jobs keep their names and matrix, so the ruleset's required checks
+  # are the ones it names. Anything the script cannot decide is code: the
+  # condition below is "not docs only", so a failed or empty answer runs
+  # everything (scripts/ci-changes.mjs).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      # The whole history, to find the green ancestor and diff from it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: decide
+        run: node scripts/ci-changes.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # The non-browser checks, on their own so a compile or reference-reader
   # failure is reported as itself and does not sit behind twelve minutes of
   # Playwright.
@@ -61,8 +85,10 @@ jobs:
       # the library, the site's runtime, the conformance cases, the merge
       # fixtures (fixtures:check, their inputs hashed before and after and the
       # committed bytes put back), the impact map, the hosted request, the
-      # model-file budget, the inline-link cap and the count floor. The same
-      # step opens the local gate (`npm run test:push`). fixtures:check is not
+      # model-file budget, the inline-link cap and the count floor. The local
+      # gate (`npm run test:push`) runs it without the merge fixtures, which
+      # are this job's alone (D296); `npm run test:full` runs it whole.
+      # fixtures:check is not
       # a step of its own: run outside drift it leaves regenerated inputs in
       # the tree for every reader after it.
       - run: npm run drift
@@ -122,6 +148,8 @@ jobs:
   # without it, at about half the speed. The scenarios it writes are kept for
   # checks-properties-python, whatever this job found.
   checks-properties-node:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -148,8 +176,8 @@ jobs:
   # wrote. It waits for them; a run whose node job wrote none fails here at the
   # download, which is no verdict and reads as red.
   checks-properties-python:
-    needs: checks-properties-node
-    if: ${{ !cancelled() }}
+    needs: [changes, checks-properties-node]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -233,6 +261,8 @@ jobs:
   # same steps, so the count-gate job, which waits on every gating part, does
   # not wait 40 minutes on a reading.
   browser:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
     # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
@@ -372,6 +402,8 @@ jobs:
   # the name it always had, so scripts/ci-verdict.mjs still prints it apart.
   reading:
     name: browser (${{ matrix.browser }}, ${{ matrix.part }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     continue-on-error: true
@@ -386,8 +418,8 @@ jobs:
   # is held to. It needs nothing installed: the script reads JSON with Node's
   # own modules.
   count-gate:
-    needs: browser
-    if: ${{ !cancelled() }}
+    needs: [changes, browser]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

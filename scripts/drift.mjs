@@ -14,7 +14,8 @@
  * different place, some only in CI and some only in a browser run.
  *
  * So one step rebuilds them all and says which moved. It runs first: in CI's
- * checks job and in the local gate (`npm run test:push`). Every step runs even
+ * checks job, in the full local tier (`npm run test:full`), and in the push
+ * tier without the merge fixtures (`--no-fixtures`, D296). Every step runs even
  * after one fails, so a run names everything that drifted at once. A product
  * that moved is left rebuilt in the tree, so the diff is there to read and
  * commit.
@@ -200,8 +201,19 @@ step("count floor", () => {
 });
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  /*
+   * `--no-fixtures` leaves the merge fixtures to CI (D296): their check is
+   * about twenty minutes of the local gate's time, and CI's checks-fast runs
+   * it on every commit. Said out loud, so a run without it is not read as one
+   * with it.
+   */
+  const skipped = process.argv.includes("--no-fixtures") ? ["merge fixtures"] : [];
   const drifted = [];
   for (const { name, work } of steps) {
+    if (skipped.includes(name)) {
+      console.log(`\ndrift: ${name} not checked here (--no-fixtures); CI's checks-fast checks it`);
+      continue;
+    }
     console.log(`\ndrift: ${name}`);
     let problems;
     try {
@@ -214,7 +226,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   console.log("");
   if (drifted.length === 0) {
-    console.log(`drift: none; ${steps.length} products rebuilt and compared.`);
+    const left = skipped.length ? ` (${skipped.join(", ")} left to CI)` : "";
+    console.log(`drift: none; ${steps.length - skipped.length} products rebuilt and compared${left}.`);
     process.exit(0);
   }
   for (const line of drifted) console.error(`drift: ${line}`);

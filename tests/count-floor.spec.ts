@@ -147,4 +147,11 @@ test.describe("the run the floor is measured against", () => {
     });
     expect(found).toEqual(from(7, { chromium: 800, firefox: 800, webkit: 800, node: 640 }));
   });
+
+  // D296: a docs-only run's jobs can all pass having run no test; it measures nothing.
+  test("a green run that ran no tests is passed over for the one before it", () => {
+    const empty = runOf(11, "main", []);
+    for (const job of empty.jobs) job.passes = {};
+    expect(read([empty, runOf(10, "main", [])])).toEqual(from(10, { chromium: 800, firefox: 800, webkit: 800, node: 640 }));
+  });
 });

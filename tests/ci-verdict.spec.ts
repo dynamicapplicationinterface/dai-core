@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error a plain ES module with no types
-import { CHECKS_JOBS, EXPECTED_JOBS, gateLine, jobFailed, missingJobs, tallyFrom } from "../scripts/ci-verdict.mjs";
+import { CHECKS_JOBS, DOCS_SKIPPED, EXPECTED_JOBS, docsOnlyFrom, gateLine, jobFailed, missingJobs, skippedOnDocs, tallyFrom } from "../scripts/ci-verdict.mjs";
 
 /**
  * A job that did not finish is not a pass, whatever it printed (pass C's H2).
@@ -77,5 +77,34 @@ test.describe("a run lacking an expected job", () => {
 
   test("a run with every expected job lacks none", () => {
     expect(missingJobs(EXPECTED_JOBS.map(named))).toEqual([]);
+  });
+});
+
+/**
+ * A docs-only run (D296) skips the matrix, the count and the properties by
+ * design. They are excused only when the run's own `changes` job printed that
+ * it decided docs only; checks-fast and checks-holdout are never excused.
+ */
+test.describe("a docs-only run", () => {
+  const line = "changes: docs only since ab12cd34 (run 4021): 2 prose path(s), none read by a spec";
+
+  test("the decision is read from the changes job's line, and only from it", () => {
+    expect(docsOnlyFrom(`noise\n${line}\nmore`)).toEqual({ since: "ab12cd34", run: "4021", reason: "2 prose path(s), none read by a spec" });
+    expect(docsOnlyFrom("changes: code since ab12cd34 (run 4021): 3 path(s) outside the prose: src/a.ts")).toBeNull();
+    expect(docsOnlyFrom("")).toBeNull();
+  });
+
+  test("it excuses the matrix, the count and the properties, never the two checks that run", () => {
+    for (const name of DOCS_SKIPPED) expect(skippedOnDocs(name.startsWith("checks") || name === "count-gate" ? name : `${name}, x)`)).toBe(true);
+    expect(skippedOnDocs("checks-fast")).toBe(false);
+    expect(skippedOnDocs("checks-holdout")).toBe(false);
+    expect(skippedOnDocs("changes")).toBe(false);
+  });
+
+  test("its summary line says what did not run", () => {
+    expect(gateLine("completed", [], docsOnlyFrom(line))).toBe(
+      "gate: docs only since ab12cd34 (green run 4021); checks-fast and checks-holdout green, the engine matrix, count and properties not run",
+    );
+    expect(gateLine("completed", ["checks-holdout"], docsOnlyFrom(line))).toBe("gate: RED on checks-holdout; firefox above is a reading");
   });
 });
