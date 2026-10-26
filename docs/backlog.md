@@ -11362,10 +11362,10 @@ month of `main`'s Firefox runs in which it passes on the first try.
 
 #### D294 — A save asked as the page really leaves does not land in the runner
 
-*Status: read on a device 26 October: the save lands there, and the gap is
-in the test runner's navigation, not the document. Open only for the two
-other ways of leaving the acceptance names. Filed 25 October, from the
-review of Build 2a-r1. It predates PR #11.*
+*Status: closed 26 October. Read on a device by all three ways of leaving:
+the save lands each time, and the gap is in the test runner's navigation,
+not the document. Filed 25 October, from the review of Build 2a-r1. It
+predates PR #11.*
 
 A committed write whose autosave is still to come (within its 800 ms) is
 lost when the page really navigates away. The flush the leave asks for does
@@ -11395,11 +11395,18 @@ three engines.
   on reopening the edit was there. So on a device the save asked by a real
   leave lands; what loses it is the test runner's navigation, which ends
   the shell, its worker and the opener together.
-- **Not read on the device:** closing the tab, and navigating away in it.
+- **F. Closing the tab, 26 October,** the same device, build and document:
+  a chore edited, the tab closed at once, within about a second, before
+  the 800 ms autosave would have run. Opened again in a new tab and
+  reopened from the library: the edit was there.
+- **F. Navigating away in the tab, 26 October,** the same: a chore edited,
+  another address typed in the same tab at once, and gone to. Back again,
+  or reopened from the library: the edit was there.
 
-**Change:** none yet. First the reading on a device: write, then leave at
-once by the three ways a person does (switch app, close the tab, navigate),
-and reopen.
+**Change:** none. The device readings, by the three ways a person leaves
+(switch away, close the tab, navigate), each kept the write. The runner's
+loss is its navigation ending the shell, the worker and the opener
+together, which no device leave did.
 **Acceptance:** the device reading is recorded for each way of leaving, and
 any that loses a write has its own entry with the fix.
 
