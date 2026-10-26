@@ -11475,11 +11475,27 @@ repeats most of what CI then runs on the same commit.
 
 1. **A commit that changes only prose skips the browser matrix.** The
    workflow's first job, `changes`, runs `scripts/ci-changes.mjs` once and
-   passes `code=true|false` to the rest. The browser jobs, the Firefox
-   reading, the count gate and both property jobs run only when it is not
-   `false`; checks-fast and checks-holdout run on every commit. The jobs keep
-   their names and matrix, so the check names the ruleset requires are
-   unchanged.
+   passes `code=true|false` to the rest. The Firefox reading, the count gate
+   and both property jobs run only when it is not `false`, and are skipped
+   whole otherwise; checks-fast and checks-holdout run on every commit. The
+   browser matrix runs on every commit and skips by its steps: on a
+   docs-only commit each part runs one step that says so and passes. Its
+   names and matrix are unchanged, so the check names the ruleset requires
+   are too.
+   - **F. Skipped at the job level, the matrix reported none of the names
+     the ruleset requires** (run 40360107550 on `0f93f241`, the first
+     docs-only commit). GitHub expands no matrix for a skipped job: it
+     reported one check `browser` and one `browser (${{ matrix.browser }},
+     ${{ matrix.part }})`, both skipped, and the PR stayed BLOCKED on the
+     five WebKit checks, which never report, after checks-fast (5.9 min) and
+     checks-holdout (9.7 min) had passed. The property jobs, skipped whole,
+     counted as passed. Hence the step-level skip.
+   - **F. A docs-only run takes about ten minutes, not three:** 9.8 min
+     there, checks-holdout the longest. checks-fast and checks-holdout run
+     on every commit by design (`docs/` is what the readers are written
+     from, and build-conformance reads `docs/spec-v0.2.md` and
+     `docs/cddl.md`), so a docs-only run that finished in under three
+     minutes would mean they had been skipped too.
    - Prose is a path under `docs/` or `website/docs/`, or a `.md` file.
    - The diff is taken from the nearest ancestor with a green run of the
      workflow, not from the parent. A prose commit on top of a red or
