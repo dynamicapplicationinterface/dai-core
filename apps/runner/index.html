@@ -432,17 +432,29 @@
         border-bottom-color: color-mix(in srgb, var(--bad) 28%, transparent);
       }
       #doc-note[hidden] { display: none; }
-      /* The offer to keep beyond this browser: the note's row, in its quietest voice. */
+      /*
+       * The offer to keep beyond this browser, in the quietest voice the host
+       * has: along the bottom edge, over the document, never above it. A row
+       * of its own under the bar moved the whole document down as it
+       * appeared, so a tap aimed at the application landed on whatever had
+       * moved under the finger (a game's move went to no square). Fixed, it
+       * moves nothing.
+       */
       #keep-offer {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        /* Over the document and the bar (6), under every sheet (10 to 12). */
+        z-index: 8;
         margin: 0;
-        padding: calc(env(safe-area-inset-top) + 48px) 16px 10px;
+        padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px);
         font-size: 13px;
         line-height: 1.35;
         color: var(--muted);
         background: var(--surface);
-        border-bottom: 1px solid var(--line-strong);
+        border-top: 1px solid var(--line-strong);
       }
-      #doc-note:not([hidden]) + #keep-offer { padding-top: 10px; }
       #keep-offer button {
         padding: 0;
         border: 0;
@@ -1255,7 +1267,7 @@
       Once per browser context, after the first change a person makes has
       landed here, and never before: not for the seed, another copy's changes,
       or the runtime's own bookkeeping. A line, not a sheet: it takes no focus
-      and covers nothing, typing goes on under it, and nothing starts until a
+      and moves nothing, typing goes on under it, and nothing starts until a
       tap. "Not now" is kept for the context; the menu still offers it.
     -->
     <p id="keep-offer" role="status" hidden>Saved in this browser. Keep your work if this browser is cleared. <button id="keep-offer-yes" type="button">Keep beyond this browser</button> · <button id="keep-offer-no" type="button">Not now</button></p>

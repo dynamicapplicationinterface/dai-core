@@ -139,9 +139,12 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const app = await openFile(page, file);
     const uuid = await uuidOf(page);
     const words = "the quick brown fox jumps over the lazy dog, twice over";
+    // Where the document is before the line: a line that moves it moves what the person is about to tap.
+    const before = await page.locator("#cartridge").boundingBox();
     // A key every 60 ms, about three seconds: the first save lands while the person is still typing.
     const typing = typeNote(app, words, 60);
     await expect(line(page)).toBeVisible({ timeout: 30_000 });
+    expect(await page.locator("#cartridge").boundingBox(), "the line moves nothing").toEqual(before);
     expect(await app.locator("#note").evaluate((el) => el.ownerDocument.activeElement === el)).toBe(true);
     await typing;
     await expect(app.locator("#note")).toHaveValue(words);
