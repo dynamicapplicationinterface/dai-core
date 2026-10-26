@@ -97,6 +97,16 @@ export async function currentOwner(): Promise<string | null> {
   return (await keptInKeyStore<string>(KEYS.OWNER)) ?? null;
 }
 
+/** The answer this browser context gave the offer to keep beyond it, or null while it has given none (R-Z sentence 3). */
+export async function keepOfferAnswer(): Promise<"keep" | "not now" | null> {
+  return (await keptInKeyStore<{ answer: "keep" | "not now" }>(KEYS.KEEP_OFFER))?.answer ?? null;
+}
+
+/** Keeps the answer for the browser context: once answered, the offer is not made again, whichever document is open. */
+export async function answerKeepOffer(answer: "keep" | "not now"): Promise<void> {
+  await keepInKeyStore(KEYS.KEEP_OFFER, { answer, at: new Date().toISOString() });
+}
+
 /** One owner's record, as kept here, or null. */
 export async function ownerRecord(ownerId: string): Promise<OwnerRecord | null> {
   return (await keptInKeyStore<OwnerRecord>(ownerRecordKey(ownerId))) ?? null;

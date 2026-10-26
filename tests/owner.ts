@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,12 +17,17 @@ type Any = any;
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const RUNNER_URL = "http://localhost:5175/";
 
+/** Each built file's document id, so an open can wait for that document and no other. */
+const built = new Map<string, string>();
+
 /**
  * A notes app under the ordinary data interface: one field, written as it is
  * typed. `seed` adds a starter row, which the runtime runs once at creation.
+ * `onLoad` is SQL the app itself runs as it opens, before anyone touches it;
+ * `onFocus`, SQL it runs whenever the field takes focus.
  * The field is disabled until the app can take input (tests/README.md, waiting).
  */
-export async function buildNotes(scratch: string, name: string, seed = false): Promise<string> {
+export async function buildNotes(scratch: string, name: string, seed = false, onLoad = "", onFocus = ""): Promise<string> {
   const src = join(scratch, name, "src");
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, "schema.sql"), "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL);\n");
@@ -37,9 +43,11 @@ export async function buildNotes(scratch: string, name: string, seed = false): P
     [
       "const db = await window.dai.database();",
       "window.__db = db;",
+      ...(onLoad ? [`await db.run(${JSON.stringify(onLoad)});`] : []),
       'const input = document.getElementById("note");',
       'const rows = await db.query("SELECT body FROM notes WHERE id = 1");',
       'input.value = rows[0] ? rows[0].body : "";',
+      ...(onFocus ? [`input.addEventListener("focus", () => void db.run(${JSON.stringify(onFocus)}));`] : []),
       'input.addEventListener("input", () => {',
       '  void db.run("INSERT INTO notes (id, body) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body", [input.value]);',
       "});",
@@ -47,36 +55,54 @@ export async function buildNotes(scratch: string, name: string, seed = false): P
       "",
     ].join("\n"),
   );
-  const built = await compileDirectory({ sourceDir: src, root: repo, appName: name });
+  const documentUuid = randomUUID();
+  const compiled = await compileDirectory({ sourceDir: src, root: repo, appName: name, documentUuid });
   const file = join(scratch, `${name}.dai.html`);
-  writeFileSync(file, built.html, "utf8");
+  writeFileSync(file, compiled.html, "utf8");
+  built.set(file, documentUuid);
   return file;
 }
 
 export const appIn = (page: Page): FrameLocator => page.frameLocator("#cartridge").frameLocator("#dai-app");
 
 /**
- * Opens a document from a file, as a person picks one, and waits for its field
- * to take input. A document this browser already holds mounts with no card.
+ * Opens a document from a file, as a person picks one, and waits until that
+ * document, and no other, is mounted and its field takes input. A document
+ * this browser already holds mounts with no card. The opener may resume the
+ * last document by itself on load, and its field takes input too: waiting for
+ * any field typed into the resumed one, which the picked one then replaced.
  */
 export async function openFile(page: Page, file: string): Promise<FrameLocator> {
   await page.setInputFiles("#file", file);
+  return waitMounted(page, file);
+}
+
+/**
+ * Waits until the document built as `file` is the one mounted and its field
+ * takes input, clicking its card if one is shown. On its own, after a load:
+ * the opener resumes the document open last (`KEYS.RESUME`), and a file picked
+ * before that resume lands is mounted and then replaced by it.
+ */
+export async function waitMounted(page: Page, file: string): Promise<FrameLocator> {
+  const expected = built.get(file);
+  if (!expected) throw new Error(`not built here: ${file}`);
+  const title = file.slice(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1).replace(/\.dai\.html$/, "");
   const app = appIn(page);
   const card = page.locator("#card-open");
   await expect
     .poll(
       async () => {
-        if (await card.isVisible()) {
-          await card.click();
-          return "opened from the card";
-        }
-        // Bounded: with no frame yet, isEnabled would wait for one.
-        return (await app.locator("#note").isEnabled({ timeout: 500 }).catch(() => false)) ? "mounted" : "waiting";
+        if (await card.isVisible()) await card.click();
+        const loaded = await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null);
+        if (loaded !== expected) return "another document";
+        // Bounded: with no frame yet, these would wait for one.
+        const named = await app.locator("title").textContent({ timeout: 500 }).catch(() => null);
+        const ready = await app.locator("#note").isEnabled({ timeout: 500 }).catch(() => false);
+        return named === title && ready ? "mounted" : "waiting";
       },
       { timeout: 60_000 },
     )
-    .not.toBe("waiting");
-  await expect(app.locator("#note")).toBeEnabled({ timeout: 60_000 });
+    .toBe("mounted");
   return app;
 }
 

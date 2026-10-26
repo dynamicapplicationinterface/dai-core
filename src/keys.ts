@@ -38,6 +38,12 @@ export const KEYS = {
    * under `ownerRecordKey`.
    */
   OWNER: "dai:owner",
+  /**
+   * IndexedDB, the opener's key store: the answer this browser context gave the
+   * offer to keep beyond this browser (R-Z sentence 3), once it gave one. One
+   * per context, never per document: answered once, it is not offered again.
+   */
+  KEEP_OFFER: "dai:keep-offer",
 } as const;
 
 /**

@@ -41,6 +41,7 @@ test.describe("the opener's storage and lock keys", () => {
     expect(seqFloorKey("u")).toBe("dai:seq-floor:u");
     expect(leftFloorKey("u")).toBe("dai:left-floor:u");
     expect(KEYS.OWNER).toBe("dai:owner");
+    expect(KEYS.KEEP_OFFER).toBe("dai:keep-offer");
     expect(ownerRecordKey("o")).toBe("dai:owner:o");
     expect(dataKeyKey("u")).toBe("dai:data-key:u");
   });
@@ -60,6 +61,7 @@ test.describe("the opener's storage and lock keys", () => {
       "dai:left-floor:",
       "dai:owner",
       "dai:data-key:",
+      "dai:keep-offer",
     ];
     const offenders: string[] = [];
     for (const { name, text } of openerSources()) {
@@ -89,6 +91,7 @@ test.describe("the opener's storage and lock keys", () => {
       seqFloorKey(uuid),
       leftFloorKey(uuid),
       KEYS.OWNER,
+      KEYS.KEEP_OFFER,
       ownerRecordKey("AAAAAAAAAAAAAAAAAAAAAA"),
       dataKeyKey(uuid),
     ];

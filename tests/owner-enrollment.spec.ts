@@ -17,6 +17,7 @@ import {
   storedHolds,
   typeNote,
   uuidOf,
+  waitMounted,
   withKeyStore,
 } from "./owner.js";
 
@@ -161,8 +162,9 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
       return btoa(String.fromCharCode(...id)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     });
 
+    // The opener resumes the document open last: that is this one, reopened.
     await page.goto(RUNNER_URL);
-    app = await openFile(page, file);
+    app = await waitMounted(page, file);
     await typeNote(app, " second");
     await expect.poll(() => storedHolds(page, uuid, "first second"), { timeout: 30_000 }).toBe(true);
     const author = await page.evaluate(() => (window as Any).__runner.authorId() as Promise<string>);

@@ -419,6 +419,29 @@
         border-bottom-color: color-mix(in srgb, var(--bad) 28%, transparent);
       }
       #doc-note[hidden] { display: none; }
+      /* The offer to keep beyond this browser: the note's row, in its quietest voice. */
+      #keep-offer {
+        margin: 0;
+        padding: calc(env(safe-area-inset-top) + 48px) 16px 10px;
+        font-size: 13px;
+        line-height: 1.35;
+        color: var(--muted);
+        background: var(--surface);
+        border-bottom: 1px solid var(--line-strong);
+      }
+      #doc-note:not([hidden]) + #keep-offer { padding-top: 10px; }
+      #keep-offer button {
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+        font-weight: 600;
+        color: var(--text);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        cursor: pointer;
+      }
+      #keep-offer[hidden] { display: none; }
 
       /*
        * The one control, over whatever the application is drawing.
@@ -1212,6 +1235,17 @@
       c424598, Q2.3). Opaque, full width, and the rows below it move down.
     -->
     <p id="doc-note" role="status" hidden></p>
+
+    <!--
+      The offer to keep work beyond this browser (R-Z sentence 3).
+
+      Once per browser context, after the first change a person makes has
+      landed here, and never before: not for the seed, another copy's changes,
+      or the runtime's own bookkeeping. A line, not a sheet: it takes no focus
+      and covers nothing, typing goes on under it, and nothing starts until a
+      tap. "Not now" is kept for the context; the menu still offers it.
+    -->
+    <p id="keep-offer" role="status" hidden>Saved in this browser. Keep your work if this browser is cleared. <button id="keep-offer-yes" type="button">Keep beyond this browser</button> · <button id="keep-offer-no" type="button">Not now</button></p>
 
     <!--
       Sending it.

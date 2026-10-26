@@ -88,7 +88,7 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, currentOwner, enroll, signIn, type NotEnrolled } from "./owner.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, signIn, type NotEnrolled } from "./owner.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -3643,6 +3643,8 @@ window.addEventListener("message", (event) => {
           void afterSaveWritten(documentUuid).catch((error: unknown) => {
             console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
           });
+          // A change of the person's has landed here: the moment to offer to keep it beyond (R-Z sentence 3).
+          void considerKeepOffer(data.payload?.authored === true && data.payload?.setup !== true, saveNumber);
           answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId });
         })
         .catch((error: unknown) => {
@@ -3721,9 +3723,55 @@ function keepBeyondThisBrowser(): void {
 }
 keepBeyond?.addEventListener("click", () => {
   closeSheet();
+  keepOffer.hidden = true;
   keepBeyondThisBrowser();
 });
 void showKeepBeyond();
+
+/**
+ * The offer to keep beyond this browser, as one line (R-Z sentence 3).
+ *
+ * Decided after each written save, in the order they land: offered when the
+ * save carried a change of the person's (the runtime says so: never the seed,
+ * a projection, or its own bookkeeping), the browser context has not answered
+ * the offer, and no owner is signed in here. Shown once per page at most.
+ * Nothing starts until a tap; the line takes no focus. The decisions are
+ * counted, so a test can wait for the one that says nothing was offered.
+ */
+const keepOffer = document.getElementById("keep-offer") as HTMLElement;
+let keepOfferDecided = 0;
+let keepOfferMade = false;
+let keepOfferDeciding: Promise<void> = Promise.resolve();
+function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<void> {
+  keepOfferDeciding = keepOfferDeciding.then(async () => {
+    try {
+      if (!personsChange || keepOfferMade) return;
+      const [answered, owner] = await Promise.all([keepOfferAnswer(), currentOwner()]);
+      if (answered !== null || owner !== null) {
+        console.info(`dai: keep offer not made after save ${saveNumber}: ${answered !== null ? `answered "${answered}" in this browser` : "an owner is signed in"}`);
+        return;
+      }
+      keepOfferMade = true;
+      keepOffer.hidden = false;
+      console.info(`dai: keep offer made after save ${saveNumber}`);
+    } catch (error: unknown) {
+      console.warn(`dai: keep offer not decided after save ${saveNumber}: ${String(error)}`);
+    } finally {
+      keepOfferDecided += 1;
+    }
+  });
+  return keepOfferDeciding;
+}
+document.getElementById("keep-offer-yes")?.addEventListener("click", () => {
+  keepOffer.hidden = true;
+  // The ceremony first, inside the tap; the answer is kept after.
+  keepBeyondThisBrowser();
+  void answerKeepOffer("keep");
+});
+document.getElementById("keep-offer-no")?.addEventListener("click", () => {
+  keepOffer.hidden = true;
+  void answerKeepOffer("not now");
+});
 
 document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
@@ -6247,6 +6295,10 @@ Object.defineProperty(window, "__runner", {
      * ceremony here, against its own passkey provider, as a tap would.
      */
     owner: { current: currentOwner, signIn },
+    /** Decisions made about the offer to keep beyond this browser, one per written save. */
+    get keepOfferDecided() {
+      return keepOfferDecided;
+    },
   },
 });
 
