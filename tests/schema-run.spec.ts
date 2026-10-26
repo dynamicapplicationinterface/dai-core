@@ -106,7 +106,7 @@ test.describe("what schedules a save", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     await expect(app.locator("#out")).toHaveText("0", { timeout: 30_000 });
-    await expect(page.locator("#save-state")).toHaveText("Saved", { timeout: 10_000 });
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser", { timeout: 10_000 });
     expect(await saves()).toBe(1);
 
     // Second open: the seed does nothing, the page reads ten times a second,
@@ -122,7 +122,7 @@ test.describe("what schedules a save", () => {
     // A write: one save, and the word for it.
     await again.locator("#bump").click();
     await expect(again.locator("#out")).toHaveText("1");
-    await expect(page.locator("#save-state")).toHaveText("Saved", { timeout: 10_000 });
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser", { timeout: 10_000 });
     expect(await saves()).toBe(1);
   });
 });

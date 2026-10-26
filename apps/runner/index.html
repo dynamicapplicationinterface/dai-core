@@ -395,6 +395,19 @@
         backdrop-filter: saturate(180%) blur(14px);
         box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
       }
+      /*
+       * And where the work is, once a person has made a change (R-Z): "Saved
+       * in this browser" stays up, quietly, because it stays true. Before a
+       * first change nothing is said, and while the offer to keep beyond this
+       * browser is up its line says it instead (`showStorage`).
+       */
+      #save-state[data-shown] {
+        display: inline-flex;
+        align-items: center;
+        -webkit-backdrop-filter: saturate(180%) blur(14px);
+        backdrop-filter: saturate(180%) blur(14px);
+        box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
+      }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
       /* A row of its own under the bar: opaque, so nothing shows through it. */

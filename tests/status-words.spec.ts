@@ -1,0 +1,97 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./fixtures.js";
+import { cutTheNetwork } from "./offline.js";
+import { RUNNER_URL, buildNotes, openFile, storedHolds, typeNote, uuidOf } from "./owner.js";
+import { storageWords } from "../apps/runner/src/status.js";
+
+/**
+ * The status words, Build 2b-1 (R-Z sentences 2 and 4; ruling 6 as amended).
+ *
+ * "Saved in this browser" is said on the host's acknowledgment of a local
+ * save, and it stays up. "Kept" is said only of a revision the owner's store
+ * acknowledged; there is no store in this build (2b-2), so it is never shown.
+ * Reconnecting alone changes nothing: only an acknowledgment would.
+ *
+ * The words appear once a change of the person's has landed, and while the
+ * offer to keep beyond this browser is up the line says them instead: storage
+ * is said in one place at a time.
+ */
+
+const SAVED = "Saved in this browser";
+const status = (page: Page) => page.locator("#save-state");
+/** The host's own text, the application's frames left out. */
+const hostText = (page: Page): Promise<string> => page.evaluate(() => document.body.innerText);
+
+/** Types a first change, and answers the offer "Not now", as a person who goes on would. */
+async function firstChange(page: Page, app: Awaited<ReturnType<typeof openFile>>, text: string): Promise<void> {
+  await typeNote(app, text);
+  await expect(page.locator("#keep-offer")).toBeVisible({ timeout: 30_000 });
+  await expect(status(page), "said once: the line says it while it is up").toBeHidden();
+  await page.locator("#keep-offer-no").click();
+}
+
+test.describe("the status words (R-Z sentences 2 and 4)", () => {
+  test.slow();
+
+  test("the words, from the host's evidence only", () => {
+    expect(storageWords({ state: "saved", kept: null })).toBe(SAVED);
+    expect(storageWords({ state: "saved", kept: { revision: "current", at: "10:42" } })).toBe("Kept");
+    expect(storageWords({ state: "saved", kept: { revision: "earlier", at: "10:42" } })).toBe("Saved in this browser. Last kept at 10:42.");
+    expect(storageWords({ state: "saving", kept: null })).toBe("Saving…");
+    expect(storageWords({ state: "failed", kept: { revision: "current", at: "10:42" } })).toBe("Not saved");
+  });
+
+  test("with no store to reach, a save says Saved in this browser and nothing else, and it stays up", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-status-"));
+    const file = await buildNotes(scratch, "Notes");
+    await page.goto(RUNNER_URL);
+    const app = await openFile(page, file);
+    const uuid = await uuidOf(page);
+    await firstChange(page, app, "one");
+    await expect(status(page)).toBeVisible();
+    await expect(status(page)).toHaveText(SAVED);
+
+    // Past the three seconds "Saved" used to stay for.
+    await page.waitForTimeout(4_000);
+    await expect(status(page)).toBeVisible();
+    await expect(status(page)).toHaveText(SAVED);
+
+    await app.locator("#note").press("End");
+    await app.locator("#note").pressSequentially(" two");
+    await expect.poll(() => storedHolds(page, uuid, "one two"), { timeout: 30_000 }).toBe(true);
+    await expect(status(page)).toHaveText(SAVED);
+    expect(await hostText(page)).not.toContain("Kept");
+  });
+
+  test("offline, a save says Saved in this browser; reconnecting alone changes nothing", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-status-"));
+    const file = await buildNotes(scratch, "Notes");
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    const app = await openFile(page, file);
+    const uuid = await uuidOf(page);
+    // Online first: on WebKit here no service worker serves the save's engine offline (owner-enrollment.spec).
+    await firstChange(page, app, "online");
+    await expect.poll(() => storedHolds(page, uuid, "online"), { timeout: 30_000 }).toBe(true);
+
+    const cut = await cutTheNetwork(context, page);
+    await app.locator("#note").press("End");
+    await app.locator("#note").pressSequentially(" offline");
+    await expect.poll(() => storedHolds(page, uuid, "online offline"), { timeout: 30_000 }).toBe(true);
+    await expect(status(page)).toHaveText(SAVED);
+    expect(cut.reached, cut.summary()).toEqual([]);
+
+    await context.setOffline(false);
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
+    // Nothing follows a reconnect that the words could wait on: what is checked is that they did not move.
+    await page.waitForTimeout(1_500);
+    await expect(status(page)).toHaveText(SAVED);
+    expect(await hostText(page)).not.toContain("Kept");
+    await context.close();
+  });
+});
+

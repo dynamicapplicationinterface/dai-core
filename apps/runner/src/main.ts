@@ -89,6 +89,7 @@ import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, signIn, type NotEnrolled } from "./owner.js";
+import { storageWords, type KeptReading } from "./status.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -604,8 +605,22 @@ function tellInsets(): void {
 window.addEventListener("resize", () => tellInsets());
 window.addEventListener("orientationchange", () => tellInsets());
 
-/** Hides "Saved" again a few seconds after it appears. See DAI_HOST_SAVE_STATE. */
-let savedFor: number | undefined;
+/**
+ * Where the status is shown (R-Z): once a change of the person's has landed on
+ * this page, and not while the offer to keep beyond this browser is up, which
+ * says it in its own line, so it is said in one place at a time. A failed save
+ * is always shown. "Kept" needs the store's acknowledgment, which has no
+ * source in Build 2b-1.
+ */
+let personsChangeLanded = false;
+const keptReading: KeptReading | null = null;
+function showStorage(): void {
+  const el = document.getElementById("save-state");
+  if (!el) return;
+  const offerUp = document.getElementById("keep-offer")?.hidden === false;
+  if (el.dataset.state === "failed" || (personsChangeLanded && !offerUp)) el.dataset.shown = "";
+  else delete el.dataset.shown;
+}
 
 /**
  * The hosts this opener has been, for a link made against one of them.
@@ -3340,19 +3355,19 @@ window.addEventListener("message", (event) => {
     if (!el) return;
     el.dataset.state = state;
     el.hidden = state === "idle";
-    el.textContent = state === "saving" ? "Saving…" : state === "saved" ? "Saved" : state === "failed" ? "Not saved" : "";
-    el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
     /*
-     * "Saved" says its piece and goes.
-     *
-     * A word that stays is a word somebody reads once and then looks past,
-     * and it was the only text left in a bar that is otherwise an icon and a
-     * menu. Saving and Not saved stay up, because one is still happening and
-     * the other is still true. The text is left on the element when it goes,
-     * so what it last said can still be read from the page.
+     * The words stay up (ruling 6 as amended, R-Z). "Saved" used to say its
+     * piece and go; now the status is a fact about where the work is, true
+     * until it changes, and it changes only on evidence: a save the host
+     * acknowledged, or one it could not make. "Kept" needs the store's
+     * acknowledgment of this revision, which Build 2b-1 has no store to give,
+     * and a connection coming back is not one. Where it is shown at all is
+     * `showStorage`.
      */
-    window.clearTimeout(savedFor);
-    if (state === "saved") savedFor = window.setTimeout(() => { el.hidden = true; }, 3000);
+    el.textContent =
+      state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading }) : "";
+    el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
+    showStorage();
     if (state === "failed" && wonElsewhere(data.error)) {
       tellOverDocument(elsewhereSentence(data.error), true);
     } else if (state === "failed" && data.error === SAVE_REFUSED) {
@@ -3724,6 +3739,7 @@ function keepBeyondThisBrowser(): void {
 keepBeyond?.addEventListener("click", () => {
   closeSheet();
   keepOffer.hidden = true;
+  showStorage();
   keepBeyondThisBrowser();
 });
 void showKeepBeyond();
@@ -3745,7 +3761,10 @@ let keepOfferDeciding: Promise<void> = Promise.resolve();
 function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<void> {
   keepOfferDeciding = keepOfferDeciding.then(async () => {
     try {
-      if (!personsChange || keepOfferMade) return;
+      if (!personsChange) return;
+      // From here the status is shown, or the line says it (showStorage).
+      personsChangeLanded = true;
+      if (keepOfferMade) return;
       const [answered, owner] = await Promise.all([keepOfferAnswer(), currentOwner()]);
       if (answered !== null || owner !== null) {
         console.info(`dai: keep offer not made after save ${saveNumber}: ${answered !== null ? `answered "${answered}" in this browser` : "an owner is signed in"}`);
@@ -3757,6 +3776,7 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
     } catch (error: unknown) {
       console.warn(`dai: keep offer not decided after save ${saveNumber}: ${String(error)}`);
     } finally {
+      showStorage();
       keepOfferDecided += 1;
     }
   });
@@ -3764,12 +3784,14 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
 }
 document.getElementById("keep-offer-yes")?.addEventListener("click", () => {
   keepOffer.hidden = true;
+  showStorage();
   // The ceremony first, inside the tap; the answer is kept after.
   keepBeyondThisBrowser();
   void answerKeepOffer("keep");
 });
 document.getElementById("keep-offer-no")?.addEventListener("click", () => {
   keepOffer.hidden = true;
+  showStorage();
   void answerKeepOffer("not now");
 });
 
