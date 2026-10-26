@@ -11388,6 +11388,41 @@ and reopen.
 **Acceptance:** the device reading is recorded for each way of leaving, and
 any that loses a write has its own entry with the fix.
 
+#### D295 — WebKit: `launch-address` 123 failed both tries once on `main`
+
+*Status: open, a timing race seen once. Filed 25 October, from `main`'s CI
+after the merge of PR #11. To be run ten times on WebKit locally in the next
+CI session.*
+
+Run 40231428101 on `ca680357` (the merge of PR #11), WebKit shard 2:
+`launch-address.spec.ts:123`, "after a store arrival, keeps the path and the
+key that fetch it again", failed both tries. It is the iOS relaunch path
+(the test drives WebKit with an iPhone's user agent).
+
+- **F. Try 1:** `page.goto(RUNNER_URL)` at line 166 was "interrupted by
+  another navigation to" the document's own address,
+  `/d/<hash>?ground=…&relaunched=1#h=…&k=…&opener-doc=…`: the opener's
+  relaunch at the address it keeps, racing the test's own navigation.
+- **F. Try 2:** `page.evaluate` in `servedManifest` (line 58, called at
+  line 153): "Execution context was destroyed, most likely because of a
+  navigation". The same relaunch, met one step earlier.
+- **F. The same tree passed it.** The merge's tree is the PR tip's
+  (`ac82294b`, an empty diff). It passed on all three of the PR's attempts
+  (40222804586 both attempts, 40228857794), and it failed no try in any of
+  the seven runs read back to 39675236961 (the last attempt of each).
+- **F. Attempt 2** of the same run (only the failed jobs again):
+  WebKit shard 2 passed, 220 of 220, `launch-address.spec.ts:123` on its
+  first try. The gate was then green on every engine and the count.
+- **I.** The test navigates while the opener may still be relaunching at
+  the document's address, so whichever lands second loses. Nothing here
+  shows which order the test means to wait for.
+
+**Change:** none yet. In the next CI session, run it ten times on WebKit
+locally (`--project=webkit --repeat-each=10 --retries=0 --workers=1`),
+on `ca680357` and on `9fdd9d07`, before calling it either way.
+**Acceptance:** those runs are read, and a failing one names the
+navigation it lost to.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
