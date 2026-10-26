@@ -21,7 +21,7 @@
  * before the ceremony is made synchronously.
  */
 import { KEYS, dataKeyKey, ownerRecordKey } from "../../../src/keys.js";
-import { keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore } from "./opfs.js";
+import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore } from "./opfs.js";
 
 /** One owner, as this browser context holds it. */
 export interface OwnerRecord {
@@ -287,4 +287,34 @@ export async function signIn(ownerId?: string): Promise<"opened" | "refused" | "
   }
   await keepInKeyStore(KEYS.OWNER, record.owner);
   return "opened";
+}
+
+/** Signs this browser context out of its owner. The owner's record and every wrap stay. */
+export async function leave(): Promise<void> {
+  await dropFromKeyStore(KEYS.OWNER);
+}
+
+/** One document in the library, and who holds it here: the owner signed in, or this browser alone. */
+export interface LibraryEntry {
+  documentUuid: string;
+  appName: string;
+  holder: "owner" | "this browser";
+}
+
+/**
+ * The library this browser lists for the person (R-B: keyed by owner; R-Z
+ * sentence 5): the documents held here under the owner signed in, and the ones
+ * no owner holds, as this browser's. Another owner's documents are not listed:
+ * they are that owner's, and come back with that owner's passkey. A document
+ * with no data key yet, saved before there were any, is no owner's.
+ */
+export async function libraryHere(items: readonly { documentUuid: string; appName: string }[]): Promise<LibraryEntry[]> {
+  const signedIn = await currentOwner();
+  const entries: LibraryEntry[] = [];
+  for (const { documentUuid, appName } of items) {
+    const held = await dataKeyOf(documentUuid);
+    if (!held?.owner) entries.push({ documentUuid, appName, holder: "this browser" });
+    else if (held.owner === signedIn) entries.push({ documentUuid, appName, holder: "owner" });
+  }
+  return entries;
 }

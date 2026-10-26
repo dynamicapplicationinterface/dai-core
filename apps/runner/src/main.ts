@@ -88,7 +88,7 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, signIn, type NotEnrolled } from "./owner.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, signIn, type NotEnrolled } from "./owner.js";
 import { storageWords, type KeptReading } from "./status.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -6316,7 +6316,12 @@ Object.defineProperty(window, "__runner", {
      * enrolls, and a person signs in at recovery, in 2b-2. A test asks for the
      * ceremony here, against its own passkey provider, as a tap would.
      */
-    owner: { current: currentOwner, signIn },
+    owner: {
+      current: currentOwner,
+      signIn,
+      leave,
+      library: async () => libraryHere(await listCartridgesFromLibrary()),
+    },
     /** Decisions made about the offer to keep beyond this browser, one per written save. */
     get keepOfferDecided() {
       return keepOfferDecided;
