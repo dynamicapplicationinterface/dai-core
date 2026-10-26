@@ -185,6 +185,16 @@ direction; the walk these serve is `docs/v1-walk.md`)
   that calls the API cannot see a control shown by mistake; a passing test cannot
   see how a screen reads cold.
 - **Reading the code is the hypothesis; running it is the test.**
+- **The local gate does not repeat CI** (D296). `npm run test:push` is the
+  fast tier before a push: drift without the merge fixtures, the typecheck,
+  the node project and the changesets suite, and the specs the branch's diff
+  reaches. The engine matrix, the merge-fixture check, the readers and the
+  properties are CI's, on the same commit. `npm run test:full` is the whole
+  local run, for a deliberate check.
+- **One push per build** (D296). The code and its handoff go up in one push,
+  and CI runs the engine matrix once on it. The handoff's CI table is the
+  next session's first commit; it changes only prose, so CI skips the
+  matrix on it and the PR stays mergeable.
 - **"Landed" means the CI verdict was read.** Until then it is "pushed, CI
   running". Written down because it was broken the day it mattered: a report
   called three screen changes landed while their run was still going, and the
@@ -11390,9 +11400,11 @@ any that loses a write has its own entry with the fix.
 
 #### D295 — WebKit: `launch-address` 123 failed both tries once on `main`
 
-*Status: open, a timing race seen once. Filed 25 October, from `main`'s CI
-after the merge of PR #11. To be run ten times on WebKit locally in the next
-CI session.*
+*Status: a known reading, like `mount-order:194` (D172): it fails on both
+`ca680357` and `9fdd9d07` (the reading below), so it is not Build 2a's. A
+CI red on it alone is read and named, not chased. Open for the test's fix.
+Filed 25 October, from `main`'s CI after the merge of PR #11; read
+26 October.*
 
 Run 40231428101 on `ca680357` (the merge of PR #11), WebKit shard 2:
 `launch-address.spec.ts:123`, "after a store arrival, keeps the path and the
@@ -11422,6 +11434,87 @@ locally (`--project=webkit --repeat-each=10 --retries=0 --workers=1`),
 on `ca680357` and on `9fdd9d07`, before calling it either way.
 **Acceptance:** those runs are read, and a failing one names the
 navigation it lost to.
+
+**The reading (26 October).** `launch-address.spec.ts:123` on WebKit,
+`--repeat-each=10 --retries=0`, this machine, `9fdd9d07` in a worktree of
+its own:
+
+| Commit | Four workers | One worker |
+|---|---|---|
+| `ca680357` (the merge of PR #11) | 6 of 10 failed | 2 of 10 failed |
+| `9fdd9d07` (before Build 2a) | 6 of 10 failed | 1 of 10 failed |
+
+- **F.** Every failure, on both commits, is the second shape CI saw:
+  `page.evaluate` in `servedManifest` (line 58, called at line 153),
+  "Execution context was destroyed, most likely because of a navigation".
+  None was the first shape (`page.goto` interrupted).
+- **F.** The test file is the same on both commits.
+- **I.** It flakes on the commit before Build 2a at the same rate, so it is
+  not that build's. It is load-dependent: four workers fail it about three
+  times as often as one. The navigation it loses to is the opener's iOS
+  relaunch to the document's `/d/<hash>` address; the test reads the served
+  manifest while that relaunch may still be on its way.
+
+**Change (the test's, not run yet):** wait for the relaunch to land (the
+address carrying `relaunched=1`) before `servedManifest` reads, so the
+read happens on the page that stays.
+
+#### D296 — A build costs one CI run of the browser matrix
+
+*Status: changed 26 October (below); open until its acceptance. Filed
+26 October.*
+
+A build cost three gates: the local push tier (`test:push`, about 70
+minutes: drift's merge-fixture check twice, about 20 minutes each, then the
+whole Chromium and node suite, 15 to 17 minutes), then a full CI run on the
+code, then a second full CI run on the handoff commit, which changes only
+prose. The second CI run tests the same tree as the first, and the push tier
+repeats most of what CI then runs on the same commit.
+
+**Change.** Three parts.
+
+1. **A commit that changes only prose skips the browser matrix.** The
+   workflow's first job, `changes`, runs `scripts/ci-changes.mjs` once and
+   passes `code=true|false` to the rest. The browser jobs, the Firefox
+   reading, the count gate and both property jobs run only when it is not
+   `false`; checks-fast and checks-holdout run on every commit. The jobs keep
+   their names and matrix, so the check names the ruleset requires are
+   unchanged.
+   - Prose is a path under `docs/` or `website/docs/`, or a `.md` file.
+   - The diff is taken from the nearest ancestor with a green run of the
+     workflow, not from the parent. A prose commit on top of a red or
+     cancelled run diffs from the last green tree, so the code that was never
+     passed is in it and the matrix runs.
+   - Prose a spec reads is not prose: the impact map claims
+     `website/docs/` pages (`rules.spec.ts` and others) and README files an
+     opener build reaches, and a change to one of those runs the matrix.
+   - What it cannot decide (no green ancestor among the last 100 runs, `gh`
+     unreadable) is code. The jobs' condition is "not `false`", so a failed
+     or empty answer runs everything.
+   - A merge commit on `main` whose tree is the green PR tip's has an empty
+     diff from it, so `main`'s run after a merge skips the matrix too.
+   - `scripts/ci-verdict.mjs` excuses the skipped jobs only when the run's own
+     `changes` job printed "docs only"; a skip in any other run is red.
+     `scripts/count-floor.mjs` passes over a green run that ran no tests.
+2. **The local gate stops repeating CI.** `npm run test:push` is the fast
+   tier: drift without the merge fixtures (31 s here), the typecheck, the
+   dictionary and confusable-table checks, then the changesets suite and the
+   specs the branch's diff reaches on Chromium (`scripts/impact.mjs`), and
+   the node project whole. A diff that reaches every spec runs the whole
+   Chromium and node suite through the count gate instead. The engine
+   matrix, the merge-fixture check, the readers, the hold-outs and the
+   properties run in CI. The old push tier is `npm run test:full`.
+3. **One push per build.** The code and its handoff go up together, and CI
+   runs the matrix once on that push. The handoff's CI table is the next
+   session's first commit, which changes only prose, so it costs no matrix
+   run.
+
+`scripts/ci-install-times.mjs <run> [attempt]` reads each browser job's
+install time and whether its cache hit (D292's measure, by hand until now).
+
+**Acceptance:** on this change's PR, a code push runs the matrix once and a
+prose commit after it shows every required check satisfied and the PR
+mergeable; and the next build's PR shows one matrix run.
 
 ### Branch review residue (filed 8 October)
 
