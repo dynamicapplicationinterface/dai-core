@@ -11362,8 +11362,10 @@ month of `main`'s Firefox runs in which it passes on the first try.
 
 #### D294 — A save asked as the page really leaves does not land in the runner
 
-*Status: open, to be checked on a device. Filed 25 October, from the review
-of Build 2a-r1. It predates PR #11.*
+*Status: read on a device 26 October: the save lands there, and the gap is
+in the test runner's navigation, not the document. Open only for the two
+other ways of leaving the acceptance names. Filed 25 October, from the
+review of Build 2a-r1. It predates PR #11.*
 
 A committed write whose autosave is still to come (within its 800 ms) is
 lost when the page really navigates away. The flush the leave asks for does
@@ -11387,10 +11389,13 @@ three engines.
   left to be written by. It predates this branch by the mechanism: the leave
   flush and the opener's store are older than R-Y (traced, not run on
   `main`, whose documents have no data interface to drive the same way).
-- **Not known:** whether a phone's browser, which keeps a page alive longer
-  on a switch away and kills it later, loses the same write. The test
-  runner's navigation is the harshest case and may not be what a person
-  does.
+- **F. The device reading, 26 October.** iPhone, Safari, opendai.app on
+  `ca680357` (its newest retained host `ccfda0885ab9c918`, the merge's),
+  the chore chart. A chore was edited, Safari was swiped away at once, and
+  on reopening the edit was there. So on a device the save asked by a real
+  leave lands; what loses it is the test runner's navigation, which ends
+  the shell, its worker and the opener together.
+- **Not read on the device:** closing the tab, and navigating away in it.
 
 **Change:** none yet. First the reading on a device: write, then leave at
 once by the three ways a person does (switch app, close the tab, navigate),
