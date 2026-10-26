@@ -20,10 +20,11 @@ jobs:
   # nearest ancestor with a green run, and no prose a spec reads, does not
   # change what the browser jobs, the count gate or the property checks test,
   # so they skip; checks-fast and checks-holdout run on every commit. The
-  # skipped jobs keep their names and matrix, so the ruleset's required checks
-  # are the ones it names. Anything the script cannot decide is code: the
-  # condition below is "not docs only", so a failed or empty answer runs
-  # everything (scripts/ci-changes.mjs).
+  # browser matrix skips by its steps, not the job (see the browser job), so
+  # its parts still report under the names the ruleset requires; the others
+  # skip whole, and a skipped job counts as passed. Anything the script
+  # cannot decide is code: the conditions below are "not docs only", so a
+  # failed or empty answer runs everything (scripts/ci-changes.mjs).
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -262,7 +263,14 @@ jobs:
   # not wait 40 minutes on a reading.
   browser:
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    # Every commit, not only code (D296): a matrix job skipped at the job level
+    # is reported as one check named for its unexpanded matrix, never as the
+    # parts the ruleset requires, and the PR waits on those forever (read on
+    # PR #12, run 40360107550). So the job runs, and on a docs-only commit its
+    # one step says so and passes; every other step is guarded by TESTS.
+    if: ${{ !cancelled() }}
+    env:
+      TESTS: ${{ needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
     # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
@@ -302,18 +310,26 @@ jobs:
 
     # Anchored: the Firefox job below runs these same steps.
     steps: &browser-steps
-      - uses: actions/checkout@v4
+      # A docs-only commit (the changes job): this job runs no tests and passes.
+      - if: env.TESTS != 'true'
+        run: echo "docs only since the green run the changes job names; no tests here (D296)"
 
-      - uses: actions/setup-node@v4
+      - if: env.TESTS == 'true'
+        uses: actions/checkout@v4
+
+      - if: env.TESTS == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - if: env.TESTS == 'true'
+        run: npm ci
 
       # The website has its own dependency tree, and the suite now opens its
       # pages: a control can vanish from one without any other test noticing.
-      - run: npm --prefix website ci
+      - if: env.TESTS == 'true'
+        run: npm --prefix website ci
 
       # This engine, and chromium — always. Some tests drive a Chromium
       # subprocess whatever the engine under test: the evaluation and try-harness
@@ -335,23 +351,26 @@ jobs:
       # Saved as soon as the install is done, not at the job's end: a cache is
       # kept only from a job that succeeds, and Firefox, a reading that is
       # often red, would never have kept one.
-      - id: playwright
+      - if: env.TESTS == 'true'
+        id: playwright
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - id: browsers
+      - if: env.TESTS == 'true'
+        id: browsers
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/ms-playwright
             ~/.cache/playwright-debs
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
-      - name: Install the browsers
+      - if: env.TESTS == 'true'
+        name: Install the browsers
         run: |
           if ls ~/.cache/playwright-debs/*.deb > /dev/null 2>&1; then sudo cp ~/.cache/playwright-debs/*.deb /var/cache/apt/archives/; fi
           npx playwright install --with-deps ${{ matrix.browser == 'node' && 'chromium' || matrix.browser }} chromium
           mkdir -p ~/.cache/playwright-debs
           cp /var/cache/apt/archives/*.deb ~/.cache/playwright-debs/ 2> /dev/null || true
           echo "packages kept for the next run: $(ls ~/.cache/playwright-debs | wc -l)"
-      - if: steps.browsers.outputs.cache-hit != 'true'
+      - if: env.TESTS == 'true' && steps.browsers.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -359,12 +378,13 @@ jobs:
             ~/.cache/playwright-debs
           key: ${{ steps.browsers.outputs.cache-primary-key }}
 
-      - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
+      - if: env.TESTS == 'true'
+        run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
         timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || matrix.browser == 'webkit' && matrix.part == 'mailbox' && 35 || 25 }}
 
       # This part's count, for the count-gate job's sum (scripts/count-parts.mjs),
       # whatever the tests did. A part that keeps none is red there by name.
-      - if: ${{ !cancelled() && matrix.browser != 'firefox' }}
+      - if: ${{ !cancelled() && matrix.browser != 'firefox' && env.TESTS == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: count-${{ matrix.browser }}-${{ matrix.part }}
@@ -372,7 +392,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - if: failure()
+      - if: failure() && env.TESTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.browser }}-${{ matrix.part }}
@@ -388,7 +408,7 @@ jobs:
       # "retain-on-failure"` already keeps the failed attempt's trace; this keeps
       # it past the job. Only what a failed attempt leaves, so a clean run
       # uploads nothing.
-      - if: success()
+      - if: success() && env.TESTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: retried-${{ matrix.browser }}-${{ matrix.part }}
@@ -404,6 +424,8 @@ jobs:
     name: browser (${{ matrix.browser }}, ${{ matrix.part }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    env:
+      TESTS: ${{ needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     continue-on-error: true

@@ -226,7 +226,14 @@ function main(argv) {
    */
   const docsOnly = docsOnlyFrom((perJob.get("changes") ?? []).join("\n"));
   if (docsOnly) console.log(`docs only since ${docsOnly.since}, green run ${docsOnly.run}: ${docsOnly.reason}`);
-  const excused = (job) => Boolean(docsOnly) && job.conclusion === "skipped" && skippedOnDocs(job.name);
+  // Skipped at the job level, or (the browser matrix, which must run to report
+  // the names the ruleset requires) passed by its one docs-only step, no tally.
+  const excused = (job) => {
+    if (!docsOnly || !skippedOnDocs(job.name)) return false;
+    if (job.conclusion === "skipped") return true;
+    const t = tallyFrom((perJob.get(job.name) ?? []).join("\n"));
+    return job.conclusion === "success" && t.passed === null && t.failed === null;
+  };
   console.log("");
 
   /*
