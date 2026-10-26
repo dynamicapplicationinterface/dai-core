@@ -88,6 +88,7 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
+import { afterSaveWritten, currentOwner, enroll, signIn, type NotEnrolled } from "./owner.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -3636,6 +3637,12 @@ window.addEventListener("message", (event) => {
            * reason. Off the save's path, like the replica record below.
            */
           if (data.payload?.setup !== true) askForPersistence("after the first save");
+          // The document's data key, made at its first landed save and wrapped
+          // under the owner signed in here, if any (R-D as amended). Off the
+          // save's path: the save is answered whatever this does.
+          void afterSaveWritten(documentUuid).catch((error: unknown) => {
+            console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
+          });
           answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId });
         })
         .catch((error: unknown) => {
@@ -3653,6 +3660,7 @@ const closeSheet = (): void => {
 
 openButton.addEventListener("click", () => fileInput.click());
 moreButton.addEventListener("click", () => {
+  void showKeepBeyond();
   slideOpen(sheet);
   // Checked here, on menu open, and never at load: the offline-open guarantee is
   // that a held document asks the network for nothing (T1 note in showVersion).
@@ -3682,6 +3690,40 @@ document.addEventListener("keydown", (event) => {
 // Keeping it is a menu item now, and what it opens is a sheet of its own:
 // the menu closes rather than stacking one sheet on another.
 document.getElementById("keep-cta")?.addEventListener("click", () => closeSheet());
+
+/**
+ * "Keep beyond this browser": owner enrollment, chosen (R-Z sentence 3).
+ *
+ * The ceremony starts in this tap and nowhere else, and `enroll` reaches it
+ * before anything is awaited: a passkey sheet is allowed only inside the tap.
+ * Every document this browser holds that no owner holds yet comes under the
+ * new owner; nothing is rewritten and nothing is uploaded. In the menu while
+ * this browser context has no owner.
+ */
+const keepBeyond = document.getElementById("keep-beyond") as HTMLButtonElement | null;
+const NOT_ENROLLED: Record<NotEnrolled, string> = {
+  cancelled: "No passkey was made. Your work is still saved in this browser.",
+  "no-prf": "This device's passkeys cannot keep work beyond this browser yet. Your work is still saved in this browser.",
+  unsupported: "This browser cannot make a passkey. Your work is still saved in this browser.",
+};
+async function showKeepBeyond(): Promise<void> {
+  if (keepBeyond) keepBeyond.hidden = (await currentOwner().catch(() => null)) !== null;
+}
+function keepBeyondThisBrowser(): void {
+  const enrolling = enroll(location.hostname, async () => (await listCartridgesFromLibrary()).map((item) => item.documentUuid));
+  void enrolling.then((result) => {
+    if ("refused" in result) {
+      console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
+      tellOverDocument(NOT_ENROLLED[result.refused]);
+    }
+    void showKeepBeyond();
+  });
+}
+keepBeyond?.addEventListener("click", () => {
+  closeSheet();
+  keepBeyondThisBrowser();
+});
+void showKeepBeyond();
 
 document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
@@ -6199,6 +6241,12 @@ Object.defineProperty(window, "__runner", {
     // test can hold the frame's id against it (docs/identity.md). Asking is a
     // use: it makes the key if there is none.
     authorId,
+    /*
+     * The owner (R-Z). Signing in has no control in Build 2b-1: the menu
+     * enrolls, and a person signs in at recovery, in 2b-2. A test asks for the
+     * ceremony here, against its own passkey provider, as a tap would.
+     */
+    owner: { current: currentOwner, signIn },
   },
 });
 

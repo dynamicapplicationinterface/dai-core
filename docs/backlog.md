@@ -5653,8 +5653,14 @@ finds no write control on screen.
 
 #### D195 — Person keys minted non-extractable, at Phase 3.1
 
-*Status: open, Build 2b (R-Z; was Phase 3.1). Filed 6 October, from pass B
-of the branch review (B15).*
+*Status: fixed, Build 2b-1 (R-Z; was Phase 3.1). Filed 6 October, from pass
+B of the branch review (B15).*
+
+**Fixed:** `mintPersonKey` makes the pair non-extractable, and the opener
+replaces a key kept extractable with a new one in one transaction on its next
+load (`replaceExtractablePersonKey`); `tests/owner-enrollment.spec.ts` holds
+both. identity.md says so. The README's "generated extractable so it can be
+backed up" is about the Studio's publisher key, not a person key, and stays.
 
 V1.0 ruling 4 makes a person key non-extractable. Today `mintPersonKey`
 generates the pair extractable (`src/identity.ts`), and its comment, the "Key

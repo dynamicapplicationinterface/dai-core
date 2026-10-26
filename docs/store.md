@@ -52,6 +52,21 @@ document.
   context (ruling 4, D195), and never sent anywhere; its public key is.
 - **A replaced passkey** re-wraps the owner key. Nothing else changes.
 
+The derivations, so another host derives the same keys:
+
+- The PRF extension evaluates the UTF-8 bytes of `dai owner prf v1`, at
+  registration and at every assertion.
+- Each wrapping key is HKDF-SHA-256 over the secret, with salt the UTF-8
+  bytes of `dai owner key v1` and info `prf` or `keychain`, to AES-KW-256. The
+  PRF secret is the PRF output; the keychain secret is the UTF-8 bytes of the
+  password the keychain holds, 32 random bytes in base64url.
+- The owner key is AES-KW-256, wrapped by AES-KW (`raw`) under each wrapping
+  key. A data key is AES-GCM-256, wrapped by AES-KW (`raw`) under the owner
+  key.
+- Whether a keychain kept its secret cannot be known by the page that
+  offered it: the keychain wrap is made whenever an owner enrolls, and the
+  keychain path is proven by a device reading (R-Z).
+
 This is R-D as amended 26 October: the owner key is wrapped twice, and each
 data key once under it. Either path still recovers every document, and a
 document made after enrollment needs no passkey ceremony to be kept.
