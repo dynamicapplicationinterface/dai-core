@@ -427,6 +427,16 @@ Home Screen app, and after the wipe; the keychain credential survived the
 wipe and filled in both contexts. **A.** One phone, one account, one passkey
 provider. A second of each is read before Gate C.
 
+**R-D amended, 26 October.** The data key is wrapped once, under the owner
+key; the owner key is wrapped twice, under the key derived from the
+passkey's PRF output and under the key derived from the keychain secret.
+Either path still recovers every document, through the owner key. A
+document made after enrollment is kept with no passkey ceremony, which the
+first clause requires (never on each save), and a replaced passkey re-wraps
+the owner key alone. *Rejected:* each data key wrapped under both secrets,
+which needs the PRF output, so a passkey ceremony, for every new document.
+The store's side is [store.md](store.md), "Keys".
+
 **R-E. A wipe makes a new author under the same owner.** The library shows
 one copy per working document, never one per author. Ruling 5 above now
 carries this. *Rejected:* a successor document per lost key (ruling 5 as

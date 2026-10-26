@@ -52,9 +52,9 @@ document.
   context (ruling 4, D195), and never sent anywhere; its public key is.
 - **A replaced passkey** re-wraps the owner key. Nothing else changes.
 
-R-D says the data key is wrapped twice; here the owner key is, and the data
-key once under it. Either path still recovers every document, and a document
-made after enrollment needs no passkey ceremony to be kept.
+This is R-D as amended 26 October: the owner key is wrapped twice, and each
+data key once under it. Either path still recovers every document, and a
+document made after enrollment needs no passkey ceremony to be kept.
 
 ## What the store holds
 
