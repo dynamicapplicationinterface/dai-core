@@ -644,6 +644,81 @@ export async function keepPersonKey(pair: CryptoKeyPair): Promise<void> {
 }
 
 /**
+ * Replaces a person key kept extractable, from before D195, with `next`, and
+ * answers with the key this device now holds.
+ *
+ * Read and written in one transaction: two tabs loading at once each find the
+ * extractable key, and only the first replaces it; the second finds the
+ * replacement and adopts it, so both end on one key, as `keepPersonKey`'s
+ * `add` does for a first key.
+ */
+export async function replaceExtractablePersonKey(next: CryptoKeyPair): Promise<CryptoKeyPair> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(KEY_STORE, "readwrite");
+    const store = tx.objectStore(KEY_STORE);
+    let held: CryptoKeyPair = next;
+    const read = store.get(KEYS.PERSON_KEY);
+    read.onsuccess = () => {
+      const kept = read.result as CryptoKeyPair | undefined;
+      if (kept?.privateKey && !kept.privateKey.extractable) held = kept;
+      else store.put(next, KEYS.PERSON_KEY);
+    };
+    tx.oncomplete = () => resolve(held);
+    tx.onerror = () => reject(tx.error ?? new Error("The key was not replaced."));
+    tx.onabort = () => reject(tx.error ?? new Error("The key's replacement was abandoned before it committed."));
+  });
+}
+
+/**
+ * One entry of the key store, as kept, or undefined. The owner's records and
+ * the documents' data keys (R-D as amended) are kept here, beside the person
+ * key, by the names `src/keys.ts` owns. A store that cannot be read throws.
+ */
+export async function keptInKeyStore<T>(key: string): Promise<T | undefined> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(key);
+    request.onsuccess = () => resolve(request.result as T | undefined);
+    request.onerror = () => reject(request.error ?? new Error("The key store could not be read."));
+  });
+}
+
+/** Keeps one entry of the key store, acknowledged when its transaction commits. */
+export async function keepInKeyStore(key: string, value: unknown): Promise<void> {
+  const db = await openIdb();
+  await committed(db.transaction(KEY_STORE, "readwrite"), (store) => store.put(value, key));
+}
+
+/**
+ * Keeps `value` under `key` only if nothing is kept there, in one transaction,
+ * and answers with what is kept there now: two writers racing to make the
+ * first one each end holding the one that was kept.
+ */
+export async function keepInKeyStoreOnce<T>(key: string, value: T): Promise<T> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(KEY_STORE, "readwrite");
+    const store = tx.objectStore(KEY_STORE);
+    let held: T = value;
+    const read = store.get(key);
+    read.onsuccess = () => {
+      if (read.result !== undefined) held = read.result as T;
+      else store.add(value, key);
+    };
+    tx.oncomplete = () => resolve(held);
+    tx.onerror = () => reject(tx.error ?? new Error("The key store write did not commit."));
+    tx.onabort = () => reject(tx.error ?? new Error("The key store write was abandoned before it committed."));
+  });
+}
+
+/** Drops one entry of the key store. */
+export async function dropFromKeyStore(key: string): Promise<void> {
+  const db = await openIdb();
+  await committed(db.transaction(KEY_STORE, "readwrite"), (store) => store.delete(key));
+}
+
+/**
  * The highest seq this device has let leave it for a document (cold review of
  * identity step 2, #1): the floor the frame's counter is held at. 0 when none
  * is kept. A read that fails is thrown, not read as 0: a floor of 0 on a

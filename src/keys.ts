@@ -32,7 +32,34 @@ export const KEYS = {
    * it makes this device a new author, and nothing re-creates the old one.
    */
   PERSON_KEY: "dai:person-key",
+  /**
+   * IndexedDB, the opener's key store: which owner this browser context is
+   * signed in as (R-Z), by owner id; absent when none. The owner's record is
+   * under `ownerRecordKey`.
+   */
+  OWNER: "dai:owner",
+  /**
+   * IndexedDB, the opener's key store: the answer this browser context gave the
+   * offer to keep beyond this browser (R-Z sentence 3), once it gave one. One
+   * per context, never per document: answered once, it is not offered again.
+   */
+  KEEP_OFFER: "dai:keep-offer",
 } as const;
+
+/**
+ * IndexedDB, the opener's key store: one owner's record in this browser
+ * context: the passkey's credential id, the owner key held non-extractable,
+ * and the owner key's two wraps (R-D as amended; docs/store.md, "Keys").
+ */
+export const ownerRecordKey = (ownerId: string): string => `dai:owner:${ownerId}`;
+
+/**
+ * IndexedDB, the opener's key store: a document's data key, minted at its first
+ * written save, with the owner it is wrapped under and the wrap, once it is
+ * (R-D as amended). Kept when the document is removed from this device only
+ * as long as the key store is: it dies with the browser's storage.
+ */
+export const dataKeyKey = (documentUuid: string): string => `dai:data-key:${documentUuid}`;
 
 /** Local storage: the colour under the clock this document last declared, per colour scheme. */
 export const groundKey = (documentUuid: string, scheme: string): string => `dai:ground:${documentUuid}:${scheme}`;

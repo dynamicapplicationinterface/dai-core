@@ -88,6 +88,8 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
+import { storageWords, type KeptReading } from "./status.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -603,8 +605,36 @@ function tellInsets(): void {
 window.addEventListener("resize", () => tellInsets());
 window.addEventListener("orientationchange", () => tellInsets());
 
-/** Hides "Saved" again a few seconds after it appears. See DAI_HOST_SAVE_STATE. */
-let savedFor: number | undefined;
+/**
+ * The status, and where it is shown (R-Z): once a change of the person's has
+ * landed on this page. A failed save is always shown. While the offer to keep
+ * beyond this browser stands, the status is the offer too ("Saved in this
+ * browser · Keep?"), in the pill's own box, which a tap opens the menu from:
+ * nothing the host shows covers the document. "Kept" needs the store's
+ * acknowledgment, which has no source in Build 2b-1.
+ */
+let personsChangeLanded = false;
+let keepOffering = false;
+/**
+ * The document whose stored data this browser held as it opened, and whether
+ * the frame now showing it is that document: a reopen's status is already
+ * true, so it is up without waiting for a change (2b1-M1).
+ */
+let heldAtOpen: string | undefined;
+let heldShown = false;
+const keptReading: KeptReading | null = null;
+function showStorage(): void {
+  const el = document.getElementById("save-state");
+  if (!el) return;
+  const state = el.dataset.state;
+  const words = state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading }) : "";
+  const offering = keepOffering && words !== "" && state !== "failed";
+  el.textContent = offering ? `${words} · Keep?` : words;
+  if (offering) el.dataset.offer = "";
+  else delete el.dataset.offer;
+  if (state === "failed" || ((personsChangeLanded || heldShown) && words !== "")) el.dataset.shown = "";
+  else delete el.dataset.shown;
+}
 
 /**
  * The hosts this opener has been, for a link made against one of them.
@@ -1192,6 +1222,7 @@ function eject(): void {
   paintAbove();
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
+  heldShown = false;
   const docNote = document.getElementById("doc-note");
   if (docNote) docNote.hidden = true;
   // What the arrival line and the loop guard say about the document that was
@@ -1255,6 +1286,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
 
     const stored = await readStored(cartridge.manifest.documentUuid);
     const opfsDb = stored.db;
+    heldAtOpen = opfsDb && opfsDb.byteLength > 0 ? cartridge.manifest.documentUuid : undefined;
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
@@ -1653,13 +1685,14 @@ async function mount(cartridge: Cartridge): Promise<void> {
       : "Running in a browser · its bars are the browser's. Add it to your Home Screen for the whole screen.";
   }
 
+  // "Kept" is the store's acknowledgment and nothing else's (R-Z sentence 2): this browser's library holding it is a save.
   const kept = document.getElementById("sheet-kept");
   if (kept) {
     kept.hidden = keptOnDevice === null;
     kept.dataset.state = keptOnDevice ? "kept" : "refused";
     kept.textContent = keptOnDevice
-      ? "Kept on this device · works offline"
-      : "Not kept — this device refused storage";
+      ? "Saved in this browser · works offline"
+      : "Not saved in this browser — it refused storage";
   }
   exportButton.textContent = "Save a copy…";
 }
@@ -2440,6 +2473,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     // With the revision it is, under the lock (2-H2).
     const stored = await readStored(cartridge.manifest.documentUuid);
     const opfsDb = stored.db;
+    heldAtOpen = opfsDb && opfsDb.byteLength > 0 ? cartridge.manifest.documentUuid : undefined;
     const arriving = savedAtOf(cartridge);
     const heldItem = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
@@ -3045,6 +3079,15 @@ window.addEventListener("message", (event) => {
     framed = undefined;
     mountNow = mountedNonce && shown ? { nonce: mountedNonce, cartridge: shown, writes: null } : null;
     const thisMount = mountNow;
+    // A document this browser already held: where it is, said as it opens.
+    heldShown = shown !== undefined && heldAtOpen === shown.manifest.documentUuid;
+    const saveState = document.getElementById("save-state");
+    if (heldShown && saveState) {
+      saveState.dataset.state = "saved";
+      saveState.hidden = false;
+      saveState.title = "";
+    }
+    showStorage();
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -3339,19 +3382,17 @@ window.addEventListener("message", (event) => {
     if (!el) return;
     el.dataset.state = state;
     el.hidden = state === "idle";
-    el.textContent = state === "saving" ? "Saving…" : state === "saved" ? "Saved" : state === "failed" ? "Not saved" : "";
-    el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
     /*
-     * "Saved" says its piece and goes.
-     *
-     * A word that stays is a word somebody reads once and then looks past,
-     * and it was the only text left in a bar that is otherwise an icon and a
-     * menu. Saving and Not saved stay up, because one is still happening and
-     * the other is still true. The text is left on the element when it goes,
-     * so what it last said can still be read from the page.
+     * The words stay up (ruling 6 as amended, R-Z). "Saved" used to say its
+     * piece and go; now the status is a fact about where the work is, true
+     * until it changes, and it changes only on evidence: a save the host
+     * acknowledged, or one it could not make. "Kept" needs the store's
+     * acknowledgment of this revision, which Build 2b-1 has no store to give,
+     * and a connection coming back is not one. Where it is shown at all is
+     * `showStorage`, which also writes the words.
      */
-    window.clearTimeout(savedFor);
-    if (state === "saved") savedFor = window.setTimeout(() => { el.hidden = true; }, 3000);
+    el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
+    showStorage();
     if (state === "failed" && wonElsewhere(data.error)) {
       tellOverDocument(elsewhereSentence(data.error), true);
     } else if (state === "failed" && data.error === SAVE_REFUSED) {
@@ -3636,6 +3677,21 @@ window.addEventListener("message", (event) => {
            * reason. Off the save's path, like the replica record below.
            */
           if (data.payload?.setup !== true) askForPersistence("after the first save");
+          // The document's data key, made at its first landed save and wrapped
+          // under the owner signed in here, if any (R-D as amended). Off the
+          // save's path: the save is answered whatever this does.
+          void afterSaveWritten(documentUuid).catch((error: unknown) => {
+            console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
+          });
+          /*
+           * A change of the person's has landed here: the moment to offer to keep
+           * it beyond (R-Z sentence 3). The runtime's flag alone says so (R-X): it
+           * already leaves out the seed, a projection of another copy's changes
+           * and its own bookkeeping, and the setup marking is not asked as well,
+           * since a merge applied on the runtime's own connection marks the next
+           * save setup-only whatever else it carries.
+           */
+          void considerKeepOffer(data.payload?.authored === true, saveNumber);
           answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId });
         })
         .catch((error: unknown) => {
@@ -3652,17 +3708,22 @@ const closeSheet = (): void => {
 };
 
 openButton.addEventListener("click", () => fileInput.click());
-moreButton.addEventListener("click", () => {
+function openMenu(): void {
+  void showKeepBeyond();
   slideOpen(sheet);
   // Checked here, on menu open, and never at load: the offline-open guarantee is
   // that a held document asks the network for nothing (T1 note in showVersion).
   void checkForUpdate();
-});
+}
+moreButton.addEventListener("click", openMenu);
 document.getElementById("doc-note")?.addEventListener("click", (event) => {
   (event.currentTarget as HTMLElement).hidden = true;
 });
 document.getElementById("save-state")?.addEventListener("click", (event) => {
-  if ((event.currentTarget as HTMLElement).dataset.state === "failed") slideOpen(sheet);
+  const el = event.currentTarget as HTMLElement;
+  if (el.dataset.state === "failed") slideOpen(sheet);
+  // The offer's first tap: the menu, whose first rows answer it. Nothing starts here.
+  else if (el.dataset.offer !== undefined) openMenu();
 });
 // Anywhere off the panel dismisses it, which is what a sheet does everywhere
 // else on a phone.
@@ -3682,6 +3743,110 @@ document.addEventListener("keydown", (event) => {
 // Keeping it is a menu item now, and what it opens is a sheet of its own:
 // the menu closes rather than stacking one sheet on another.
 document.getElementById("keep-cta")?.addEventListener("click", () => closeSheet());
+
+/**
+ * "Keep beyond this browser": owner enrollment, chosen (R-Z sentence 3).
+ *
+ * The ceremony starts in this tap and nowhere else, and `enroll` reaches it
+ * before anything is awaited: a passkey sheet is allowed only inside the tap.
+ * Every document this browser holds that no owner holds yet comes under the
+ * new owner; nothing is rewritten and nothing is uploaded. In the menu while
+ * this browser context has no owner.
+ */
+const keepBeyond = document.getElementById("keep-beyond") as HTMLButtonElement | null;
+const NOT_ENROLLED: Record<NotEnrolled, string> = {
+  cancelled: "No passkey was made. Your work is still saved in this browser.",
+  "no-prf": "This device's passkeys cannot keep work beyond this browser yet. Your work is still saved in this browser.",
+  unsupported: "This browser cannot make a passkey. Your work is still saved in this browser.",
+};
+async function showKeepBeyond(): Promise<void> {
+  if (keepBeyond) keepBeyond.hidden = (await currentOwner().catch(() => null)) !== null;
+}
+function keepBeyondThisBrowser(): void {
+  const enrolling = enroll(location.hostname, async () => (await listCartridgesFromLibrary()).map((item) => item.documentUuid));
+  void enrolling.then((result) => {
+    if ("refused" in result) {
+      console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
+      tellOverDocument(NOT_ENROLLED[result.refused]);
+    }
+    void showKeepBeyond();
+  });
+}
+keepBeyond?.addEventListener("click", () => {
+  closeSheet();
+  const answering = keepOffering;
+  setKeepOffering(false);
+  // The ceremony first, inside the tap; the offer's answer, when it stood, is kept after.
+  keepBeyondThisBrowser();
+  if (answering) void answerKeepOffer("keep");
+});
+document.getElementById("keep-not-now")?.addEventListener("click", () => {
+  closeSheet();
+  setKeepOffering(false);
+  void answerKeepOffer("not now");
+});
+void showKeepBeyond();
+
+/**
+ * The offer to keep beyond this browser, as the status pill (R-Z sentence 3).
+ *
+ * Decided after each written save, in the order they land: offered when the
+ * save carried a change of the person's (the runtime says so: never the seed,
+ * a projection, or its own bookkeeping), the browser context has not answered
+ * the offer, and no owner is signed in here. Made once per page at most, and
+ * withdrawn when an owner signs in while it stands.
+ * The pill reads "Saved in this browser · Keep?" in the box it already has, a
+ * tap on it opens the menu, and the menu's first two rows answer it; the
+ * ceremony starts only from the first. The decisions are counted, so a test
+ * can wait for the one that says nothing was offered.
+ */
+function setKeepOffering(on: boolean): void {
+  keepOffering = on;
+  document.body.classList.toggle("keep-offer", on);
+  const notNow = document.getElementById("keep-not-now");
+  if (notNow) notNow.hidden = !on;
+  showStorage();
+}
+let keepOfferDecided = 0;
+let keepOfferMade = false;
+let keepOfferDeciding: Promise<void> = Promise.resolve();
+function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<void> {
+  keepOfferDeciding = keepOfferDeciding.then(async () => {
+    try {
+      if (!personsChange) return;
+      // From here the status is shown (showStorage).
+      personsChangeLanded = true;
+      if (keepOfferMade) return;
+      const [answered, owner] = await Promise.all([keepOfferAnswer(), currentOwner()]);
+      if (answered !== null || owner !== null) {
+        console.info(`dai: keep offer not made after save ${saveNumber}: ${answered !== null ? `answered "${answered}" in this browser` : "an owner is signed in"}`);
+        return;
+      }
+      keepOfferMade = true;
+      setKeepOffering(true);
+      console.info(`dai: keep offer made after save ${saveNumber}`);
+    } catch (error: unknown) {
+      console.warn(`dai: keep offer not decided after save ${saveNumber}: ${String(error)}`);
+    } finally {
+      showStorage();
+      keepOfferDecided += 1;
+    }
+  });
+  return keepOfferDeciding;
+}
+/*
+ * An offer already standing is withdrawn once an owner is signed in, in this
+ * page or another of the browser context: the pill goes back to the status
+ * alone. In the order of the decisions, so one still being made lands first.
+ */
+onOwnerChange(() => {
+  void showKeepBeyond();
+  keepOfferDeciding = keepOfferDeciding.then(async () => {
+    if (!keepOffering || (await currentOwner().catch(() => null)) === null) return;
+    setKeepOffering(false);
+    console.info("dai: keep offer withdrawn: an owner is signed in");
+  });
+});
 
 document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
@@ -6199,6 +6364,21 @@ Object.defineProperty(window, "__runner", {
     // test can hold the frame's id against it (docs/identity.md). Asking is a
     // use: it makes the key if there is none.
     authorId,
+    /*
+     * The owner (R-Z). Signing in has no control in Build 2b-1: the menu
+     * enrolls, and a person signs in at recovery, in 2b-2. A test asks for the
+     * ceremony here, against its own passkey provider, as a tap would.
+     */
+    owner: {
+      current: currentOwner,
+      signIn,
+      leave,
+      library: async () => libraryHere(await listCartridgesFromLibrary()),
+    },
+    /** Decisions made about the offer to keep beyond this browser, one per written save. */
+    get keepOfferDecided() {
+      return keepOfferDecided;
+    },
   },
 });
 

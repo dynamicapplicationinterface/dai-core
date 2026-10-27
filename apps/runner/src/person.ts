@@ -24,7 +24,7 @@
  * (docs/identity.md, Loss), and the console says so once.
  */
 import { authorIdOf, mintPersonKey, rawPublicKey, showAuthorId, type KeptPersonKey } from "../../../src/identity.js";
-import { keepPersonKey, keptPersonKey } from "./opfs.js";
+import { keepPersonKey, keptPersonKey, replaceExtractablePersonKey } from "./opfs.js";
 
 export interface Person {
   keys: CryptoKeyPair;
@@ -73,6 +73,22 @@ export const mintedThisPage = (): boolean => mintedHere;
 
 async function load(): Promise<Person> {
   const kept = await readKept();
+  if (kept.kept === "key" && kept.keys.privateKey.extractable) {
+    /*
+     * A key made before D195, which could be turned into bytes. Re-keyed, not
+     * migrated: making it non-extractable in place would mean exporting it,
+     * and that would be the only code that ever read private key material. So
+     * this device mints a new key and writes from now on as a new author; its
+     * old rows keep their signatures (D195, ruling 5 as R-E words it).
+     */
+    const minted = await mintPersonKey();
+    const held = await replaceExtractablePersonKey(minted);
+    // Another tab's replacement, kept first, is this device's key too, and this page did not make it.
+    mintedHere = held === minted;
+    const person = await describe(held);
+    console.info(`dai: person key was extractable; this device writes as ${person.author} from now on (D195)`);
+    return person;
+  }
   if (kept.kept === "key") return describe(kept.keys);
   const minted = await mintPersonKey();
   mintedHere = true;

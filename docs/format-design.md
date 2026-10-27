@@ -1127,7 +1127,9 @@ replicated rows only (`handoff-2026-10-18.md`, §3, contradiction 3).
 digest, the document id, the revision, the database digest and the digest of
 each parent checkpoint. The chain, with its branches, is the recorded
 history, and any host verifies it. The store keeps the log and accepts an
-upload only by compare-and-swap on the parent it names (R-B).
+upload only by compare-and-swap on the parent it names (R-B). The store
+holds each checkpoint sealed in an envelope, and its contract is
+[store.md](store.md).
 
 **Rejected.** Unsigned personal records. Signing them through replication,
 which brings sessionless machinery into every personal app. Resealing the

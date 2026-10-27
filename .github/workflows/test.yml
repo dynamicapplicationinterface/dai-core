@@ -15,6 +15,11 @@ permissions:
   actions: read
 
 jobs:
+  # Every job runs on ubuntu-24.04, not ubuntu-latest (D299). ubuntu-latest
+  # moved to 26.04, where Playwright 1.63's WebKit cannot start: its build
+  # needs libicudata.so.74, which 26.04 does not carry. The pin comes off with
+  # a Playwright whose WebKit runs on 26.04.
+  #
   # Whether this run needs the browser matrix, decided once (D296). A commit
   # that changes only prose (docs/, website/docs/, a `.md` file) since the
   # nearest ancestor with a green run, and no prose a spec reads, does not
@@ -26,7 +31,7 @@ jobs:
   # cannot decide is code: the conditions below are "not docs only", so a
   # failed or empty answer runs everything (scripts/ci-changes.mjs).
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.decide.outputs.code }}
@@ -65,7 +70,7 @@ jobs:
   # holdout 8.5 min, properties.mjs 13.4, properties.py 6.2; the fast steps
   # about 7 with drift.
   checks-fast:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -130,7 +135,7 @@ jobs:
   # docs/format.md removed) still fails the fixtures named for it. It copies
   # dist/, which `npm ci` builds.
   checks-holdout:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -151,7 +156,7 @@ jobs:
   checks-properties-node:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -179,7 +184,7 @@ jobs:
   checks-properties-python:
     needs: [changes, checks-properties-node]
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -271,7 +276,7 @@ jobs:
     if: ${{ !cancelled() }}
     env:
       TESTS: ${{ needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
     # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
     # whose apt mirror was slow (30 September, D174), and that spent the tests'
@@ -426,7 +431,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     env:
       TESTS: ${{ needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     continue-on-error: true
     strategy:
@@ -442,7 +447,7 @@ jobs:
   count-gate:
     needs: [changes, browser]
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:

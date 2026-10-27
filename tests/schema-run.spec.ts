@@ -106,7 +106,7 @@ test.describe("what schedules a save", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     await expect(app.locator("#out")).toHaveText("0", { timeout: 30_000 });
-    await expect(page.locator("#save-state")).toHaveText("Saved", { timeout: 10_000 });
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser", { timeout: 10_000 });
     expect(await saves()).toBe(1);
 
     // Second open: the seed does nothing, the page reads ten times a second,
@@ -117,12 +117,14 @@ test.describe("what schedules a save", () => {
     await expect(again.locator("#out")).toHaveText("0", { timeout: 30_000 });
     await page.waitForTimeout(3000);
     expect(await saves()).toBe(0);
-    await expect(page.locator("#save-state")).toBeHidden();
+    // Said from what this browser holds as it opens, not from a save (2b1-M1).
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
 
     // A write: one save, and the word for it.
     await again.locator("#bump").click();
     await expect(again.locator("#out")).toHaveText("1");
-    await expect(page.locator("#save-state")).toHaveText("Saved", { timeout: 10_000 });
+    // A person's first change: the words carry the offer to keep beyond this browser.
+    await expect(page.locator("#save-state")).toHaveText(/^Saved in this browser/, { timeout: 10_000 });
     expect(await saves()).toBe(1);
   });
 });

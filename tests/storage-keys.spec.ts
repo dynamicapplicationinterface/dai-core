@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { KEYS, groundKey, installAskedKey, leftFloorKey, libraryLock, opensKey, seqFloorKey } from "../src/keys.js";
+import { KEYS, dataKeyKey, groundKey, installAskedKey, leftFloorKey, libraryLock, opensKey, ownerRecordKey, seqFloorKey } from "../src/keys.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -40,6 +40,10 @@ test.describe("the opener's storage and lock keys", () => {
     expect(libraryLock("u")).toBe("dai:u");
     expect(seqFloorKey("u")).toBe("dai:seq-floor:u");
     expect(leftFloorKey("u")).toBe("dai:left-floor:u");
+    expect(KEYS.OWNER).toBe("dai:owner");
+    expect(KEYS.KEEP_OFFER).toBe("dai:keep-offer");
+    expect(ownerRecordKey("o")).toBe("dai:owner:o");
+    expect(dataKeyKey("u")).toBe("dai:data-key:u");
   });
 
   test("no opener file writes one of these names by hand", () => {
@@ -55,6 +59,9 @@ test.describe("the opener's storage and lock keys", () => {
       "dai:person-key",
       "dai:seq-floor:",
       "dai:left-floor:",
+      "dai:owner",
+      "dai:data-key:",
+      "dai:keep-offer",
     ];
     const offenders: string[] = [];
     for (const { name, text } of openerSources()) {
@@ -83,6 +90,10 @@ test.describe("the opener's storage and lock keys", () => {
       KEYS.PERSON_KEY,
       seqFloorKey(uuid),
       leftFloorKey(uuid),
+      KEYS.OWNER,
+      KEYS.KEEP_OFFER,
+      ownerRecordKey("AAAAAAAAAAAAAAAAAAAAAA"),
+      dataKeyKey(uuid),
     ];
     expect(new Set(made).size, `two of these are the same string:\n  ${made.join("\n  ")}`).toBe(made.length);
   });

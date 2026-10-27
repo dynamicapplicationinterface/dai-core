@@ -42,15 +42,17 @@ function subtle() {
 }
 
 /**
- * A new person key.
+ * A new person key: an author key, one per signing context (V1.0 ruling 4,
+ * R-A, D195).
  *
- * Extractable on purpose: a key that can never leave the device can never
- * become a recovery phrase, and a person locked out of their own back
- * catalogue is the failure the enterprise story cannot have. The private half
- * still never leaves the host; the frame asks the host to sign.
+ * Not extractable: the private half can sign and nothing else, so no script,
+ * the host's included, can turn it into bytes. A person who loses the context
+ * loses the author, not the work: the owner recovers the working copy and the
+ * new context writes as a new author of it (R-E). The frame asks the host to
+ * sign.
  */
 export async function mintPersonKey(): Promise<SubtleKeyPair> {
-  return (await subtle().generateKey(ECDSA, true, ["sign", "verify"])) as SubtleKeyPair;
+  return (await subtle().generateKey(ECDSA, false, ["sign", "verify"])) as SubtleKeyPair;
 }
 
 /** The raw public key: 65 bytes, uncompressed. What an author id is the fingerprint of, and what `pub` carries. */

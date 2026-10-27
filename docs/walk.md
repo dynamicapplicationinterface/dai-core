@@ -29,13 +29,19 @@ From R-B (18 October, [backlog.md](backlog.md)). Return is transitions 6 and
 
 ### Keep
 
-From R-B (18 October, [backlog.md](backlog.md)). Keep is transitions 4
-and 5.
+From R-B (18 October) as R-Z amends it (26 October,
+[backlog.md](backlog.md)). Keep is transitions 4 and 5.
 
 - There is no keep sheet. Safari and an installed app are two authors of one
   working copy, so keeping never moves the person from one store to another.
-- The working copy's home is the owner's encrypted store; browser storage is
-  a cache of it.
+- "Keep beyond this browser" is not a keep sheet. It is the offer to enroll
+  as owner: made once per browser context, after the first saved change,
+  never blocking it. Dismissed, it stays in the menu and is not offered
+  again.
+- Before enrollment, this browser holds the only copy, and the status says
+  "Saved in this browser". After it, the working copy's home is the owner's
+  encrypted store, browser storage is a cache of it, and "Kept" is shown
+  only for what the store acknowledged.
 
 ## 1. Message
 

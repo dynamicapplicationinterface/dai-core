@@ -1165,6 +1165,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
      */
     // Said of the person's writes, before the save's own changeset row is written.
     const setup = setupOnly(db);
+    countUnlogged(db, setup);
     // Capture, then seal, then save: the changeset row is one of the rows the seal signs.
     saving = Promise.resolve()
       .then(() => captureSave(db))
@@ -1326,6 +1327,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * marked as run, so the kit does not run them either. A document with a
    * session policy runs them as it always has.
    */
+  /*
+   * The seed, run at this document's creation on this page (runSeedsOnce), is
+   * logged as the creator's first batch as soon as it has run, before any
+   * application code can write: it is the document's setup, not a person's
+   * change, and it is never counted. A change the person makes before the
+   * first save is then a batch of its own, and counted with that save.
+   */
   const SEEDED = "seed-blocks-ran";
   const runSeedsOnce = (db: Any): void => {
     if (!changes) {
@@ -1340,6 +1348,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     }
     runDocumentSql(db, "seed");
     trusted(() => db.exec({ sql: "INSERT OR IGNORE INTO _dai_meta (key, value) VALUES (?, '1')", bind: [SEEDED] }));
+    // Logged now, as its own batch: no application code has run yet. A seed that changed nothing logs none.
+    settleReplica(frameRows(db));
+    changes.save();
   };
 
   /*
@@ -1379,11 +1390,29 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     // A copy that arrived, or one rebuilt from another's log, is filled from what was admitted.
     started.projectAdmitted();
   };
+  /*
+   * The person's own changes, counted for the host (R-Z, Build 2b-1). A batch
+   * this author logged is one (R-X: a change or an explicit decision, never an
+   * echo), and nothing a remote apply or the runtime's bookkeeping writes ever
+   * is (R-S). In a document without the change log, a save that is not only
+   * the document's own setup SQL counts, or, under the policy layer, rows of
+   * this author's still to seal. A save says whether it carries one no landed
+   * save has carried yet; the host offers to keep work only after one lands.
+   */
+  let ownChanges = 0;
+  let ownLanded = 0;
   /** What changed since the last save, into the log: the first step of every save. */
   const captureSave = (db: Any): void => {
     if (!changes || db !== liveDb) return;
     settleReplica(frameRows(db));
-    changes.save();
+    const saved = changes.save();
+    if (!saved || saved.ops === 0) return;
+    ownChanges += 1;
+  };
+  /** The same count, for a document without the change log, read before its seal. */
+  const countUnlogged = (db: Any, setup: boolean): void => {
+    if (changes && db === liveDb) return;
+    if (mergeModule ? hasPendingOwn() : !setup) ownChanges += 1;
   };
 
   /*
@@ -2817,6 +2846,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   ): Promise<Any> =>
     new Promise((resolve, reject) => {
       const id = Math.random().toString(36).slice(2);
+      // The person's changes these bytes carry: every one counted before they were taken.
+      const carries = ownChanges;
       const done = (event: MessageEvent): void => {
         // From the shell, or from nobody. Otherwise a third window can tell an
         // application its work was saved when nothing was written.
@@ -2826,8 +2857,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         window.removeEventListener("message", done);
         // Landed: the host wrote it to this device's store and said so. A
         // download or a picker file is not this device's store.
-        if (data.ok && data.result?.method === "host" && data.result?.saved !== false && landing !== undefined) {
-          markLanded(landing);
+        if (data.ok && data.result?.method === "host" && data.result?.saved !== false) {
+          if (landing !== undefined) markLanded(landing);
+          ownLanded = Math.max(ownLanded, carries);
         }
         if (data.ok) resolve(data.result);
         else reject(new Error(String(data.error)));
@@ -2842,6 +2874,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // it opened (D36). Said by the runtime, which ran that SQL and watches
         // every write; a host cannot tell it from the bytes.
         setup: Boolean(options && options.setup),
+        // A change of this author's no landed save has carried yet (R-Z): what the
+        // host's offer to keep work waits for. Never the seed, a projection, or
+        // the runtime's bookkeeping (R-S).
+        authored: carries > ownLanded,
         // How far this copy's counter has reached: the host raises its floor
         // for the document to this before it writes the save.
         seq: (() => {
@@ -3265,6 +3301,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // Captured and sealed first, as an automatic save is (identity step 3).
       // Never inside the application's transaction: it waits for its end (2a-H1).
       const setup = setupOnly(db);
+      countUnlogged(db, setup);
       return noTransaction(db)
         .then(() => captureSave(db))
         .then(sealPending)
@@ -5285,6 +5322,7 @@ async function boot(): Promise<void> {
       sqlite?: Uint8Array;
       method?: SaveMethod;
       setup?: boolean;
+      authored?: boolean;
       seq?: number;
     };
     if (request?.type !== SAVE_REQUEST) return;
@@ -5355,6 +5393,7 @@ async function boot(): Promise<void> {
                 databaseBytes,
                 documentUuid: manifest?.documentUuid ?? "",
                 setup: request.setup === true,
+                authored: request.authored === true,
                 seq: Number.isSafeInteger(request.seq) ? request.seq : 0,
               },
             },

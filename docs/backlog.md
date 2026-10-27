@@ -269,6 +269,11 @@ principle beside them.
    recorded offline reopen; the last export date stays discoverable, with one
    quiet note when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
    backups; a storage dashboard; repeated prompts. *Principle:* P3.
+   **Amended 26 October by R-Z.** Two states remain, "Saved in this browser"
+   and "Kept"; *remembered here* and *ready offline* are retired as states
+   the person is shown. The status stays up, not shown and hidden. One line
+   may carry both facts when they differ: "Saved in this browser. Last kept
+   at 10:42."
 7. **Three share meanings, owned by the host.** An app requests an intent and
    never chooses a destination.
    - **Send the app:** the clean release this working copy currently runs.
@@ -280,6 +285,9 @@ principle beside them.
    - **Send this copy:** a sealed snapshot of the working copy, behind one host
      sheet that says the records travel.
    - **Invite:** V1.1.
+
+   R-Z (26 October) gives each meaning its exact contents and words, and adds
+   Save a copy beside them.
 
    *Rejected:* always sending the original publisher build after an
    improvement; a "clean copy" made from a used file; apps with their own
@@ -369,6 +377,15 @@ concurrent offline write, and both rows were lost.
   total wipe a dishonest store can serve an older valid checkpoint. The
   limitations box says so.
 
+**R-B amended, 26 October (R-Z).** Enrollment is chosen, never automatic:
+the host offers "Keep beyond this browser" once per browser context, after
+the first saved change, and setup starts only when the person chooses it. A
+recipient becomes owner of their own working copy when they choose it, not
+at first save. Until a person enrolls, this browser holds the only copy;
+from enrollment on, the store is the home and browser storage its cache.
+Enrollment never blocks a document from opening, and a store outage never
+blocks editing.
+
 The walk's constraints from this ruling are in [walk.md](walk.md).
 *Rejected:* browser storage as the home; a signed "latest" pointer as the
 defense against staleness, since a stale signed pointer verifies too.
@@ -409,6 +426,16 @@ replaced still verified.
 Home Screen app, and after the wipe; the keychain credential survived the
 wipe and filled in both contexts. **A.** One phone, one account, one passkey
 provider. A second of each is read before Gate C.
+
+**R-D amended, 26 October.** The data key is wrapped once, under the owner
+key; the owner key is wrapped twice, under the key derived from the
+passkey's PRF output and under the key derived from the keychain secret.
+Either path still recovers every document, through the owner key. A
+document made after enrollment is kept with no passkey ceremony, which the
+first clause requires (never on each save), and a replaced passkey re-wraps
+the owner key alone. *Rejected:* each data key wrapped under both secrets,
+which needs the PRF output, so a passkey ceremony, for every new document.
+The store's side is [store.md](store.md), "Keys".
 
 **R-E. A wipe makes a new author under the same owner.** The library shows
 one copy per working document, never one per author. Ruling 5 above now
@@ -452,6 +479,15 @@ interface (R-O):
   pending. Every other read sees the row with the later value.
 
 The clauses on V1.0 and V1.2 granularity and the clock-tie rule stand.
+
+**R-F amended, 26 October (R-Z).** For documents under the ordinary data
+interface, the V1.0 clause changes: copies of one working document reconcile
+at the column, as above, not at the checkpoint. The change log (`_cs_log`)
+is what merges; the checkpoint branch (R-B) is what carries a copy's log to
+another. A whole-database branch is never what the person chooses between,
+and "changes from your other device" is not shown as one block. A remaining
+disagreement is "Needs a look", with choices that name their effect (R-Z,
+item 6).
 *Rejected:* a declaration required before columns merge (R-F as first
 written), since undeclared apps then lose concurrent edits to different
 fields to a conflict nobody needed; a universal "pending never feeds
@@ -1172,6 +1208,175 @@ R2 and B2 remain the unresolved alternatives.
 No old token was accepted.
 No default or transition was misattributed as an edit.
 ```
+
+### What a person experiences, Build 2b (26 October)
+
+#### R-Z — Saved in this browser, kept beyond it
+
+Ruled 26 October. What a person meets in Build 2b: owner enrollment, the
+store, recovery, copies that reconcile, and the three sharing verbs. It
+amends R-B, ruling 6, R-F, D252 and the walk's Keep section, each at its
+own text, and puts D195 in Build 2b. The store's contract is
+[store.md](store.md).
+
+**What a person experiences**
+
+1. You can use the app before you're asked for anything. Your first change
+   is saved in this browser with no account, no passkey, no connection.
+2. "Saved in this browser" means this browser holds it. "Kept" means the
+   exact revision and what is needed to recover it are held outside this
+   browser, and the recovery you set up can get it back. The host never
+   says "Kept" about a change the store has not acknowledged.
+3. After your first saved change, the host quietly offers "Keep beyond this
+   browser." You can continue without answering. Setup starts only when you
+   choose it. Dismissing the offer changes nothing; it remains available in
+   the menu and does not reappear.
+4. Offline, you keep working. Changes save in this browser and the status
+   shows both facts: "Saved in this browser. Last kept at 10:42."
+   Reconnecting alone never changes the label; a successful acknowledgment
+   does.
+5. On a new phone or a cleared browser, choose Recover and authenticate.
+   Your library returns at the revisions successfully kept. The host tells
+   you which revision was restored. It identifies missing work only when
+   surviving evidence establishes what is missing; otherwise it says that
+   changes saved only in the cleared browser are not recoverable here. If
+   recovery is temporarily unavailable, it says so; it never presents a
+   fresh empty document as recovered.
+6. Changes from your other copies are incorporated automatically when they
+   can be reconciled safely. When a disagreement remains, the host marks the
+   affected information "Needs a look," preserves the alternatives, and
+   offers understandable choices that name their effect (Use Friday · Use
+   Saturday · Decide later). You can decide later without losing either
+   version.
+7. Save a copy is available without enrollment or a connection for a
+   document on this device. It produces a self-contained file including
+   locally acknowledged changes, even those not yet kept. If the export
+   cannot complete, the host says so and leaves the working copy unchanged;
+   cancellation is never reported as a completed backup.
+8. Enrollment never blocks a document from opening. A store outage never
+   blocks editing.
+
+**The three sharing verbs**
+
+- **Send the app:** the current accepted release, including accepted
+  modifications and its designated starter content. No records, retained
+  history, unresolved alternatives or recovery credentials from the working
+  copy.
+- **Send this copy:** a snapshot containing the records, retained history
+  and unresolved alternatives, with an explicit confirmation before sending:
+  "This sends your records, their history, and unresolved choices. History
+  may include earlier information you have deleted." Receiving the file does
+  not enroll the recipient into the sender's owner identity or library. One
+  fixed meaning; no history toggle in 2b.
+- **Save a copy:** a portable backup of this document and the evidence
+  needed to interpret it: records and history, never author private keys,
+  owner credentials or store access tokens. Labeled "For your own backup.
+  Contains your records and their history." Send this copy and Save a copy
+  may share one format; they differ in action and explanation.
+
+**Decisions**
+
+- **The offer is once per browser context.** "Keep beyond this browser" is
+  offered after the first saved change in a browser context, whichever
+  document it was in, and never again in that context once answered or
+  dismissed. The menu keeps it. Safari and a Home Screen app are two
+  contexts (ruling 4), so each is offered once.
+- **The host's presence over the document is fixed** (27 October). It is the
+  floating cluster at the top right and, when there is one, the single note
+  row above the document. Nothing the host shows ever adds to it, grows it,
+  or moves the document. The offer, the status and every later host word live
+  inside that presence. So the offer is the status pill itself, "Saved in this
+  browser · Keep?", and a tap on it opens the menu, whose first two rows are
+  "Keep beyond this browser" and "Not now"; the ceremony starts only from the
+  first. Consistent with it: the pill is sized for its widest text, so the
+  offer never grows it; "Keep beyond this browser" answers the offer only
+  while the offer shows; and no offer is made once an owner is signed in.
+  **Acceptance:** with an application whose one control runs along the
+  bottom edge, at phone and desktop widths, every point outside the cluster
+  is the document's while the offer shows, the control takes every tap, the
+  document does not move, and the pill is no larger with the offer than
+  without it.
+- **The restored revision, in words.** With no surviving evidence of what is
+  missing, item 5's sentence is: "Restored the copy kept at 10:42. Changes
+  saved only in the cleared browser are not included." The time is the
+  store's acknowledgment of the restored checkpoint, shown in the person's
+  local time. A stale recovery a surviving client reports (R-G) is a
+  separate sentence, not this one.
+- **Send this copy, opened by its own owner, is another copy.** It
+  reconciles under item 6, as a second device's copy would. A Send this
+  copy file from anyone else arrives as a snapshot, shown only on request
+  ("View received copy", the assessment's §4.2), and never merges into a
+  working copy. The file's claims do not decide which: it is the owner's own
+  only when this owner's library holds its working document and every
+  author in its history is enrolled under this owner. Anything less is a
+  snapshot. **Acceptance:** the owner's own file reconciles; a file from
+  another owner, carrying the same working document id and a planted value,
+  opens as a snapshot and the working copy is unchanged.
+- **Choice labels are data inside host words.** The choices in item 6 name
+  their effect with the record's values, and those values are quoted as
+  data inside fixed host words ("Use" and the value; "Decide later"). No
+  text the application or the record supplies is shown as a host sentence
+  (D256). A value is shown whole or cut with a visible mark; it never
+  changes the words around it.
+- **The store's contract is written now** ([store.md](store.md)), as an
+  open contract with a local test store. The store and the local test store
+  are built in 2b-2.
+- **D195 is in Build 2b.** One author per context (R-A, R-E) needs a key
+  that cannot leave its context. Author keys are minted non-extractable, and
+  a context holding an extractable key re-keys as D195 says.
+
+**Red tests**
+
+- A kept; B local-only; complete wipe; recover → A returns exactly; the
+  restored revision is identified; no claim that B survived; no invented
+  description or count of B.
+- Passkey recovery and keychain recovery → each independently retrieves and
+  decrypts the kept document after local loss; one never stands in for the
+  other.
+- First user change, offline, enrollment declined → local save succeeds;
+  the invitation neither blocks the action nor starts authentication;
+  dismissal does not trigger another invitation.
+- Store unavailable → documents on the device remain editable; new edits
+  stay local-only; the last kept revision does not falsely advance.
+- Two copies, compatible changes → reconciled without "Needs a look."
+- Two copies, a real disagreement → alternatives remain available; choices
+  describe their effect; deciding later preserves the disagreement.
+- Send the app from a used copy → inspect the unpacked artifact, database,
+  history, alternatives and packaged attachments, with distinctive private
+  values planted in each; none travel, nor any credential.
+- Sharing transport fails → any fallback preserves the chosen meaning; Send
+  the app never falls back to a personal-history export.
+- Save a copy offline with unkept edits → the export contains the locally
+  acknowledged edits and required evidence; failure or cancellation is not
+  reported as a completed backup.
+- **The store cannot read the records.** Take everything the local test
+  store holds, and every request it received, after enrollment, saves on two
+  authors, and a recovery. No record value decrypts from it, and distinctive
+  values planted in records, history and alternatives appear nowhere in it,
+  in any encoding the host writes. The wrapped data keys open only with the
+  passkey's PRF output or the keychain secret, neither of which the store
+  receives. (R-B: the store is trusted for liveness, never for content. The
+  owner/author spike's store could open every checkpoint.)
+- **Every kept revision is signed.** A restored revision verifies against
+  its author key and its parent chain (R-C). A checkpoint whose signature,
+  author enrollment or parent digest fails is refused, not restored, and
+  "Kept" is never shown for it.
+- **Each recovery path, where it can run.** In CI, on Chromium's virtual
+  authenticator with PRF: recover with the keychain wrap removed, and with
+  the passkey wrap removed; each decrypts, and each fails with its own wrap
+  removed too. WebKit under Playwright cannot emulate a passkey, and the
+  phone's keychain path is a password autofill, so each path alone is also
+  read on an iPhone, in Safari and a Home Screen app, after a website-data
+  wipe; the reading names its carrier and opener build (R-L).
+
+*Rejected:* enrollment at first save (R-B as first written), since an
+offer a person cannot ignore blocks item 1; a history toggle on Send this
+copy; secure deletion of history, which R-C and R-X keep by design;
+merging a received file into a working copy on the file's own claim of
+identity.
+*Evidence:* the owner/author spike (C, D) for the recovery paths and the
+store that could read; the assessment's §4.4 and D251, D252 for the share
+meanings; R-X for what history holds.
 
 ### The data interface's runtime rules
 
@@ -5463,8 +5668,14 @@ finds no write control on screen.
 
 #### D195 — Person keys minted non-extractable, at Phase 3.1
 
-*Status: open, for Phase 3.1. Filed 6 October, from pass B of the branch review
-(B15).*
+*Status: fixed, Build 2b-1 (R-Z; was Phase 3.1). Filed 6 October, from pass
+B of the branch review (B15).*
+
+**Fixed:** `mintPersonKey` makes the pair non-extractable, and the opener
+replaces a key kept extractable with a new one in one transaction on its next
+load (`replaceExtractablePersonKey`); `tests/owner-enrollment.spec.ts` holds
+both. identity.md says so. The README's "generated extractable so it can be
+backed up" is about the Studio's publisher key, not a person key, and stays.
 
 V1.0 ruling 4 makes a person key non-extractable. Today `mintPersonKey`
 generates the pair extractable (`src/identity.ts`), and its comment, the "Key
@@ -10472,14 +10683,26 @@ pass the chosen meaning through the fallback. **Acceptance:**
 
 #### D252 — Deleted rows travel in the bytes that leave
 
-*Status: open, held not fixed; the next builder session. Filed 18 October,
-from the assessment (B8).*
+*Status: open, narrowed 26 October by R-Z. Filed 18 October, from the
+assessment (B8).*
 
 Ran on the shipped sqlite-wasm 3.53.0: `secure_delete pragma: 0`, `deleted
 text present in exported bytes: true`. No `secure_delete` or `VACUUM` is in
-`src/` or `apps/runner/src/`. **Change:** `PRAGMA secure_delete=ON` at open,
-or `VACUUM INTO` for the leaving bytes (send, Save a copy, succession).
-**Acceptance:** a sentinel test on each.
+`src/` or `apps/runner/src/`.
+
+**Narrowed by R-Z.** Two kinds of deleted information are told apart. Freed
+pages are residue: no bytes that leave carry them. The history is evidence:
+R-C and R-X keep earlier values in the log by design, and Send this copy
+says so before it sends ("History may include earlier information you have
+deleted"). So Send this copy and Save a copy carry the history and no freed
+pages; Send the app carries neither.
+
+**Change:** `PRAGMA secure_delete=ON` at open, or `VACUUM INTO` for the
+leaving bytes (send, Save a copy, succession), for the freed pages; nothing
+removes history. **Acceptance:** two sentinels on each artifact. A value
+whose page was freed, with no history naming it, appears in none of them.
+A value deleted after a save, so the history holds it, appears in Send this
+copy and Save a copy, and not in Send the app.
 
 #### D253 — An app that keeps its data in browser storage is accepted silently
 
@@ -10521,6 +10744,10 @@ verbatim (`bootloader.ts:4188-4208`) into `#doc-note` (`main.ts:3309-3361`),
 so app-chosen text speaks in the host's voice. **Change:** fixed host
 sentences; log the frame's text instead of showing it. **Acceptance:** an
 e2e test with an app that cannot be trusted.
+
+R-Z (26 October) extends the rule to record values on host sheets: a
+choice's label quotes the value as data inside fixed host words, and the
+value never changes the words around it.
 
 #### D257 — The count gate does not cover WebKit
 
@@ -11543,6 +11770,102 @@ install time and whether its cache hit (D292's measure, by hand until now).
 **Acceptance:** on this change's PR, a code push runs the matrix once and a
 prose commit after it shows every required check satisfied and the PR
 mergeable; and the next build's PR shows one matrix run.
+
+### Build 2b-1 (filed 26 October)
+
+#### D297 — An application's own write as it opens can bring the offer to keep
+
+*Status: open. Filed 26 October, from Build 2b-1, item 2.*
+
+The offer to keep beyond this browser follows the first landed save that
+carries a batch of this author's (R-Z sentence 3, `considerKeepOffer`). The
+seed, an echo, a remote apply and the runtime's bookkeeping carry none
+(`tests/keep-offer.spec.ts`). An application that inserts a row of its own as
+it opens does: under R-X it is this author's change, though no person made
+it, and the offer can appear before anyone has used the document. So does a
+join under the policy layer: the seat row a joining copy writes is this
+author's, and the offer follows it (seen in `push-e2e.spec.ts`, where the
+line appeared as Bo joined).
+
+A reading of whether a person used the page cannot come from the shell: the
+host's own controls (the card's Open) activate it, since user activation
+reaches same-origin descendants, and the shell is the host's origin. Only the
+application's frame, which has an opaque origin, is activated by the person
+alone. **Change:** the application's frame says, once, when it is first
+activated by a trusted event, and a save carries it; an application that
+forges it only brings its own offer early, which R-Y's boundary allows.
+**Acceptance:** an application that writes a row as it opens shows no offer
+until the person types (the test removed from `keep-offer.spec.ts` in Build
+2b-1, restored).
+
+#### D298 — On Safari the keychain secret is never offered to the keychain
+
+*Status: open, owed with the iPhone reading. Filed 26 October, from Build
+2b-1, item 1.*
+
+Enrollment makes the keychain wrap whatever happens to the secret, because
+no page can know whether a keychain kept it (`offerToKeychain`,
+`apps/runner/src/owner.ts`). Where the Credential Management API is present
+(Chromium) the secret is offered through it. Safari has none, so there the
+secret is offered to nothing, and the keychain wrap is under a secret no
+keychain holds: on an iPhone, recovery has the passkey path alone. The
+spike reached Safari's keychain through a form submission it offers to save,
+which reloads the page ("Owner/author spike", probe fault 2). **Change:** that
+form path, with the enrollment's state kept across the reload. **Acceptance:**
+on an iPhone, in Safari and a Home Screen app, the keychain wrap alone
+recovers the owner key after a website-data wipe (R-Z, "Each recovery path,
+where it can run").
+
+### Build 2b-1r (filed 27 October)
+
+#### D299 — CI's WebKit cannot start on ubuntu-26.04
+
+*Status: changed 27 October (below); open until the pin comes off. Filed
+27 October, from the code review of Build 2b-1r (2b1r-H1).*
+
+Every job of `.github/workflows/test.yml` ran on `ubuntu-latest`, and
+`ubuntu-latest` moved from ubuntu-24.04 to ubuntu-26.04 between run
+40411774935 (`34851c6e`, green, `Image: ubuntu-24.04`) and the next two:
+40499594197 on `b7d3e6ae` and 40505641731 on `33fc5c42`, a docs-only commit,
+both `Image: ubuntu-26.04`. In both, every WebKit test failed in
+`browserType.launch` before any page loaded: Playwright 1.63 installs
+`webkit-2359`, whose MiniBrowser needs the ICU 74 library
+(`libicudata.so.74: cannot open shared object file`), and 26.04 does not
+carry it; `playwright install --with-deps` does not install it either. The
+WebKit parts and the WebKit mailbox job went red, and the count gate with
+them. Chromium, node and the checks jobs passed.
+
+**Change.** Every job's `runs-on` is `ubuntu-24.04`, so the image no longer
+moves under a run.
+
+**Upgrade path.** A Playwright version whose WebKit build runs on
+ubuntu-26.04; then the pin comes off (`ubuntu-latest`, or `ubuntu-26.04`)
+in the same change as the upgrade, and that change's run shows WebKit
+launching on the new image.
+
+**Acceptance:** this change's run shows `Image: ubuntu-24.04` in every job
+and WebKit launching, its parts and its mailbox job green.
+
+#### D300 — The pill's reserved width is today's widest words, not 2b-2's
+
+*Status: open, to be settled in 2b-2. Filed 27 October, from the code review
+of Build 2b-1r (observations).*
+
+The status pill keeps one box whatever it says, so nothing the host shows
+grows or moves over the document (R-Z, the host's fixed presence): it is
+sized by measuring its widest text (`#save-state[data-shown]::after` in
+`apps/runner/index.html`), today "Saved in this browser · Keep?". R-Z
+sentence 4's line, "Saved in this browser. Last kept at 10:42.", is longer.
+When 2b-2 gives the status a source for it, the pill grows unless its
+measure changes with it, which the fixed presence forbids.
+
+**Change, in 2b-2:** that line fits the box the pill has now, without
+growing it, by one of: shorter words for the same facts, or a second line
+inside the pill's own box. Which is 2b-2's to decide, with the words.
+**Acceptance:** with "Saved in this browser. Last kept at 10:42." shown, the
+pill's box measures no larger than with "Saved in this browser · Keep?", at
+phone and desktop width, on three engines (the measurement in
+`keep-offer.spec.ts`'s pill tests).
 
 ### Branch review residue (filed 8 October)
 
