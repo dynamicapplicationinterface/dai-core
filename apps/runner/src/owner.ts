@@ -97,6 +97,25 @@ export async function currentOwner(): Promise<string | null> {
   return (await keptInKeyStore<string>(KEYS.OWNER)) ?? null;
 }
 
+/**
+ * Who is signed in changes for the whole browser context, so every page of it
+ * hears of it: this one directly, the others over a channel of the origin's.
+ * A listener reads `currentOwner` again rather than trusting the message.
+ */
+const ownerChanged = new Set<() => void>();
+const ownerChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("dai:owner") : null;
+ownerChannel?.addEventListener("message", () => {
+  for (const listener of ownerChanged) listener();
+});
+function announceOwnerChange(): void {
+  for (const listener of ownerChanged) listener();
+  ownerChannel?.postMessage("changed");
+}
+/** Calls `listener` whenever an owner signs in or leaves, in this page or another page of this browser context. */
+export function onOwnerChange(listener: () => void): void {
+  ownerChanged.add(listener);
+}
+
 /** The answer this browser context gave the offer to keep beyond it, or null while it has given none (R-Z sentence 3). */
 export async function keepOfferAnswer(): Promise<"keep" | "not now" | null> {
   return (await keptInKeyStore<{ answer: "keep" | "not now" }>(KEYS.KEEP_OFFER))?.answer ?? null;
@@ -224,6 +243,7 @@ async function keep(owner: string, credential: string, prf: Uint8Array<ArrayBuff
   const record: OwnerRecord = { owner, credential, key, wraps, keychain, enrolled: new Date().toISOString() };
   await keepInKeyStore(ownerRecordKey(owner), record);
   await keepInKeyStore(KEYS.OWNER, owner);
+  announceOwnerChange();
   for (const documentUuid of documents) await wrapUnder(documentUuid, record);
   console.info(`dai: enrolled as owner ${owner}; keychain secret ${keychain}; ${documents.length} document(s) adopted`);
   return { enrolled: owner };
@@ -286,12 +306,14 @@ export async function signIn(ownerId?: string): Promise<"opened" | "refused" | "
     return "refused";
   }
   await keepInKeyStore(KEYS.OWNER, record.owner);
+  announceOwnerChange();
   return "opened";
 }
 
 /** Signs this browser context out of its owner. The owner's record and every wrap stay. */
 export async function leave(): Promise<void> {
   await dropFromKeyStore(KEYS.OWNER);
+  announceOwnerChange();
 }
 
 /** One document in the library, and who holds it here: the owner signed in, or this browser alone. */

@@ -260,6 +260,38 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await context.close();
   });
 
+  test("an offer standing in one tab is withdrawn when an owner enrolls in another tab of the same browser context", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "a passkey with PRF is Chromium's virtual authenticator");
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const first = await buildNotes(scratch, "First");
+    const second = await buildNotes(scratch, "Second");
+    const context = await browser.newContext();
+    const one = await context.newPage();
+    await one.goto(RUNNER_URL);
+    await typeNote(await openFile(one, first), "first");
+    await expect(offer(one)).toHaveText(OFFER, { timeout: 30_000 });
+
+    // A second tab: it resumes the first document, then a second one is picked, changed, and kept beyond from its offer.
+    const two = await context.newPage();
+    await two.goto(RUNNER_URL);
+    await addPasskeyProvider(context, two);
+    await waitMounted(two, first);
+    await typeNote(await openFile(two, second), "second");
+    await expect(offer(two)).toBeVisible({ timeout: 30_000 });
+    await offer(two).click();
+    await two.locator("#keep-beyond").click();
+    await expect.poll(() => currentOwner(two), { timeout: 30_000 }).not.toBeNull();
+
+    // The first tab, untouched since: an owner is signed in, so the offer is gone, and the pill says where the work is.
+    await expect(offer(one)).toHaveCount(0, { timeout: 10_000 });
+    await expect(one.locator("#save-state")).toHaveText("Saved in this browser");
+    await one.locator("#more").click();
+    await expect(one.locator("#sheet")).toBeVisible();
+    await expect(one.locator("#keep-not-now")).toBeHidden();
+    await expect(one.locator("#keep-beyond")).toBeHidden();
+    await context.close();
+  });
+
   for (const [width, viewport] of [["phone", { width: 390, height: 700 }], ["desktop", { width: 1280, height: 720 }]] as const)
     test(`at ${width} width the offer is the status pill: the document keeps every tap, and nothing outside the pill opens anything`, async ({ browser }) => {
       const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));

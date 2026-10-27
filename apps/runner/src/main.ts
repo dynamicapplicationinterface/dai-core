@@ -88,7 +88,7 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, signIn, type NotEnrolled } from "./owner.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
 import { storageWords, type KeptReading } from "./status.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -3793,7 +3793,8 @@ void showKeepBeyond();
  * Decided after each written save, in the order they land: offered when the
  * save carried a change of the person's (the runtime says so: never the seed,
  * a projection, or its own bookkeeping), the browser context has not answered
- * the offer, and no owner is signed in here. Made once per page at most.
+ * the offer, and no owner is signed in here. Made once per page at most, and
+ * withdrawn when an owner signs in while it stands.
  * The pill reads "Saved in this browser · Keep?" in the box it already has, a
  * tap on it opens the menu, and the menu's first two rows answer it; the
  * ceremony starts only from the first. The decisions are counted, so a test
@@ -3833,6 +3834,19 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
   });
   return keepOfferDeciding;
 }
+/*
+ * An offer already standing is withdrawn once an owner is signed in, in this
+ * page or another of the browser context: the pill goes back to the status
+ * alone. In the order of the decisions, so one still being made lands first.
+ */
+onOwnerChange(() => {
+  void showKeepBeyond();
+  keepOfferDeciding = keepOfferDeciding.then(async () => {
+    if (!keepOffering || (await currentOwner().catch(() => null)) === null) return;
+    setKeepOffering(false);
+    console.info("dai: keep offer withdrawn: an owner is signed in");
+  });
+});
 
 document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
