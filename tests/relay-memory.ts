@@ -15,7 +15,7 @@ import { base64url, type Vapid } from "../apps/relay/src/push.js";
  * the production origins.
  */
 
-export function memoryState(): { state: DurableObjectState; settled: () => Promise<void>; keys: () => string[] } {
+export function memoryState(): { state: DurableObjectState; settled: () => Promise<void>; keys: () => string[]; peek: (key: string) => unknown } {
   const data = new Map<string, unknown>();
   const waiting: Promise<unknown>[] = [];
   const storage = {
@@ -39,6 +39,7 @@ export function memoryState(): { state: DurableObjectState; settled: () => Promi
       while (waiting.length > 0) await Promise.all(waiting.splice(0));
     },
     keys: () => [...data.keys()],
+    peek: (key) => data.get(key),
   };
 }
 

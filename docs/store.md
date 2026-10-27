@@ -119,15 +119,20 @@ not part of the contract; the local test store answers them over HTTP on
 | **Admit** an author: its id and public key | a passkey assertion, or a keychain proof | the author enrolled, and the owner key's two wraps |
 | **Put** a document's wrapped data key | an enrolled author's signature | accepted |
 | **Append** an envelope | an enrolled author's signature (in the envelope) | `head` or `branch`, with the envelope digest it stored; or refused |
-| **Heads** of a document | an enrolled author, or a recovery proof | the head envelope digests |
+| **Heads** of a document | an enrolled author (a recovering context is one, once admitted) | the head envelope digests, each with its acknowledgment time, and the wrapped data key |
 | **Get** an envelope | as Heads | the envelope's bytes |
-| **Library** of an owner | as Heads | the working document ids the owner holds |
+| **Library** of an owner | as Heads | the working document ids the owner holds, and the enrolled authors' public keys |
 
-- **Append is compare-and-swap on the parent.** An envelope whose parents
-  are the current head becomes the head. One whose parents are an older
-  envelope is kept as a branch. An older device never overwrites a newer
-  head, and nothing accepted is dropped (R-B). A parent the store does not
-  hold is refused: send the parent first.
+- **Append is compare-and-swap on the parent.** An append says what it is.
+  As `head`, its parents must be every current head: it becomes the head,
+  and a second append on the same parent is refused (`stale`, naming the
+  heads), since that parent no longer is one. As `branch`, its parents need
+  only be held: it is kept beside the heads. So an older device never
+  overwrites a newer head, the store never turns a failed swap into a branch
+  on its own, and nothing accepted is dropped (R-B): a host told `stale`
+  appends the same envelope as a branch, and reconciles. A parent the store
+  does not hold is refused: send the parent first. An envelope the store
+  holds already is answered as it was the first time.
 - **The acknowledgment is the only source of "Kept".** The host shows
   "Kept" for a revision only after an Append answer names that revision's
   envelope digest, `head` or `branch`. A timeout, a refusal or a connection
@@ -139,6 +144,57 @@ not part of the contract; the local test store answers them over HTTP on
 - **Branches reconcile at the host.** The host opens every head and merges
   their change logs (R-F as R-Z amends it); the merged state is a new
   envelope whose parents are those heads.
+
+## The wire
+
+How the host and a store built from `apps/owner-store/` speak these
+operations; another store may speak them otherwise. The modules are
+`apps/owner-store/src/envelope.ts` (the envelope, the checkpoint, the
+signatures) and `client.ts` (the requests), shared by the host and the store.
+
+- **Requests.** `POST /o/<owner>/enroll`, `POST /o/<owner>/admit`,
+  `GET /o/<owner>/library`, `PUT /d/<owner>/<document>/key`,
+  `POST /d/<owner>/<document>/append?as=head|branch`,
+  `GET /d/<owner>/<document>/heads`, `GET /d/<owner>/<document>/e/<digest>`.
+  One object per owner, and one per working document.
+- **Every request is signed** by an author key: `x-dai-author`,
+  `x-dai-time` (milliseconds) and `x-dai-signature`, ES256 over
+  `["dai store request v1", method, path, time, SHA-256 of the body]` as
+  JSON. The store refuses a time more than five minutes from its own, and an
+  author not enrolled under the owner the path names. Enroll and Admit carry
+  the new author's public key, and are signed by it.
+- **Enroll** carries the passkey's credential id and public key (SPKI, ES256
+  only), the registration's client data (whose origin later assertions must
+  match; with attestation "none" a registration proves no more than the key
+  it carries), the keychain verifier, both wraps, and the first author. An
+  owner id is enrolled once.
+- **Admit** carries the new author and one proof. A passkey proof is an
+  assertion, user present and verified, from the registered origin, over the
+  challenge `dai admit v1:<ms>:<16 random bytes, base64url>`, made in the tap
+  itself. A keychain proof is an Ed25519 signature over that challenge with
+  `:<author id>` appended, by the key whose seed is HKDF-SHA-256 over the
+  keychain secret, salt `dai owner key v1`, info `keychain verifier`. A
+  challenge outside the window, or seen before, is refused. The answer is
+  the two wraps.
+- **Library** answers the documents with a key, and every enrolled author's
+  public key: what the host verifies a checkpoint's author against.
+- **Heads** answers the wrapped data key and each head's digest with the
+  time the store acknowledged it. **Get** answers the envelope's bytes, with
+  that time in `x-dai-at`.
+- **The envelope** is JSON: `v`, `owner`, `document`, `author`, `parents`,
+  `sealed` (nonce ‖ AES-GCM ciphertext, base64url) and `signature`, ES256
+  over `["dai envelope v1", owner, document, author, parents, SHA-256 of
+  sealed]`. The associated data is the same array without the digest. The
+  sealed plaintext is a JSON header, a newline, and the database. The header
+  holds the checkpoint, its signature, the author's public key, the title,
+  and the release's container when the parent's release differs or there is
+  no parent.
+- **The checkpoint** is signed and named as the array `["dai checkpoint v1",
+  release, document, revision, database digest, parent checkpoint digests]`;
+  its digest is SHA-256 of that array's JSON.
+- **The acknowledgment** is `{result, digest, at, owner, document}`. The host
+  holds it to what it sent: the digest must be the one it computed for the
+  revision it appended, or it acknowledges nothing.
 
 ## Failure
 
