@@ -11838,6 +11838,13 @@ them. Chromium, node and the checks jobs passed.
 **Change.** Every job's `runs-on` is `ubuntu-24.04`, so the image no longer
 moves under a run.
 
+**Owed.** `.github/workflows/d32-loop.yml` still runs on `ubuntu-latest`, so
+a WebKit dispatch of it fails to start the same way. Its pin to
+`ubuntu-24.04` is code, not prose, so it cannot go to `main` on the
+docs-only path (scripts/ci-changes.mjs), and it goes with the next change
+that runs the browser matrix anyway. It is dispatch only, so nothing that
+gates runs on it meanwhile.
+
 **Upgrade path.** A Playwright version whose WebKit build runs on
 ubuntu-26.04; then the pin comes off (`ubuntu-latest`, or `ubuntu-26.04`)
 in the same change as the upgrade, and that change's run shows WebKit
