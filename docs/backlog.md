@@ -11816,6 +11816,36 @@ on an iPhone, in Safari and a Home Screen app, the keychain wrap alone
 recovers the owner key after a website-data wipe (R-Z, "Each recovery path,
 where it can run").
 
+### Build 2b-1r (filed 27 October)
+
+#### D299 — CI's WebKit cannot start on ubuntu-26.04
+
+*Status: changed 27 October (below); open until the pin comes off. Filed
+27 October, from the code review of Build 2b-1r (2b1r-H1).*
+
+Every job of `.github/workflows/test.yml` ran on `ubuntu-latest`, and
+`ubuntu-latest` moved from ubuntu-24.04 to ubuntu-26.04 between run
+40411774935 (`34851c6e`, green, `Image: ubuntu-24.04`) and the next two:
+40499594197 on `b7d3e6ae` and 40505641731 on `33fc5c42`, a docs-only commit,
+both `Image: ubuntu-26.04`. In both, every WebKit test failed in
+`browserType.launch` before any page loaded: Playwright 1.63 installs
+`webkit-2359`, whose MiniBrowser needs the ICU 74 library
+(`libicudata.so.74: cannot open shared object file`), and 26.04 does not
+carry it; `playwright install --with-deps` does not install it either. The
+WebKit parts and the WebKit mailbox job went red, and the count gate with
+them. Chromium, node and the checks jobs passed.
+
+**Change.** Every job's `runs-on` is `ubuntu-24.04`, so the image no longer
+moves under a run.
+
+**Upgrade path.** A Playwright version whose WebKit build runs on
+ubuntu-26.04; then the pin comes off (`ubuntu-latest`, or `ubuntu-26.04`)
+in the same change as the upgrade, and that change's run shows WebKit
+launching on the new image.
+
+**Acceptance:** this change's run shows `Image: ubuntu-24.04` in every job
+and WebKit launching, its parts and its mailbox job green.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
