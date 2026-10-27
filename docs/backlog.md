@@ -11846,6 +11846,27 @@ launching on the new image.
 **Acceptance:** this change's run shows `Image: ubuntu-24.04` in every job
 and WebKit launching, its parts and its mailbox job green.
 
+#### D300 — The pill's reserved width is today's widest words, not 2b-2's
+
+*Status: open, to be settled in 2b-2. Filed 27 October, from the code review
+of Build 2b-1r (observations).*
+
+The status pill keeps one box whatever it says, so nothing the host shows
+grows or moves over the document (R-Z, the host's fixed presence): it is
+sized by measuring its widest text (`#save-state[data-shown]::after` in
+`apps/runner/index.html`), today "Saved in this browser · Keep?". R-Z
+sentence 4's line, "Saved in this browser. Last kept at 10:42.", is longer.
+When 2b-2 gives the status a source for it, the pill grows unless its
+measure changes with it, which the fixed presence forbids.
+
+**Change, in 2b-2:** that line fits the box the pill has now, without
+growing it, by one of: shorter words for the same facts, or a second line
+inside the pill's own box. Which is 2b-2's to decide, with the words.
+**Acceptance:** with "Saved in this browser. Last kept at 10:42." shown, the
+pill's box measures no larger than with "Saved in this browser · Keep?", at
+phone and desktop width, on three engines (the measurement in
+`keep-offer.spec.ts`'s pill tests).
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
