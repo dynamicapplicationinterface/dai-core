@@ -1281,6 +1281,21 @@ own text, and puts D195 in Build 2b. The store's contract is
   document it was in, and never again in that context once answered or
   dismissed. The menu keeps it. Safari and a Home Screen app are two
   contexts (ruling 4), so each is offered once.
+- **The host's presence over the document is fixed** (27 October). It is the
+  floating cluster at the top right and, when there is one, the single note
+  row above the document. Nothing the host shows ever adds to it, grows it,
+  or moves the document. The offer, the status and every later host word live
+  inside that presence. So the offer is the status pill itself, "Saved in this
+  browser · Keep?", and a tap on it opens the menu, whose first two rows are
+  "Keep beyond this browser" and "Not now"; the ceremony starts only from the
+  first. Consistent with it: the pill is sized for its widest text, so the
+  offer never grows it; "Keep beyond this browser" answers the offer only
+  while the offer shows; and no offer is made once an owner is signed in.
+  **Acceptance:** with an application whose one control runs along the
+  bottom edge, at phone and desktop widths, every point outside the cluster
+  is the document's while the offer shows, the control takes every tap, the
+  document does not move, and the pill is no larger with the offer than
+  without it.
 - **The restored revision, in words.** With no surviving evidence of what is
   missing, item 5's sentence is: "Restored the copy kept at 10:42. Changes
   saved only in the cleared browser are not included." The time is the
