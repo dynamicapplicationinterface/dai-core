@@ -1329,11 +1329,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    */
   /*
    * The seed, run at this document's creation on this page (runSeedsOnce), is
-   * logged as the creator's first batch, and it is the document's setup, not a
-   * person's change: the first batch logged after it is not counted. A change
-   * the person made before that first save is counted with their next one.
+   * logged as the creator's first batch as soon as it has run, before any
+   * application code can write: it is the document's setup, not a person's
+   * change, and it is never counted. A change the person makes before the
+   * first save is then a batch of its own, and counted with that save.
    */
-  let seedUnlogged = false;
   const SEEDED = "seed-blocks-ran";
   const runSeedsOnce = (db: Any): void => {
     if (!changes) {
@@ -1348,8 +1348,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     }
     runDocumentSql(db, "seed");
     trusted(() => db.exec({ sql: "INSERT OR IGNORE INTO _dai_meta (key, value) VALUES (?, '1')", bind: [SEEDED] }));
-    // Only a seed that changed something has a batch of its own to come. No application code has run yet.
-    seedUnlogged = changes.dirty === true;
+    // Logged now, as its own batch: no application code has run yet. A seed that changed nothing logs none.
+    settleReplica(frameRows(db));
+    changes.save();
   };
 
   /*
@@ -1406,8 +1407,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     settleReplica(frameRows(db));
     const saved = changes.save();
     if (!saved || saved.ops === 0) return;
-    if (seedUnlogged) seedUnlogged = false;
-    else ownChanges += 1;
+    ownChanges += 1;
   };
   /** The same count, for a document without the change log, read before its seal. */
   const countUnlogged = (db: Any, setup: boolean): void => {

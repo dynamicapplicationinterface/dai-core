@@ -260,6 +260,28 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await context.close();
   });
 
+  test("a tap that lands before the seed's first save is the person's change: the offer and the status follow it, not the next one", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const taps = await buildTaps(scratch, "Taps");
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", taps.file);
+    const app = appIn(page);
+    const card = page.locator("#card-open");
+    await Promise.race([card.waitFor({ timeout: 60_000 }), app.locator("#tap").waitFor({ timeout: 60_000 })]);
+    if (await card.isVisible()) await card.click();
+    // At once, as the control shows: no save asked yet, so the seed has not been captured on its own.
+    await app.locator("#tap").click();
+    const askedAtTap = await page.evaluate(() => (window as Any).__runner.saves as number);
+    expect(askedAtTap, "the tap came before the seed's save was asked").toBe(0);
+    await expect(app.locator("#count")).toHaveText("1", { timeout: 30_000 });
+    // The tap's write saved, nothing pending: the frame says "saved" only once every write is written.
+    await expect(page.locator("#save-state[data-state='saved']")).toHaveCount(1, { timeout: 30_000 });
+    await decidedForEverySave(page);
+    // No second tap: what the first one brought.
+    await expect(offer(page)).toHaveText(OFFER);
+    await expect(page.locator("#save-state[data-shown]")).toBeVisible();
+  });
+
   test("an offer standing in one tab is withdrawn when an owner enrolls in another tab of the same browser context", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", "a passkey with PRF is Chromium's virtual authenticator");
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
