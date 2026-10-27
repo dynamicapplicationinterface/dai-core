@@ -3683,8 +3683,15 @@ window.addEventListener("message", (event) => {
           void afterSaveWritten(documentUuid).catch((error: unknown) => {
             console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
           });
-          // A change of the person's has landed here: the moment to offer to keep it beyond (R-Z sentence 3).
-          void considerKeepOffer(data.payload?.authored === true && data.payload?.setup !== true, saveNumber);
+          /*
+           * A change of the person's has landed here: the moment to offer to keep
+           * it beyond (R-Z sentence 3). The runtime's flag alone says so (R-X): it
+           * already leaves out the seed, a projection of another copy's changes
+           * and its own bookkeeping, and the setup marking is not asked as well,
+           * since a merge applied on the runtime's own connection marks the next
+           * save setup-only whatever else it carries.
+           */
+          void considerKeepOffer(data.payload?.authored === true, saveNumber);
           answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId });
         })
         .catch((error: unknown) => {
