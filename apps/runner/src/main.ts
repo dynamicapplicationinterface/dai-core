@@ -615,6 +615,13 @@ window.addEventListener("orientationchange", () => tellInsets());
  */
 let personsChangeLanded = false;
 let keepOffering = false;
+/**
+ * The document whose stored data this browser held as it opened, and whether
+ * the frame now showing it is that document: a reopen's status is already
+ * true, so it is up without waiting for a change (2b1-M1).
+ */
+let heldAtOpen: string | undefined;
+let heldShown = false;
 const keptReading: KeptReading | null = null;
 function showStorage(): void {
   const el = document.getElementById("save-state");
@@ -625,7 +632,7 @@ function showStorage(): void {
   el.textContent = offering ? `${words} · Keep?` : words;
   if (offering) el.dataset.offer = "";
   else delete el.dataset.offer;
-  if (state === "failed" || (personsChangeLanded && words !== "")) el.dataset.shown = "";
+  if (state === "failed" || ((personsChangeLanded || heldShown) && words !== "")) el.dataset.shown = "";
   else delete el.dataset.shown;
 }
 
@@ -1215,6 +1222,7 @@ function eject(): void {
   paintAbove();
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
+  heldShown = false;
   const docNote = document.getElementById("doc-note");
   if (docNote) docNote.hidden = true;
   // What the arrival line and the loop guard say about the document that was
@@ -1278,6 +1286,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
 
     const stored = await readStored(cartridge.manifest.documentUuid);
     const opfsDb = stored.db;
+    heldAtOpen = opfsDb && opfsDb.byteLength > 0 ? cartridge.manifest.documentUuid : undefined;
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
@@ -2464,6 +2473,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     // With the revision it is, under the lock (2-H2).
     const stored = await readStored(cartridge.manifest.documentUuid);
     const opfsDb = stored.db;
+    heldAtOpen = opfsDb && opfsDb.byteLength > 0 ? cartridge.manifest.documentUuid : undefined;
     const arriving = savedAtOf(cartridge);
     const heldItem = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
@@ -3069,6 +3079,15 @@ window.addEventListener("message", (event) => {
     framed = undefined;
     mountNow = mountedNonce && shown ? { nonce: mountedNonce, cartridge: shown, writes: null } : null;
     const thisMount = mountNow;
+    // A document this browser already held: where it is, said as it opens.
+    heldShown = shown !== undefined && heldAtOpen === shown.manifest.documentUuid;
+    const saveState = document.getElementById("save-state");
+    if (heldShown && saveState) {
+      saveState.dataset.state = "saved";
+      saveState.hidden = false;
+      saveState.title = "";
+    }
+    showStorage();
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to

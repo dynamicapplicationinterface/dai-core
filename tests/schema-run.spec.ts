@@ -117,7 +117,8 @@ test.describe("what schedules a save", () => {
     await expect(again.locator("#out")).toHaveText("0", { timeout: 30_000 });
     await page.waitForTimeout(3000);
     expect(await saves()).toBe(0);
-    await expect(page.locator("#save-state")).toBeHidden();
+    // Said from what this browser holds as it opens, not from a save (2b1-M1).
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
 
     // A write: one save, and the word for it.
     await again.locator("#bump").click();
