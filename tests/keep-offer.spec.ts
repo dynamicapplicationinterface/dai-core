@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, storedHolds, typeNote, uuidOf, waitMounted } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -225,6 +225,38 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     else await expect(noPasskeys).toBeVisible();
     await expect(offer(page)).toBeHidden();
     if (browserName === "chromium") await expect.poll(() => currentOwner(page), { timeout: 30_000 }).not.toBeNull();
+    await context.close();
+  });
+
+  test("with an owner signed in here, a first change brings no offer", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "a passkey with PRF is Chromium's virtual authenticator");
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const file = await buildNotes(scratch, "Notes");
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    await addPasskeyProvider(context, page);
+    const app = await openFile(page, file);
+    // Enrolled from the menu before any change: no offer stood, so none was answered, and the owner is what holds it back.
+    await page.locator("#more").click();
+    await page.locator("#keep-beyond").click();
+    await expect.poll(() => currentOwner(page), { timeout: 30_000 }).not.toBeNull();
+    expect(await withKeyStore(page, 'return (await get("dai:keep-offer")) ?? null;'), "the offer was never answered").toBeNull();
+
+    const before = await page.evaluate(() => (window as Any).__runner.savesWritten as number);
+    const offered: string[] = [];
+    page.on("console", (message) => {
+      if (message.text().includes("keep offer")) offered.push(message.text());
+    });
+    const uuid = await uuidOf(page);
+    await typeNote(app, "mine");
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.savesWritten as number), { timeout: 30_000 }).toBeGreaterThan(before);
+    // Every key's save written and decided, not only the first.
+    await expect.poll(() => storedHolds(page, uuid, "mine"), { timeout: 30_000 }).toBe(true);
+    await decidedForEverySave(page);
+    await expect(offer(page)).toHaveCount(0);
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
+    expect(offered.some((text) => text.includes("an owner is signed in")), offered.join("\n")).toBe(true);
     await context.close();
   });
 
