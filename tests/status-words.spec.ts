@@ -16,8 +16,8 @@ import { storageWords } from "../apps/runner/src/status.js";
  * Reconnecting alone changes nothing: only an acknowledgment would.
  *
  * The words appear once a change of the person's has landed, and while the
- * offer to keep beyond this browser is up the line says them instead: storage
- * is said in one place at a time.
+ * offer to keep beyond this browser stands they carry it: "Saved in this
+ * browser · Keep?", in the same pill.
  */
 
 const SAVED = "Saved in this browser";
@@ -28,9 +28,10 @@ const hostText = (page: Page): Promise<string> => page.evaluate(() => document.b
 /** Types a first change, and answers the offer "Not now", as a person who goes on would. */
 async function firstChange(page: Page, app: Awaited<ReturnType<typeof openFile>>, text: string): Promise<void> {
   await typeNote(app, text);
-  await expect(page.locator("#keep-offer")).toBeVisible({ timeout: 30_000 });
-  await expect(status(page), "said once: the line says it while it is up").toBeHidden();
-  await page.locator("#keep-offer-no").click();
+  await expect(page.locator("#save-state[data-offer]")).toHaveText(`${SAVED} · Keep?`, { timeout: 30_000 });
+  await status(page).click();
+  await page.locator("#keep-not-now").click();
+  await expect(page.locator("#save-state[data-offer]")).toHaveCount(0);
 }
 
 test.describe("the status words (R-Z sentences 2 and 4)", () => {

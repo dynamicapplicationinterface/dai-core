@@ -606,19 +606,26 @@ window.addEventListener("resize", () => tellInsets());
 window.addEventListener("orientationchange", () => tellInsets());
 
 /**
- * Where the status is shown (R-Z): once a change of the person's has landed on
- * this page, and not while the offer to keep beyond this browser is up, which
- * says it in its own line, so it is said in one place at a time. A failed save
- * is always shown. "Kept" needs the store's acknowledgment, which has no
- * source in Build 2b-1.
+ * The status, and where it is shown (R-Z): once a change of the person's has
+ * landed on this page. A failed save is always shown. While the offer to keep
+ * beyond this browser stands, the status is the offer too ("Saved in this
+ * browser · Keep?"), in the pill's own box, which a tap opens the menu from:
+ * nothing the host shows covers the document. "Kept" needs the store's
+ * acknowledgment, which has no source in Build 2b-1.
  */
 let personsChangeLanded = false;
+let keepOffering = false;
 const keptReading: KeptReading | null = null;
 function showStorage(): void {
   const el = document.getElementById("save-state");
   if (!el) return;
-  const offerUp = document.getElementById("keep-offer")?.hidden === false;
-  if (el.dataset.state === "failed" || (personsChangeLanded && !offerUp)) el.dataset.shown = "";
+  const state = el.dataset.state;
+  const words = state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading }) : "";
+  const offering = keepOffering && words !== "" && state !== "failed";
+  el.textContent = offering ? `${words} · Keep?` : words;
+  if (offering) el.dataset.offer = "";
+  else delete el.dataset.offer;
+  if (state === "failed" || (personsChangeLanded && words !== "")) el.dataset.shown = "";
   else delete el.dataset.shown;
 }
 
@@ -3362,10 +3369,8 @@ window.addEventListener("message", (event) => {
      * acknowledged, or one it could not make. "Kept" needs the store's
      * acknowledgment of this revision, which Build 2b-1 has no store to give,
      * and a connection coming back is not one. Where it is shown at all is
-     * `showStorage`.
+     * `showStorage`, which also writes the words.
      */
-    el.textContent =
-      state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading }) : "";
     el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
     showStorage();
     if (state === "failed" && wonElsewhere(data.error)) {
@@ -3676,18 +3681,22 @@ const closeSheet = (): void => {
 };
 
 openButton.addEventListener("click", () => fileInput.click());
-moreButton.addEventListener("click", () => {
+function openMenu(): void {
   void showKeepBeyond();
   slideOpen(sheet);
   // Checked here, on menu open, and never at load: the offline-open guarantee is
   // that a held document asks the network for nothing (T1 note in showVersion).
   void checkForUpdate();
-});
+}
+moreButton.addEventListener("click", openMenu);
 document.getElementById("doc-note")?.addEventListener("click", (event) => {
   (event.currentTarget as HTMLElement).hidden = true;
 });
 document.getElementById("save-state")?.addEventListener("click", (event) => {
-  if ((event.currentTarget as HTMLElement).dataset.state === "failed") slideOpen(sheet);
+  const el = event.currentTarget as HTMLElement;
+  if (el.dataset.state === "failed") slideOpen(sheet);
+  // The offer's first tap: the menu, whose first rows answer it. Nothing starts here.
+  else if (el.dataset.offer !== undefined) openMenu();
 });
 // Anywhere off the panel dismisses it, which is what a sheet does everywhere
 // else on a phone.
@@ -3738,23 +3747,38 @@ function keepBeyondThisBrowser(): void {
 }
 keepBeyond?.addEventListener("click", () => {
   closeSheet();
-  keepOffer.hidden = true;
-  showStorage();
+  const answering = keepOffering;
+  setKeepOffering(false);
+  // The ceremony first, inside the tap; the offer's answer, when it stood, is kept after.
   keepBeyondThisBrowser();
+  if (answering) void answerKeepOffer("keep");
+});
+document.getElementById("keep-not-now")?.addEventListener("click", () => {
+  closeSheet();
+  setKeepOffering(false);
+  void answerKeepOffer("not now");
 });
 void showKeepBeyond();
 
 /**
- * The offer to keep beyond this browser, as one line (R-Z sentence 3).
+ * The offer to keep beyond this browser, as the status pill (R-Z sentence 3).
  *
  * Decided after each written save, in the order they land: offered when the
  * save carried a change of the person's (the runtime says so: never the seed,
  * a projection, or its own bookkeeping), the browser context has not answered
- * the offer, and no owner is signed in here. Shown once per page at most.
- * Nothing starts until a tap; the line takes no focus. The decisions are
- * counted, so a test can wait for the one that says nothing was offered.
+ * the offer, and no owner is signed in here. Made once per page at most.
+ * The pill reads "Saved in this browser · Keep?" in the box it already has, a
+ * tap on it opens the menu, and the menu's first two rows answer it; the
+ * ceremony starts only from the first. The decisions are counted, so a test
+ * can wait for the one that says nothing was offered.
  */
-const keepOffer = document.getElementById("keep-offer") as HTMLElement;
+function setKeepOffering(on: boolean): void {
+  keepOffering = on;
+  document.body.classList.toggle("keep-offer", on);
+  const notNow = document.getElementById("keep-not-now");
+  if (notNow) notNow.hidden = !on;
+  showStorage();
+}
 let keepOfferDecided = 0;
 let keepOfferMade = false;
 let keepOfferDeciding: Promise<void> = Promise.resolve();
@@ -3762,7 +3786,7 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
   keepOfferDeciding = keepOfferDeciding.then(async () => {
     try {
       if (!personsChange) return;
-      // From here the status is shown, or the line says it (showStorage).
+      // From here the status is shown (showStorage).
       personsChangeLanded = true;
       if (keepOfferMade) return;
       const [answered, owner] = await Promise.all([keepOfferAnswer(), currentOwner()]);
@@ -3771,7 +3795,7 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
         return;
       }
       keepOfferMade = true;
-      keepOffer.hidden = false;
+      setKeepOffering(true);
       console.info(`dai: keep offer made after save ${saveNumber}`);
     } catch (error: unknown) {
       console.warn(`dai: keep offer not decided after save ${saveNumber}: ${String(error)}`);
@@ -3782,18 +3806,6 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
   });
   return keepOfferDeciding;
 }
-document.getElementById("keep-offer-yes")?.addEventListener("click", () => {
-  keepOffer.hidden = true;
-  showStorage();
-  // The ceremony first, inside the tap; the answer is kept after.
-  keepBeyondThisBrowser();
-  void answerKeepOffer("keep");
-});
-document.getElementById("keep-offer-no")?.addEventListener("click", () => {
-  keepOffer.hidden = true;
-  showStorage();
-  void answerKeepOffer("not now");
-});
 
 document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();

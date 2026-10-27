@@ -122,7 +122,8 @@ test.describe("what schedules a save", () => {
     // A write: one save, and the word for it.
     await again.locator("#bump").click();
     await expect(again.locator("#out")).toHaveText("1");
-    await expect(page.locator("#save-state")).toHaveText("Saved in this browser", { timeout: 10_000 });
+    // A person's first change: the words carry the offer to keep beyond this browser.
+    await expect(page.locator("#save-state")).toHaveText(/^Saved in this browser/, { timeout: 10_000 });
     expect(await saves()).toBe(1);
   });
 });

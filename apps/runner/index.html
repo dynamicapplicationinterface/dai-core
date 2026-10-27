@@ -403,11 +403,26 @@
        */
       #save-state[data-shown] {
         display: inline-flex;
+        flex-direction: column;
         align-items: center;
+        white-space: nowrap;
         -webkit-backdrop-filter: saturate(180%) blur(14px);
         backdrop-filter: saturate(180%) blur(14px);
         box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
       }
+      /*
+       * The offer to keep beyond this browser is this pill, and the pill is
+       * as wide with it as without it: the offer's words are always measured,
+       * never shown, so the pill's box does not grow when it is made. Nothing
+       * the host shows covers more of the document for the offer.
+       */
+      #save-state[data-shown]::after {
+        content: "Saved in this browser · Keep?";
+        height: 0;
+        overflow: hidden;
+        visibility: hidden;
+      }
+      #save-state[data-offer] { cursor: pointer; }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
       /* A row of its own under the bar: opaque, so nothing shows through it. */
@@ -433,40 +448,15 @@
       }
       #doc-note[hidden] { display: none; }
       /*
-       * The offer to keep beyond this browser, in the quietest voice the host
-       * has: along the bottom edge, over the document, never above it. A row
-       * of its own under the bar moved the whole document down as it
-       * appeared, so a tap aimed at the application landed on whatever had
-       * moved under the finger (a game's move went to no square). Fixed, it
-       * moves nothing.
+       * While the offer stands, its two answers are the menu's first rows,
+       * under the document's name: the pill opens the menu, and the ceremony
+       * starts from a row of it, never from a tap on the document.
        */
-      #keep-offer {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        /* Over the document and the bar (6), under every sheet (10 to 12). */
-        z-index: 8;
-        margin: 0;
-        padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px);
-        font-size: 13px;
-        line-height: 1.35;
-        color: var(--muted);
-        background: var(--surface);
-        border-top: 1px solid var(--line-strong);
-      }
-      #keep-offer button {
-        padding: 0;
-        border: 0;
-        background: none;
-        font: inherit;
-        font-weight: 600;
-        color: var(--text);
-        text-decoration: underline;
-        text-underline-offset: 2px;
-        cursor: pointer;
-      }
-      #keep-offer[hidden] { display: none; }
+      #keep-not-now[hidden] { display: none; }
+      body.keep-offer #sheet .sheet-grip,
+      body.keep-offer #sheet .sheet-head { order: -2; }
+      body.keep-offer #keep-beyond,
+      body.keep-offer #keep-not-now { order: -1; }
 
       /*
        * The one control, over whatever the application is drawing.
@@ -1262,17 +1252,6 @@
     <p id="doc-note" role="status" hidden></p>
 
     <!--
-      The offer to keep work beyond this browser (R-Z sentence 3).
-
-      Once per browser context, after the first change a person makes has
-      landed here, and never before: not for the seed, another copy's changes,
-      or the runtime's own bookkeeping. A line, not a sheet: it takes no focus
-      and moves nothing, typing goes on under it, and nothing starts until a
-      tap. "Not now" is kept for the context; the menu still offers it.
-    -->
-    <p id="keep-offer" role="status" hidden>Saved in this browser. Keep your work if this browser is cleared. <button id="keep-offer-yes" type="button">Keep beyond this browser</button> · <button id="keep-offer-no" type="button">Not now</button></p>
-
-    <!--
       Sending it.
 
       One decision, made where the thing being decided is visible: whether
@@ -1420,6 +1399,14 @@
           before a first change (R-Z). Shown while this browser has no owner.
         -->
         <button id="keep-beyond" type="button" hidden>Keep beyond this browser</button>
+        <!--
+          The offer's other answer (R-Z sentence 3), here while the offer
+          stands. The offer itself is the status pill: once per browser
+          context, after the first change a person makes has landed here, and
+          never for the seed, another copy's changes or the runtime's own
+          bookkeeping. "Not now" is kept for the context; the row above stays.
+        -->
+        <button id="keep-not-now" type="button" hidden>Not now</button>
         <button id="export" type="button">Save a copy…</button>
         <!--
           Modify this app (backlog 4.2).
