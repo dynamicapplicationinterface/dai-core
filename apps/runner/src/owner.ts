@@ -99,11 +99,12 @@ export async function currentOwner(): Promise<string | null> {
 
 /**
  * Who is signed in changes for the whole browser context, so every page of it
- * hears of it: this one directly, the others over a channel of the origin's.
- * A listener reads `currentOwner` again rather than trusting the message.
+ * hears of it: this one directly, the others over a channel of the origin's,
+ * named for the key it announces. A listener reads `currentOwner` again rather
+ * than trusting the message.
  */
 const ownerChanged = new Set<() => void>();
-const ownerChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("dai:owner") : null;
+const ownerChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel(KEYS.OWNER) : null;
 ownerChannel?.addEventListener("message", () => {
   for (const listener of ownerChanged) listener();
 });
