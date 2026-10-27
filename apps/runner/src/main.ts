@@ -1676,13 +1676,14 @@ async function mount(cartridge: Cartridge): Promise<void> {
       : "Running in a browser · its bars are the browser's. Add it to your Home Screen for the whole screen.";
   }
 
+  // "Kept" is the store's acknowledgment and nothing else's (R-Z sentence 2): this browser's library holding it is a save.
   const kept = document.getElementById("sheet-kept");
   if (kept) {
     kept.hidden = keptOnDevice === null;
     kept.dataset.state = keptOnDevice ? "kept" : "refused";
     kept.textContent = keptOnDevice
-      ? "Kept on this device · works offline"
-      : "Not kept — this device refused storage";
+      ? "Saved in this browser · works offline"
+      : "Not saved in this browser — it refused storage";
   }
   exportButton.textContent = "Save a copy…";
 }

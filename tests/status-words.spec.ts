@@ -1,6 +1,7 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { cutTheNetwork } from "./offline.js";
@@ -20,6 +21,7 @@ import { storageWords } from "../apps/runner/src/status.js";
  * browser · Keep?", in the same pill.
  */
 
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SAVED = "Saved in this browser";
 const status = (page: Page) => page.locator("#save-state");
 /** The host's own text, the application's frames left out. */
@@ -64,6 +66,36 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
     await app.locator("#note").pressSequentially(" two");
     await expect.poll(() => storedHolds(page, uuid, "one two"), { timeout: 30_000 }).toBe(true);
     await expect(status(page)).toHaveText(SAVED);
+    expect(await hostText(page)).not.toContain("Kept");
+  });
+
+  test("the built opener says Kept nowhere but the status's own word, which nothing feeds in this build", () => {
+    // What the opener's page can show: its markup, comments aside, and its bundled scripts. The worker draws nothing.
+    const dist = join(repo, "apps", "runner", "dist");
+    const files = ["index.html", ...readdirSync(join(dist, "assets")).filter((name) => name.endsWith(".js")).map((name) => join("assets", name))];
+    const said: string[] = [];
+    for (const name of files) {
+      let text = readFileSync(join(dist, name), "utf8");
+      if (name.endsWith(".html")) text = text.replace(/<!--[\s\S]*?-->/g, "");
+      for (const found of text.matchAll(/Kept/g)) {
+        const at = found.index;
+        // The status's word for a store's acknowledgment (storageWords), whole and alone in its string.
+        if (/^["'`]Kept["'`]$/.test(text.slice(at - 1, at + 5))) continue;
+        said.push(`${name}: ${text.slice(Math.max(0, at - 40), at + 40)}`);
+      }
+    }
+    expect(said).toEqual([]);
+  });
+
+  test("the menu says where the document is: Saved in this browser, never Kept", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-status-"));
+    const file = await buildNotes(scratch, "Notes");
+    await page.goto(RUNNER_URL);
+    const app = await openFile(page, file);
+    await firstChange(page, app, "one");
+    await page.locator("#more").click();
+    await expect(page.locator("#sheet")).toBeVisible();
+    await expect(page.locator("#sheet-kept")).toHaveText("Saved in this browser · works offline");
     expect(await hostText(page)).not.toContain("Kept");
   });
 
