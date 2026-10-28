@@ -10,7 +10,7 @@ import { enrollHere, keptRecord, openerWithStore, waitSettledKept } from "./keep
 /**
  * Recovery, Build 2b-2 item 5 (R-Z sentence 5 and its first red test; R-E).
  *
- * Astra's four steps: A is kept; the store is cut off; B is saved in this
+ * R-Z's first red test, in four steps: A is kept; the store is cut off; B is saved in this
  * browser only; the browser's storage is wiped. Recover, with the passkey,
  * brings back A exactly, identified by the time the store acknowledged it,
  * with no claim about B and no invented count of anything. And recovery with
