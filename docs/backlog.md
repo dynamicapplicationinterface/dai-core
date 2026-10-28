@@ -11801,8 +11801,8 @@ until the person types (the test removed from `keep-offer.spec.ts` in Build
 
 #### D298 — On Safari the keychain secret is never offered to the keychain
 
-*Status: open, owed with the iPhone reading. Filed 26 October, from Build
-2b-1, item 1.*
+*Status: changed 28 October, Build 2b-2b item 6 (below); open until the
+device readings. Filed 26 October, from Build 2b-1, item 1.*
 
 Enrollment makes the keychain wrap whatever happens to the secret, because
 no page can know whether a keychain kept it (`offerToKeychain`,
@@ -11816,6 +11816,19 @@ form path, with the enrollment's state kept across the reload. **Acceptance:**
 on an iPhone, in Safari and a Home Screen app, the keychain wrap alone
 recovers the owner key after a website-data wipe (R-Z, "Each recovery path,
 where it can run").
+
+**Changed, 28 October (Build 2b-2b item 6).** Where the browser has no
+Credential Management API, enrollment fills a form with the owner id and
+the secret and submits it, once the enrollment is kept and the open
+document's saves are written; the opener's service worker answers the
+post with the page it came from, so the secret never leaves the browser,
+and with no worker controlling the page the form is not submitted. On a
+browser with nothing, "Recover with the saved password" recovers by the
+keychain proof and the keychain wrap, with no passkey
+(`tests/keychain.spec.ts`, on Chromium with the API taken away). **Owed:**
+the acceptance above, in Safari and a Home Screen app: whether the save
+prompt appears for a submission made after the passkey ceremony and
+answered by the worker, and keychain recovery after a wipe.
 
 ### Build 2b-1r (filed 27 October)
 
