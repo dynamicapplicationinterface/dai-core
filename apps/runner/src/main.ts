@@ -90,7 +90,7 @@ import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
-import { recover } from "./recover.js";
+import { recover, type Install } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -3944,6 +3944,24 @@ window.addEventListener("online", () => {
  * about it beyond the one sentence.
  */
 const recoverButton = document.getElementById("recover") as HTMLButtonElement | null;
+/** A restored document into this browser's library, under the lock every library writer takes (D41). */
+function installRestored(one: Install): Promise<void> {
+  return withLibraryLock(one.documentUuid, async () => {
+    await saveDatabaseToOpfs(one.documentUuid, one.database);
+    // What this write does not own, it keeps: on a wiped browser there is nothing, but a record held here stays whole.
+    const held = await getCartridgeFromLibrary(one.documentUuid).catch(() => null);
+    await saveCartridgeToLibrary({
+      ...held,
+      documentUuid: one.documentUuid,
+      appName: one.title,
+      lastOpened: new Date().toISOString(),
+      html: one.html,
+      ...(one.publicKeyFingerprint ? { publicKeyFingerprint: one.publicKeyFingerprint } : {}),
+      revision: one.revision,
+      wrote: true,
+    });
+  });
+}
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
 /** Documents recovered on this page, not yet opened: the store's time for each. */
 const restoredNotes = new Map<string, string>();
@@ -3956,7 +3974,7 @@ async function showRecover(): Promise<void> {
 }
 recoverButton?.addEventListener("click", () => {
   // The ceremony first, inside the tap.
-  const recovering = recover(storeBase());
+  const recovering = recover(storeBase(), installRestored);
   say("");
   void recovering.then((outcome) => {
     if (recoveredList) {

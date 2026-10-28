@@ -22,7 +22,7 @@
 import { KEYS, dataKeyKey, keptKey, ownerRecordKey } from "../../../src/keys.js";
 import { admitChallenge, b64u, checkpointDigest, digestOf, fromB64u, openEnvelope, utf8, verifyOpened, type Author, type Opened, type Unverified } from "../../owner-store/src/envelope.js";
 import { admitAuthor, getEnvelope, headsOf, isRefused, isUnavailable, libraryOf } from "../../owner-store/src/client.js";
-import { keepInKeyStore, saveCartridgeToLibrary, saveDatabaseToOpfs } from "./opfs.js";
+import { keepInKeyStore } from "./opfs.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
 import { announceOwnerChange, type DataKeyRecord, type OwnerRecord } from "./owner.js";
@@ -35,6 +35,16 @@ export interface Restored {
   title: string;
   /** The store's acknowledgment of the restored checkpoint, ISO 8601. */
   at: string;
+}
+
+/** What the opener writes into its library for one restored document, under that document's lock. */
+export interface Install {
+  documentUuid: string;
+  title: string;
+  database: Uint8Array;
+  html: string;
+  publicKeyFingerprint: string | undefined;
+  revision: number;
 }
 
 export type Recovered =
@@ -58,7 +68,7 @@ async function prfWrappingKey(secret: Uint8Array<ArrayBuffer>): Promise<CryptoKe
 }
 
 /** Recovers this owner's library from the store at `base`. Call it from the tap. */
-export function recover(base: string | undefined): Promise<Recovered> {
+export function recover(base: string | undefined, install: (one: Install) => Promise<void>): Promise<Recovered> {
   if (!window.PublicKeyCredential || !navigator.credentials?.get) return Promise.resolve({ cancelled: "this browser has no passkeys" });
   const challenge = admitChallenge();
   // Reached before any await: the ceremony runs inside the tap.
@@ -77,7 +87,7 @@ export function recover(base: string | undefined): Promise<Recovered> {
       const secret = (assertion.getClientExtensionResults() as { prf?: { results?: { first?: ArrayBuffer } } }).prf?.results?.first;
       if (!secret) return { refused: "the passkey's provider gave no PRF output" };
       if (!base) return { unavailable: "no store is configured here" };
-      return restore(base, {
+      return restore(base, install, {
         owner: b64u(bytesOf(response.userHandle)),
         credential: b64u(bytesOf(assertion.rawId)),
         prf: bytesOf(secret),
@@ -96,6 +106,7 @@ export function recover(base: string | undefined): Promise<Recovered> {
 
 async function restore(
   base: string,
+  install: (one: Install) => Promise<void>,
   asked: { owner: string; credential: string; prf: Uint8Array<ArrayBuffer>; proof: Parameters<typeof admitAuthor>[3] },
 ): Promise<Recovered> {
   const me = await person();
@@ -120,7 +131,7 @@ async function restore(
   const restored: Restored[] = [];
   const refused: { documentUuid: string; why: string }[] = [];
   for (const documentUuid of library.documents) {
-    const outcome = await restoreOne(base, author, asked.owner, documentUuid, ownerKey, enrolled);
+    const outcome = await restoreOne(base, install, author, asked.owner, documentUuid, ownerKey, enrolled);
     if ("unavailable" in outcome) return { unavailable: outcome.unavailable };
     if ("why" in outcome) {
       console.warn(`dai: ${documentUuid} not restored: ${outcome.why}`);
@@ -148,6 +159,7 @@ async function restore(
 /** One document: its newest head, verified back to the root, installed at that revision. */
 async function restoreOne(
   base: string,
+  install: (one: Install) => Promise<void>,
   author: Author,
   owner: string,
   documentUuid: string,
@@ -207,15 +219,13 @@ async function restoreOne(
   const cartridge = await readCartridge(new File([container], `${top.inside.title}.dai.html`, { type: "text/html" }));
   if (cartridge.manifest.documentUuid !== documentUuid) return { why: "document" };
   const resealed = await resealCartridge(cartridge, top.database);
-  await saveDatabaseToOpfs(documentUuid, top.database);
-  await saveCartridgeToLibrary({
+  await install({
     documentUuid,
-    appName: top.inside.title,
-    lastOpened: new Date().toISOString(),
+    title: top.inside.title,
+    database: top.database,
     html: resealed.html,
     publicKeyFingerprint: resealed.publicKeyFingerprint,
     revision: top.inside.checkpoint.revision,
-    wrote: true,
   });
   await keepInKeyStore(dataKeyKey(documentUuid), { key: dataKey, owner, wrapped: fromB64u(heads.key), atStore: true } satisfies DataKeyRecord);
   await keepInKeyStore(keptKey(documentUuid), {
