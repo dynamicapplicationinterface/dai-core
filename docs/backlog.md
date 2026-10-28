@@ -11762,7 +11762,8 @@ repeats most of what CI then runs on the same commit.
 3. **One push per build.** The code and its handoff go up together, and CI
    runs the matrix once on that push. The handoff's CI table is the next
    session's first commit, which changes only prose, so it costs no matrix
-   run.
+   run. Every build branch opens a draft PR at its first push, since CI
+   runs only on a PR and the next session needs a run to read.
 
 `scripts/ci-install-times.mjs <run> [attempt]` reads each browser job's
 install time and whether its cache hit (D292's measure, by hand until now).
