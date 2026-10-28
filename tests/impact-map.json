@@ -39,6 +39,7 @@
       "tests/app-name.spec.ts"
     ],
     "tests/arrival-line.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -98,6 +99,7 @@
       "tests/fixtures.ts"
     ],
     "tests/arrival-link-state.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -112,6 +114,7 @@
       "tests/arrival-refusals.spec.ts"
     ],
     "tests/attachments.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -175,6 +178,7 @@
       "tests/badge-count.spec.ts"
     ],
     "tests/badge-reported.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -187,6 +191,7 @@
       "tsup.config.ts"
     ],
     "tests/blind-agreement.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -303,6 +308,7 @@
       "tests/bundle.spec.ts"
     ],
     "tests/card-familiarity.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -348,6 +354,7 @@
       "tsup.config.ts"
     ],
     "tests/changesets/authority.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -493,6 +500,7 @@
       "tests/signed-people.ts"
     ],
     "tests/changesets/held-transaction.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -551,6 +559,7 @@
       "tests/fixtures.ts"
     ],
     "tests/changesets/interface.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -609,6 +618,7 @@
       "tests/fixtures.ts"
     ],
     "tests/changesets/kit-choices.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -850,6 +860,7 @@
       "tests/signed-people.ts"
     ],
     "tests/changesets/runtime.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -943,7 +954,71 @@
       "tests/changesets/vectors.spec.ts",
       "tests/signed-people.ts"
     ],
+    "tests/checkpoints.spec.ts": [
+      "apps/owner-store/src/",
+      "apps/relay/src/",
+      "apps/runner/",
+      "src/bridge.ts",
+      "src/bundle.ts",
+      "src/cbor.ts",
+      "src/changes-log.ts",
+      "src/changesets.ts",
+      "src/compile.ts",
+      "src/confusables-id.ts",
+      "src/container.ts",
+      "src/copy-choice.ts",
+      "src/core.ts",
+      "src/cose.ts",
+      "src/declarations.ts",
+      "src/dictionary.ts",
+      "src/format.ts",
+      "src/fragment.ts",
+      "src/frame.ts",
+      "src/handoff-tab.ts",
+      "src/handoff.ts",
+      "src/host-profile.ts",
+      "src/identity.ts",
+      "src/inline.ts",
+      "src/keys.ts",
+      "src/kit.ts",
+      "src/link.ts",
+      "src/mailbox-http.ts",
+      "src/mailbox-sync.ts",
+      "src/mailbox.ts",
+      "src/p256.ts",
+      "src/publisher-identity.ts",
+      "src/publisher.ts",
+      "src/refusals.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-export.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/runtime/bootloader.ts",
+      "src/schema.ts",
+      "src/script-tags.ts",
+      "src/sender.ts",
+      "src/session-id.ts",
+      "src/sibling.ts",
+      "src/store-presigned.ts",
+      "src/store-s3.ts",
+      "src/store.ts",
+      "src/template.html",
+      "src/test-keys.ts",
+      "src/trust.ts",
+      "src/unfurl.ts",
+      "src/unzip.ts",
+      "src/worker.ts",
+      "src/x509.ts",
+      "tests/checkpoints.spec.ts",
+      "tests/fixtures.ts",
+      "tests/keeping.ts",
+      "tests/owner-store-memory.ts",
+      "tests/owner.ts",
+      "tests/relay-memory.ts"
+    ],
     "tests/chess.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -979,6 +1054,7 @@
       "tsup.config.ts"
     ],
     "tests/closed-writes.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1012,6 +1088,7 @@
       "tests/conformance.spec.ts"
     ],
     "tests/container.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -1167,6 +1244,7 @@
       "tests/held-batch.ts"
     ],
     "tests/d22-reopen.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1179,6 +1257,7 @@
       "tsup.config.ts"
     ],
     "tests/d32-minimal.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -1236,6 +1315,7 @@
       "tests/fixtures.ts"
     ],
     "tests/doc-note.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -1295,6 +1375,7 @@
       "tests/fixtures.ts"
     ],
     "tests/doc-sentences.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1306,6 +1387,7 @@
       "tsup.config.ts"
     ],
     "tests/document-icon.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/icon.svg",
@@ -1319,6 +1401,7 @@
       "tsup.config.ts"
     ],
     "tests/document-route.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1335,6 +1418,7 @@
       "tests/drift-content.spec.ts"
     ],
     "tests/early-refusal.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1364,6 +1448,7 @@
       "tests/editable-value.spec.ts"
     ],
     "tests/empty-reopen.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1380,6 +1465,7 @@
       "tests/evaluation.spec.ts"
     ],
     "tests/examples-reopen.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/receipts/",
@@ -1395,6 +1481,7 @@
       "tsup.config.ts"
     ],
     "tests/examples-shared.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/receipts/",
@@ -1488,6 +1575,7 @@
       "tests/forget.spec.ts"
     ],
     "tests/form-cost.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tasks/",
@@ -1498,6 +1586,7 @@
       "tsup.config.ts"
     ],
     "tests/format-version-mount.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -1544,6 +1633,7 @@
       "tests/fragment-wire.spec.ts"
     ],
     "tests/frame-hold.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -1605,6 +1695,7 @@
       "tests/frame-wire.spec.ts"
     ],
     "tests/handoff-tab.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -1616,6 +1707,7 @@
       "website/vercel.json"
     ],
     "tests/hint-and-install.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -1627,6 +1719,7 @@
       "tsup.config.ts"
     ],
     "tests/host-profile.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/isolation-probe.dai.html",
@@ -1692,6 +1785,7 @@
       "tsup.config.ts"
     ],
     "tests/host-shell.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -1721,6 +1815,7 @@
       "tests/hosted-request.spec.ts"
     ],
     "tests/icon-after-wipe.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -1782,6 +1877,7 @@
       "tests/icon-after-wipe.spec.ts"
     ],
     "tests/idb-timeout.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -1867,6 +1963,7 @@
       "tsup.config.ts"
     ],
     "tests/inline-link-room.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -1877,6 +1974,7 @@
       "tsup.config.ts"
     ],
     "tests/inline-link.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/",
@@ -1889,6 +1987,7 @@
       "tsup.config.ts"
     ],
     "tests/invite-identity.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/relay/src/",
       "apps/runner/",
@@ -1902,6 +2001,7 @@
       "tsup.config.ts"
     ],
     "tests/invite-one-session.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tic-tac-toe/",
@@ -1963,6 +2063,7 @@
       "tests/session-db.ts"
     ],
     "tests/ios-merge-relaunch.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tic-tac-toe/",
@@ -2022,6 +2123,7 @@
       "tests/ios-merge-relaunch.spec.ts"
     ],
     "tests/ios-relaunch.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -2034,6 +2136,7 @@
       "tsup.config.ts"
     ],
     "tests/isolation-conformance.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/isolation-probe.dai.html",
@@ -2054,6 +2157,7 @@
       "tests/keep-evidence.spec.ts"
     ],
     "tests/keep-intent.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -2113,6 +2217,7 @@
       "tests/keep-intent.spec.ts"
     ],
     "tests/keep-offer.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2172,6 +2277,7 @@
       "tests/owner.ts"
     ],
     "tests/kit-merge-order.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tic-tac-toe/",
@@ -2201,6 +2307,7 @@
       "tsup.config.ts"
     ],
     "tests/launch-address.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -2212,6 +2319,7 @@
       "tsup.config.ts"
     ],
     "tests/launch-card.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2269,6 +2377,7 @@
       "tests/launch-card.spec.ts"
     ],
     "tests/launch-failsafe.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2325,6 +2434,7 @@
       "tests/launch-failsafe.spec.ts"
     ],
     "tests/leave-check.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -2336,6 +2446,7 @@
       "tsup.config.ts"
     ],
     "tests/left-floor.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -2352,6 +2463,7 @@
       "tests/library-record.spec.ts"
     ],
     "tests/link-into-open-tab.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -2367,6 +2479,7 @@
       "tsup.config.ts"
     ],
     "tests/look-inside.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2423,6 +2536,7 @@
       "tests/look-inside.spec.ts"
     ],
     "tests/loser-tab-rows.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tic-tac-toe/",
@@ -2556,6 +2670,7 @@
       "tests/mailbox-labels.spec.ts"
     ],
     "tests/mailbox-link-e2e.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/trust-publisher-a-key.pem",
@@ -2571,6 +2686,7 @@
       "tsup.config.ts"
     ],
     "tests/mailbox-mechanism.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -2628,6 +2744,7 @@
       "tests/mailbox.spec.ts"
     ],
     "tests/make-one-page.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/app.css",
@@ -2728,6 +2845,7 @@
       "tsup.config.ts"
     ],
     "tests/merge-card.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2791,6 +2909,7 @@
       "tsup.config.ts"
     ],
     "tests/merge-signed-view.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -2803,6 +2922,7 @@
       "tsup.config.ts"
     ],
     "tests/message-binding.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -2817,6 +2937,7 @@
       "tests/model-file-size.spec.ts"
     ],
     "tests/mount-order.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -2847,6 +2968,7 @@
       "website/open.md"
     ],
     "tests/new-player.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -2858,6 +2980,7 @@
       "tsup.config.ts"
     ],
     "tests/no-beacon.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2914,6 +3037,7 @@
       "tests/no-beacon.spec.ts"
     ],
     "tests/offline-detector.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -2971,6 +3095,7 @@
       "tests/offline.ts"
     ],
     "tests/offline-second-open.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/",
@@ -3074,6 +3199,7 @@
       "website/components/"
     ],
     "tests/one-sentence.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/app.css",
@@ -3149,6 +3275,7 @@
       "website/"
     ],
     "tests/opener-thin.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -3208,6 +3335,7 @@
       "tests/opener-thin.spec.ts"
     ],
     "tests/opener-trust.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -3217,6 +3345,7 @@
       "tsup.config.ts"
     ],
     "tests/opener-updates.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -3273,6 +3402,7 @@
       "tests/opener-updates.spec.ts"
     ],
     "tests/opening-read-lock.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -3332,6 +3462,7 @@
       "tests/opening-read-lock.spec.ts"
     ],
     "tests/other-tab-copy.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -3344,6 +3475,7 @@
       "tsup.config.ts"
     ],
     "tests/owner-enrollment.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -3405,6 +3537,7 @@
       "tests/owner.ts"
     ],
     "tests/owner-library.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -3541,6 +3674,7 @@
       "tests/parents-own-malformed.spec.ts"
     ],
     "tests/person-key-read.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -3589,6 +3723,7 @@
       "tests/presign.spec.ts"
     ],
     "tests/probe-icon-manifest.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -3601,6 +3736,7 @@
       "tsup.config.ts"
     ],
     "tests/probe.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/",
@@ -3662,6 +3798,7 @@
       "tests/probe.spec.ts"
     ],
     "tests/publish-after-landed.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -3735,6 +3872,7 @@
       "website/"
     ],
     "tests/publisher-identity.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/identity-vectors.json",
@@ -3795,6 +3933,7 @@
       "tests/publisher-identity.spec.ts"
     ],
     "tests/publisher.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/confusables.json",
@@ -3855,6 +3994,7 @@
       "tests/publisher.spec.ts"
     ],
     "tests/push-e2e.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/relay/src/",
       "apps/runner/",
@@ -3922,6 +4062,7 @@
       "tsup.config.ts"
     ],
     "tests/read-only-writes.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -3936,6 +4077,7 @@
       "tsup.config.ts"
     ],
     "tests/rebuild-refused.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -3995,6 +4137,7 @@
       "tests/rebuild-refused.spec.ts"
     ],
     "tests/reference-head.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -4051,6 +4194,7 @@
       "tests/reference-head.spec.ts"
     ],
     "tests/reference-link.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -4126,6 +4270,7 @@
       "tests/relay-push.spec.ts"
     ],
     "tests/remove-app.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -4168,6 +4313,7 @@
       "tsup.config.ts"
     ],
     "tests/request-share.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -4225,6 +4371,7 @@
       "tests/request-share.spec.ts"
     ],
     "tests/returning-document.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -4316,6 +4463,7 @@
     ],
     "tests/runner.spec.ts": [
       "apps/desktop/src/main.ts",
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/cases/sectioned-valid.dai",
@@ -4339,6 +4487,7 @@
       "website/"
     ],
     "tests/safe-area.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -4402,6 +4551,7 @@
       "tsup.config.ts"
     ],
     "tests/schema-run.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -4488,6 +4638,7 @@
       "tests/seal.spec.ts"
     ],
     "tests/sealed-leave.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4550,6 +4701,7 @@
       "tests/seat-attacks.spec.ts"
     ],
     "tests/seat-gate-page.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4574,6 +4726,7 @@
       "tests/seat-writes.spec.ts"
     ],
     "tests/second-use.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4601,6 +4754,7 @@
       "tests/sectioned-host.spec.ts"
     ],
     "tests/sectioned-mount.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -4615,6 +4769,7 @@
       "tests/self-write-mark.spec.ts"
     ],
     "tests/send.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4627,6 +4782,7 @@
       "tsup.config.ts"
     ],
     "tests/sender.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/app.css",
@@ -4649,6 +4805,7 @@
       "tests/sentences-check.spec.ts"
     ],
     "tests/seq-floor-read.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4660,6 +4817,7 @@
       "tsup.config.ts"
     ],
     "tests/seq-floor.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4672,6 +4830,7 @@
       "tsup.config.ts"
     ],
     "tests/session-contested.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tic-tac-toe/",
@@ -4768,6 +4927,7 @@
       "tests/session-id.spec.ts"
     ],
     "tests/session-mailbox-e2e.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/tic-tac-toe/",
@@ -4890,6 +5050,7 @@
       "tests/signed-people.ts"
     ],
     "tests/session-void.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4901,6 +5062,7 @@
       "tsup.config.ts"
     ],
     "tests/share-and-keep-sentences.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -4929,6 +5091,7 @@
       "tsup.config.ts"
     ],
     "tests/sign-scope.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -4954,6 +5117,7 @@
       "tests/signed-batch.spec.ts"
     ],
     "tests/signed-pick.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -4998,6 +5162,7 @@
       "website/public/sample-tampered.dai"
     ],
     "tests/static-opener.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/isolation-probe.dai.html",
@@ -5059,6 +5224,7 @@
       "tests/static-opener.spec.ts"
     ],
     "tests/status-words.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/retain-host.mjs",
@@ -5077,6 +5243,7 @@
       "tests/storage-keys.spec.ts"
     ],
     "tests/storage-persistence.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -5149,6 +5316,7 @@
       "tests/studio.spec.ts"
     ],
     "tests/succession.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -5247,6 +5415,7 @@
       "tests/thin-profile.spec.ts"
     ],
     "tests/trust-consent.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/trust-publisher-a-key.pem",
@@ -5348,6 +5517,7 @@
       "tests/trust.spec.ts"
     ],
     "tests/trusted-types.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -5367,6 +5537,7 @@
       "tsup.config.ts"
     ],
     "tests/unfurl.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/packing-list/",
@@ -5430,6 +5601,7 @@
       "tests/unzip.spec.ts"
     ],
     "tests/v1-walk.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/relay/src/",
       "apps/runner/",
@@ -5491,6 +5663,7 @@
       "tests/v1-walk.spec.ts"
     ],
     "tests/v3-reader.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "conformance/signing-key.pem",
@@ -5582,6 +5755,7 @@
       "tests/version-relay.spec.ts"
     ],
     "tests/version-update-e2e.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/relay/src/",
       "apps/runner/",
@@ -5642,6 +5816,7 @@
       "tests/version-update-e2e.spec.ts"
     ],
     "tests/version-update.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/",
@@ -5701,6 +5876,7 @@
       "tests/version-update.spec.ts"
     ],
     "tests/viewport.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "src/bridge.ts",
@@ -5784,6 +5960,7 @@
       "tests/worker-names.spec.ts"
     ],
     "tests/worker-offline.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "examples/chore-chart/",
@@ -5843,6 +6020,7 @@
       "tests/worker-offline.spec.ts"
     ],
     "tests/write-rules-race.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",
@@ -5854,6 +6032,7 @@
       "tsup.config.ts"
     ],
     "tests/write-rules-refused.spec.ts": [
+      "apps/owner-store/src/client.ts",
       "apps/owner-store/src/envelope.ts",
       "apps/runner/",
       "scripts/generate-key.mjs",

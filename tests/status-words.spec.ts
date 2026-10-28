@@ -6,7 +6,7 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { cutTheNetwork } from "./offline.js";
 import { RUNNER_URL, buildNotes, openFile, savesWritten, storedHolds, typeNote, uuidOf, waitMounted } from "./owner.js";
-import { storageWords } from "../apps/runner/src/status.js";
+import { storageSentence, storageWords } from "../apps/runner/src/status.js";
 
 /**
  * The status words, Build 2b-1 (R-Z sentences 2 and 4; ruling 6 as amended).
@@ -42,7 +42,10 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
   test("the words, from the host's evidence only", () => {
     expect(storageWords({ state: "saved", kept: null })).toBe(SAVED);
     expect(storageWords({ state: "saved", kept: { revision: "current", at: "10:42" } })).toBe("Kept");
-    expect(storageWords({ state: "saved", kept: { revision: "earlier", at: "10:42" } })).toBe("Saved in this browser. Last kept at 10:42.");
+    // Both facts in the pill's own box (D300), and R-Z sentence 4's words as its name.
+    expect(storageWords({ state: "saved", kept: { revision: "earlier", at: "10:42 AM" } })).toBe("Saved here · kept 10:42 AM");
+    expect(storageSentence({ state: "saved", kept: { revision: "earlier", at: "10:42 AM" } })).toBe("Saved in this browser. Last kept at 10:42 AM.");
+    expect(storageSentence({ state: "saved", kept: null })).toBe(SAVED);
     expect(storageWords({ state: "saving", kept: null })).toBe("Saving…");
     expect(storageWords({ state: "failed", kept: { revision: "current", at: "10:42" } })).toBe("Not saved");
   });
@@ -86,7 +89,7 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
     expect(await savesWritten(page), "said from what this browser holds, not from a new save").toBe(0);
   });
 
-  test("the built opener says Kept nowhere but the status's own word, which nothing feeds in this build", () => {
+  test("the built opener says Kept nowhere but the status's own word, which only a held receipt feeds", () => {
     // What the opener's page can show: its markup, comments aside, and its bundled scripts. The worker draws nothing.
     const dist = join(repo, "apps", "runner", "dist");
     const files = ["index.html", ...readdirSync(join(dist, "assets")).filter((name) => name.endsWith(".js")).map((name) => join("assets", name))];

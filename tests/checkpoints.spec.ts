@@ -5,7 +5,7 @@ import { expect } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { buildNotes, openFile, savesWritten, typeNote, uuidOf } from "./owner.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
-import { enrollHere, keepingLog, keptRecord, libraryRevision, openerWithStore, pillText, waitKeptCurrent } from "./keeping.js";
+import { enrollHere, keepingLog, keptRecord, libraryRevision, openerWithStore, pillText, waitSettledKept } from "./keeping.js";
 import { digestOf, parseEnvelope } from "../apps/owner-store/src/envelope.js";
 
 /**
@@ -40,10 +40,10 @@ test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
       const uuid = await uuidOf(page);
       const owner = await enrollHere(page);
       await typeNote(app, "first");
-      const first = await waitKeptCurrent(page, uuid);
+      const first = await waitSettledKept(page, uuid);
       expect(first.owner).toBe(owner);
       await typeNote(app, " second");
-      const second = await waitKeptCurrent(page, uuid, first.revision);
+      const second = await waitSettledKept(page, uuid, first.revision);
       expect(second.revision).toBeGreaterThan(first.revision);
 
       // What the store was sent: envelopes in a chain, the last the one acknowledged.
@@ -111,7 +111,7 @@ test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
       const uuid = await uuidOf(page);
       await enrollHere(page);
       await typeNote(app, "first");
-      const first = await waitKeptCurrent(page, uuid);
+      const first = await waitSettledKept(page, uuid);
       // From here every append is answered with an acknowledgment already given: the first one, replayed.
       store.rewrite(async (path, answer) => {
         if (!path.endsWith("/append") || !answer.ok) return answer;
@@ -126,8 +126,8 @@ test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
       await expect.poll(() => libraryRevision(page, uuid), { timeout: 30_000 }).toBeGreaterThan(first.revision);
       const after = await keptRecord(page, uuid);
       expect(after, "the kept record is the first one still").toEqual(first);
-      await expect.poll(() => pillText(page), { timeout: 15_000 }).toMatch(/Saved in this browser/);
-      expect(await pillText(page)).toContain(new Date(first.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+      const at = new Date(first.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe(`Saved here · kept ${at}`);
     } finally {
       await context.close();
       await store.close();

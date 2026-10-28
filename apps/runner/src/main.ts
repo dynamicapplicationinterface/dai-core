@@ -89,7 +89,7 @@ import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
-import { storageWords, type KeptReading } from "./status.js";
+import { storageSentence, storageWords, type KeptReading } from "./status.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -650,9 +650,27 @@ function showStorage(): void {
   const el = document.getElementById("save-state");
   if (!el) return;
   const state = el.dataset.state;
-  const words = state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading() }) : "";
+  const status = state === "saving" || state === "saved" || state === "failed" ? { state, kept: keptReading() } : null;
+  const words = status ? storageWords(status) : "";
   const offering = keepOffering && words !== "" && state !== "failed";
-  el.textContent = offering ? `${words} · Keep?` : words;
+  /*
+   * The words sit in a span that adds nothing to the pill's width (D300): the
+   * box is the measured offer's, whatever is said in it, and words wider than
+   * it on some font are cut with an ellipsis, never let to grow it. The whole
+   * sentence is the pill's name.
+   */
+  const span = document.createElement("span");
+  span.className = "words";
+  span.textContent = offering ? `${words} · Keep?` : words;
+  el.replaceChildren(span);
+  const sentence = status ? storageSentence(status) : "";
+  if (sentence !== words && state === "saved") {
+    el.setAttribute("aria-label", sentence);
+    el.title = sentence;
+  } else {
+    el.removeAttribute("aria-label");
+    if (state === "saved" || state === "saving") el.title = "";
+  }
   if (offering) el.dataset.offer = "";
   else delete el.dataset.offer;
   if (state === "failed" || ((personsChangeLanded || heldShown) && words !== "")) el.dataset.shown = "";
@@ -6431,6 +6449,9 @@ Object.defineProperty(window, "__runner", {
      * what each append came to and what was last kept.
      */
     useStore: (base: string | undefined): void => useStore(base),
+    // The frame's pending writes saved now, not on the 800 ms debounce: so a
+    // test can know the revision on screen is the last one coming.
+    flush: (): Promise<void> => flushBeforeLeaving(),
     keeping: {
       log: keepingLog,
       kept: keptOf,

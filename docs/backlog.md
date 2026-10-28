@@ -11855,8 +11855,24 @@ and WebKit launching, its parts and its mailbox job green.
 
 #### D300 — The pill's reserved width is today's widest words, not 2b-2's
 
-*Status: open, to be settled in 2b-2. Filed 27 October, from the code review
+*Status: fixed, Build 2b-2 item 3. Filed 27 October, from the code review
 of Build 2b-1r (observations).*
+
+**Settled: shorter words, and words that cannot grow the box.** A second
+line inside the box was measured out: the pill is one line of 11.5 px in a
+box 21.25 px tall, so two lines need type near 8 px. Measured on Chromium,
+Firefox and WebKit, against the offer's 174 px: R-Z's sentence, "Saved in
+this browser. Last kept at 10:42 AM.", is 1.48 of it; "Saved here · last
+kept 10:42 AM" 1.07; "Saved here · kept 10:42 AM" 0.94. So the pill says
+"Saved here · kept 10:42 AM", and R-Z's sentence is its accessible name and
+its title (`storageSentence`, `apps/runner/src/status.ts`). And the words sit
+in a span with no width of its own, stretched to the measured box: a font on
+which words are wider than the offer cuts them with an ellipsis inside the
+box and never grows it. `tests/kept.spec.ts` records the pill's box at every
+change from the page's load, through the offer, saving, saved, Kept and kept
+earlier at 12:59 PM, at 390 and 1280 wide on three engines: one box, and in
+every state the words whole. Red against the measure narrowed (words cut)
+and against R-Z's whole sentence as the pill's words.
 
 The status pill keeps one box whatever it says, so nothing the host shows
 grows or moves over the document (R-Z, the host's fixed presence): it is
