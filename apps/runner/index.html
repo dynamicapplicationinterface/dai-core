@@ -442,6 +442,10 @@
         text-align: center;
       }
       #save-state[data-shown] { align-items: stretch; }
+      #recover[hidden], #recovered[hidden] { display: none; }
+      #recover { margin-top: 10px; background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+      #recovered { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+      #recovered button { width: 100%; text-align: left; font: inherit; padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; cursor: pointer; }
       #save-state[data-offer] { cursor: pointer; }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
@@ -1514,6 +1518,13 @@
           runs here, on this device.
         </p>
         <button id="open" type="button">Open a file</button>
+        <!--
+          Recovery (R-Z sentence 5): on a browser with nothing, the person's
+          documents come back from the owner's store with their passkey. Shown
+          when a store is set and no owner is signed in here.
+        -->
+        <button id="recover" type="button" hidden>Recover your documents</button>
+        <ul id="recovered" hidden></ul>
         <p class="hint">
           Not sure what you have?
           <a href="https://www.dynamicapplicationinterface.io/open">What is a .dai file?</a>

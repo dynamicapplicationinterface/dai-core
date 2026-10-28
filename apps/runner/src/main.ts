@@ -90,6 +90,7 @@ import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
+import { recover } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -3152,6 +3153,12 @@ window.addEventListener("message", (event) => {
     keptShown = null;
     showStorage();
     void refreshKept();
+    // A copy just recovered says which revision it is, once (R-Z, "The restored revision, in words").
+    const restoredAt = shown ? restoredNotes.get(shown.manifest.documentUuid) : undefined;
+    if (shown && restoredAt) {
+      restoredNotes.delete(shown.manifest.documentUuid);
+      tellOverDocument(restoredSentence(restoredAt));
+    }
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -3928,7 +3935,78 @@ window.addEventListener("online", () => {
   for (const documentUuid of waitingDocuments()) keepAgain(documentUuid);
 });
 
+/*
+ * Recover (R-Z sentence 5). On a browser with nothing, the passkey brings the
+ * owner's library back at the revisions kept, each verified before it is
+ * restored; the person opens one, and it says which revision it is. When the
+ * store cannot be reached, that is said, and nothing is presented as
+ * recovered. With no surviving evidence of what is missing, nothing is said
+ * about it beyond the one sentence.
+ */
+const recoverButton = document.getElementById("recover") as HTMLButtonElement | null;
+const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
+/** Documents recovered on this page, not yet opened: the store's time for each. */
+const restoredNotes = new Map<string, string>();
+const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function restoredSentence(at: string): string {
+  return `Restored the copy kept at ${shortTime(at)}. Changes saved only in the cleared browser are not included.`;
+}
+async function showRecover(): Promise<void> {
+  if (recoverButton) recoverButton.hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+}
+recoverButton?.addEventListener("click", () => {
+  // The ceremony first, inside the tap.
+  const recovering = recover(storeBase());
+  say("");
+  void recovering.then((outcome) => {
+    if (recoveredList) {
+      recoveredList.replaceChildren();
+      recoveredList.hidden = true;
+    }
+    if ("unavailable" in outcome) {
+      console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
+      say("Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.", true);
+    } else if ("cancelled" in outcome) {
+      console.info(`dai: recovery cancelled: ${outcome.cancelled}`);
+      say("No passkey was used, so nothing was recovered.");
+    } else if ("refused" in outcome && typeof outcome.refused === "string") {
+      console.info(`dai: recovery refused: ${outcome.refused}`);
+      say("This passkey did not recover any documents. Nothing was restored.", true);
+    } else if ("restored" in outcome) {
+      for (const one of outcome.restored) {
+        restoredNotes.set(one.documentUuid, one.at);
+        const row = document.createElement("li");
+        const open = document.createElement("button");
+        open.type = "button";
+        open.dataset.document = one.documentUuid;
+        open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
+        open.addEventListener("click", () => {
+          void (async () => {
+            const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === one.documentUuid);
+            if (item) await launchFromLibrary(item, "a recovered copy");
+          })();
+        });
+        row.append(open);
+        recoveredList?.append(row);
+      }
+      if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
+      const unverified = outcome.refused.length;
+      say(
+        outcome.restored.length === 0 && unverified === 0
+          ? "Nothing kept was found for this passkey."
+          : unverified > 0
+            ? "A kept copy could not be verified, so it was not restored."
+            : "",
+        unverified > 0,
+      );
+    }
+    void showRecover();
+  });
+});
+void showRecover();
+
 onOwnerChange(() => {
+  void showRecover();
   void refreshKept();
   void showKeepBeyond();
   keepOfferDeciding = keepOfferDeciding.then(async () => {
@@ -6470,7 +6548,10 @@ Object.defineProperty(window, "__runner", {
      * test store it stands up, as a deploy does with `dai-store`, and reads
      * what each append came to and what was last kept.
      */
-    useStore: (base: string | undefined): void => useStore(base),
+    useStore: (base: string | undefined): void => {
+      useStore(base);
+      void showRecover();
+    },
     // The frame's pending writes saved now, not on the 800 ms debounce: so a
     // test can know the revision on screen is the last one coming.
     flush: (): Promise<void> => flushBeforeLeaving(),

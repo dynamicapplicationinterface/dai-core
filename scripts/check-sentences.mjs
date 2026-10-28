@@ -42,6 +42,7 @@ const CHOOSER = {
   namePublisher: "asked from the card, before the document opens",
   refusedByShell: "the shell refused the document and the frame comes down: the chooser is what is left",
   'document.getElementById("remove")?.addEventListener("click", () => {': "the document is removed: the chooser is what is left",
+  'recoverButton?.addEventListener("click", () => {': "Recover is on the chooser, on a browser with nothing open (R-Z sentence 5)",
 };
 
 /**

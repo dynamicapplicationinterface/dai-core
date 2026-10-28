@@ -122,7 +122,7 @@ const ownerChannel = typeof BroadcastChannel === "function" ? new BroadcastChann
 ownerChannel?.addEventListener("message", () => {
   for (const listener of ownerChanged) listener();
 });
-function announceOwnerChange(): void {
+export function announceOwnerChange(): void {
   for (const listener of ownerChanged) listener();
   ownerChannel?.postMessage("changed");
 }
