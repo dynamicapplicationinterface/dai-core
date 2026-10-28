@@ -169,17 +169,32 @@ async function wrapUnder(documentUuid: string, owner: OwnerRecord): Promise<void
 
 /**
  * After a save of a document landed in this browser: its data key exists, and
- * is wrapped under the owner this context is signed in as, if any. Off the
- * save's path: nothing here holds a save up, and a failure here loses nothing
- * the save wrote.
+ * when the save carried a change of the person's, it is wrapped under the
+ * owner this context is signed in as, if no owner holds it yet. A document no
+ * owner holds is claimed by the owner who first changes it, never by a sign-in
+ * or an open alone: the seed, an echo, a merge and the runtime's bookkeeping
+ * claim nothing (R-Z sentence 5; 2b-1's L2). Off the save's path: nothing here
+ * holds a save up, and a failure here loses nothing the save wrote.
  */
-export function afterSaveWritten(documentUuid: string): Promise<void> {
+export function afterSaveWritten(documentUuid: string, personsChange: boolean): Promise<void> {
   return serially(async () => {
     const signedIn = await currentOwner();
-    const owner = signedIn ? await ownerRecord(signedIn) : null;
+    const owner = signedIn && personsChange ? await ownerRecord(signedIn) : null;
     if (owner) await wrapUnder(documentUuid, owner);
     else await heldDataKey(documentUuid);
   });
+}
+
+/**
+ * Whether a document opens in this browser context (R-B, R-Z sentence 5): when
+ * no owner holds it, or the owner signed in does. A document wrapped under
+ * another owner is that owner's, listed and opened only under their sign-in,
+ * whichever way it is reached: the library, a resume, an icon or a link.
+ */
+export async function mayOpenHere(documentUuid: string): Promise<boolean> {
+  const held = await dataKeyOf(documentUuid);
+  if (!held?.owner) return true;
+  return held.owner === (await currentOwner());
 }
 
 /** Why an enrollment did not finish. Nothing was kept in any of them. */

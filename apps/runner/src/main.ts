@@ -88,7 +88,7 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
@@ -409,6 +409,13 @@ function refuseArrival(message: string): void {
   clearLaunchGuard();
   say(message, true);
 }
+
+/** The refusal for a document another owner holds in this browser (R-Z sentence 5): it is theirs, opened under their sign-in. */
+/** The route a resume names, so a refusal of it can say nothing. */
+const RESUMED = "the document open last time, resumed";
+
+const ANOTHER_OWNERS =
+  "This document belongs to another owner in this browser, so it was not opened. Recover with that owner's passkey to open it.";
 
 /** The refusal for a held document's id arriving under another publisher (D126). */
 function strangersCopy(appName: string | undefined): string {
@@ -1323,6 +1330,14 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       return;
     }
 
+    // Another owner's document is neither shown nor opened here, by any route
+    // (R-Z sentence 5). A resume of it says nothing: the person did not ask.
+    if (!(await mayOpenHere(cartridge.manifest.documentUuid))) {
+      console.info(`dai: ${cartridge.manifest.documentUuid} not opened (${entry}): another owner holds it here`);
+      refuseArrival(entry === RESUMED ? "" : ANOTHER_OWNERS);
+      return;
+    }
+
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     const stored = await readStored(cartridge.manifest.documentUuid);
@@ -2166,6 +2181,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const heldHere = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
     );
+    // Another owner's document is not shown here, not even as a card, and not opened (R-Z sentence 5).
+    if (heldHere && !(await mayOpenHere(cartridge.manifest.documentUuid))) {
+      console.info(`dai: arriving ${cartridge.manifest.documentUuid} not opened: another owner holds it here`);
+      refuseArrival(ANOTHER_OWNERS);
+      return;
+    }
     /*
      * The game's key is filed here, the moment the document it opens is known.
      *
@@ -3736,7 +3757,7 @@ window.addEventListener("message", (event) => {
           // save's path: the save is answered whatever this does.
           // Then, for a document under the owner signed in, the revision is
           // appended to the owner's store (R-C, R-Z sentence 2); behind the save.
-          void afterSaveWritten(documentUuid)
+          void afterSaveWritten(documentUuid, data.payload?.authored === true)
             .then(() => keepRevision(landed))
             .catch((error: unknown) => {
               console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
@@ -3821,7 +3842,8 @@ async function showKeepBeyond(): Promise<void> {
   if (keepBeyond) keepBeyond.hidden = (await currentOwner().catch(() => null)) !== null;
 }
 function keepBeyondThisBrowser(): void {
-  const enrolling = enroll(location.hostname, async () => (await listCartridgesFromLibrary()).map((item) => item.documentUuid));
+  // The documents written in this browser are what keeping beyond it keeps; one only opened here is claimed by nobody.
+  const enrolling = enroll(location.hostname, async () => (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid));
   void enrolling.then((result) => {
     if ("refused" in result) {
       console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
@@ -6003,7 +6025,7 @@ async function start(): Promise<void> {
     return;
   }
 
-  await launchFromLibrary(item, "the document open last time, resumed");
+  await launchFromLibrary(item, RESUMED);
 }
 
 void start();
