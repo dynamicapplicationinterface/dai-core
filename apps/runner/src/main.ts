@@ -90,6 +90,7 @@ import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
 import { storageWords, type KeptReading } from "./status.js";
+import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -622,12 +623,34 @@ let keepOffering = false;
  */
 let heldAtOpen: string | undefined;
 let heldShown = false;
-const keptReading: KeptReading | null = null;
+/**
+ * What the owner's store last acknowledged for the document on screen, under
+ * the owner signed in: the one source of "Kept" (R-Z sentence 2). "Kept" when
+ * it is the revision on screen; otherwise the time of the last one.
+ */
+let keptShown: KeptRecord | null = null;
+function keptReading(): KeptReading | null {
+  const shown = loaded?.manifest.documentUuid;
+  if (!keptShown || !shown) return null;
+  return {
+    revision: keptShown.revision === knownRevision.get(shown) ? "current" : "earlier",
+    at: new Date(keptShown.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+  };
+}
+async function refreshKept(): Promise<void> {
+  const shown = loaded?.manifest.documentUuid;
+  const [record, owner] = shown ? await Promise.all([keptOf(shown), currentOwner()]) : [null, null];
+  keptShown = record && shown === loaded?.manifest.documentUuid && record.owner === owner ? record : null;
+  showStorage();
+}
+onKept((documentUuid) => {
+  if (documentUuid === loaded?.manifest.documentUuid) void refreshKept();
+});
 function showStorage(): void {
   const el = document.getElementById("save-state");
   if (!el) return;
   const state = el.dataset.state;
-  const words = state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading }) : "";
+  const words = state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading() }) : "";
   const offering = keepOffering && words !== "" && state !== "failed";
   el.textContent = offering ? `${words} · Keep?` : words;
   if (offering) el.dataset.offer = "";
@@ -3087,7 +3110,9 @@ window.addEventListener("message", (event) => {
       saveState.hidden = false;
       saveState.title = "";
     }
+    keptShown = null;
     showStorage();
+    void refreshKept();
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -3611,6 +3636,7 @@ window.addEventListener("message", (event) => {
         else await raiseSeqFloor(documentUuid, seq);
         await saveDatabaseToOpfs(documentUuid, bytes);
         const next = current + 1;
+        let landed: Revision;
         {
           // The mount's own document, resealed; shown only if it is still the
           // one open (D167). Written to the library either way: that is the
@@ -3654,6 +3680,15 @@ window.addEventListener("message", (event) => {
             // apart by its application rather than by its data (D85).
             ...(buildOf(resealed.manifest) ? { build: buildOf(resealed.manifest) } : {}),
           });
+          // What the owner's store is asked to keep, once this save has landed.
+          landed = {
+            documentUuid,
+            revision: next,
+            database: bytes,
+            html: resealed.html,
+            title: resealed.manifest.appName ?? "container",
+            build: buildOf(resealed.manifest),
+          };
         }
         knownRevision.set(documentUuid, next);
         // Landed: the headers these bytes hold may leave from here on, so the
@@ -3662,8 +3697,9 @@ window.addEventListener("message", (event) => {
         // before this line leaves them uncounted until the next mount reads
         // the stored copy.
         if (egress) await leaveWith(documentUuid, egress, "record");
+        return landed;
       })
-        .then(async () => {
+        .then(async (landed) => {
           console.info(`dai: save ${saveNumber} written`);
           writtenThisPage.add(documentUuid);
           hostSavesWritten += 1;
@@ -3680,9 +3716,13 @@ window.addEventListener("message", (event) => {
           // The document's data key, made at its first landed save and wrapped
           // under the owner signed in here, if any (R-D as amended). Off the
           // save's path: the save is answered whatever this does.
-          void afterSaveWritten(documentUuid).catch((error: unknown) => {
-            console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
-          });
+          // Then, for a document under the owner signed in, the revision is
+          // appended to the owner's store (R-C, R-Z sentence 2); behind the save.
+          void afterSaveWritten(documentUuid)
+            .then(() => keepRevision(landed))
+            .catch((error: unknown) => {
+              console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
+            });
           /*
            * A change of the person's has landed here: the moment to offer to keep
            * it beyond (R-Z sentence 3). The runtime's flag alone says so (R-X): it
@@ -3839,7 +3879,17 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
  * page or another of the browser context: the pill goes back to the status
  * alone. In the order of the decisions, so one still being made lands first.
  */
+/*
+ * A connection that comes back is a reason to try the store again, and never a
+ * reason to say anything: only an acknowledgment changes the status (R-Z
+ * sentence 4).
+ */
+window.addEventListener("online", () => {
+  for (const documentUuid of waitingDocuments()) keepAgain(documentUuid);
+});
+
 onOwnerChange(() => {
+  void refreshKept();
   void showKeepBeyond();
   keepOfferDeciding = keepOfferDeciding.then(async () => {
     if (!keepOffering || (await currentOwner().catch(() => null)) === null) return;
@@ -6374,6 +6424,18 @@ Object.defineProperty(window, "__runner", {
       signIn,
       leave,
       library: async () => libraryHere(await listCartridgesFromLibrary()),
+    },
+    /*
+     * The owner's store (Build 2b-2). A test points the opener at the local
+     * test store it stands up, as a deploy does with `dai-store`, and reads
+     * what each append came to and what was last kept.
+     */
+    useStore: (base: string | undefined): void => useStore(base),
+    keeping: {
+      log: keepingLog,
+      kept: keptOf,
+      base: storeBase,
+      waiting: waitingDocuments,
     },
     /** Decisions made about the offer to keep beyond this browser, one per written save. */
     get keepOfferDecided() {

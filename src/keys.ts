@@ -61,6 +61,14 @@ export const ownerRecordKey = (ownerId: string): string => `dai:owner:${ownerId}
  */
 export const dataKeyKey = (documentUuid: string): string => `dai:data-key:${documentUuid}`;
 
+/**
+ * IndexedDB, the opener's key store: what the owner's store last acknowledged
+ * for a document from this browser context (docs/store.md, "Operations"): the
+ * revision, its envelope and checkpoint digests, and the store's time. The
+ * only source of "Kept" (R-Z sentence 2), and the parent of the next append.
+ */
+export const keptKey = (documentUuid: string): string => `dai:kept:${documentUuid}`;
+
 /** Local storage: the colour under the clock this document last declared, per colour scheme. */
 export const groundKey = (documentUuid: string, scheme: string): string => `dai:ground:${documentUuid}:${scheme}`;
 
@@ -106,4 +114,4 @@ export const leftFloorKey = (documentUuid: string): string => `dai:left-floor:${
 export const leftHeaderKey = (documentUuid: string, headerId: string): string => `dai:left-header:${documentUuid}:${headerId}`;
 
 /** Every key-making function here, for a check that wants to see them all. */
-export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey, leftFloorKey, leftHeaderKey } as const;
+export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey, leftFloorKey, leftHeaderKey, keptKey } as const;

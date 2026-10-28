@@ -113,8 +113,12 @@ function stamp(): Plugin {
       // And the relay's public push key, the same way: set on the deploy with
       // the relay's VAPID secret, empty (push off) until then.
       const pushKey = (process.env.DAI_PUSH_PUBLIC_KEY ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "");
+      // The owner's store (docs/store.md), the same way: one address, set on the
+      // deploy; empty is no store, and nothing is ever said to be kept.
+      const ownerStore = (process.env.DAI_STORE_BASE ?? "").trim().replace(/[^A-Za-z0-9:/._-]/g, "");
       return stamped
         .replace(/<meta name="dai-relay" content="[^"]*" \/>/, `<meta name="dai-relay" content="${relay}" />`)
+        .replace(/<meta name="dai-store" content="[^"]*" \/>/, `<meta name="dai-store" content="${ownerStore}" />`)
         .replace(/<meta name="dai-push-key" content="[^"]*" \/>/, `<meta name="dai-push-key" content="${pushKey}" />`);
     },
     closeBundle() {

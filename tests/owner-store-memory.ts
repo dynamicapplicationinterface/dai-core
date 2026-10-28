@@ -31,8 +31,8 @@ export interface ServedStore {
   received: () => Received[];
   /** "unavailable": every request is answered 503 and reaches no object. */
   setMode: (mode: "up" | "unavailable") => void;
-  /** Answers a route its own way: given the path and the store's own answer, return the answer to send. */
-  rewrite: (fn: ((path: string, answer: Response) => Promise<Response> | Response) | null) => void;
+  /** Answers a route its own way: given the path, the store's own answer and the request's body, return the answer to send. */
+  rewrite: (fn: ((path: string, answer: Response, body: Buffer) => Promise<Response> | Response) | null) => void;
   /** The names of the objects that exist. */
   objects: () => string[];
   close: () => Promise<void>;
@@ -64,7 +64,7 @@ export async function serveOwnerStore(): Promise<ServedStore> {
   };
   const received: Received[] = [];
   let mode: "up" | "unavailable" = "up";
-  let rewriting: ((path: string, answer: Response) => Promise<Response> | Response) | null = null;
+  let rewriting: ((path: string, answer: Response, body: Buffer) => Promise<Response> | Response) | null = null;
 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -85,8 +85,10 @@ export async function serveOwnerStore(): Promise<ServedStore> {
           new Request(url.href, { method: req.method, headers, ...(req.method === "GET" || req.method === "OPTIONS" ? {} : { body }) }),
           env,
         );
-        if (rewriting) answer = await rewriting(url.pathname, answer);
-        res.writeHead(answer.status, Object.fromEntries(answer.headers));
+        if (rewriting && req.method !== "OPTIONS") answer = await rewriting(url.pathname, answer, body);
+        // A rewritten answer carries the original's headers: its length is the new body's.
+        const sentHeaders = Object.fromEntries([...answer.headers].filter(([k]) => k !== "content-length"));
+        res.writeHead(answer.status, sentHeaders);
         res.end(Buffer.from(await answer.arrayBuffer()));
       })().catch((error: unknown) => {
         res.writeHead(500, { "access-control-allow-origin": "*" });

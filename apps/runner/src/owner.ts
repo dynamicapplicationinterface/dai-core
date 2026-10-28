@@ -22,6 +22,7 @@
  */
 import { KEYS, dataKeyKey, ownerRecordKey } from "../../../src/keys.js";
 import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore } from "./opfs.js";
+import { keychainVerifier } from "../../owner-store/src/envelope.js";
 
 /** One owner, as this browser context holds it. */
 export interface OwnerRecord {
@@ -42,6 +43,17 @@ export interface OwnerRecord {
   keychain: "offered" | "not offered";
   /** When this context enrolled, ISO 8601. */
   enrolled: string;
+  /**
+   * What the store's Enroll needs from the ceremony (docs/store.md, "The
+   * wire"): the passkey's public key, SPKI, its algorithm, and the
+   * registration's client data. Absent for an owner recovered here, which the
+   * store holds already.
+   */
+  registration?: { publicKey: string; algorithm: number; clientDataJSON: string };
+  /** The keychain path's verifier: the Ed25519 public key the keychain secret derives. */
+  verifier?: string;
+  /** Whether the store has this owner: enrolled there, or recovered from it. */
+  atStore?: boolean;
 }
 
 /** A document's data key, and the owner it is wrapped under once it is. */
@@ -49,6 +61,8 @@ export interface DataKeyRecord {
   key: CryptoKey;
   owner?: string;
   wrapped?: Uint8Array;
+  /** Whether the store has this wrap (Put). */
+  atStore?: boolean;
 }
 
 /** What the PRF extension is asked to evaluate. Fixed, so every context of one passkey derives one secret. */
@@ -222,17 +236,37 @@ export function enroll(
         secret = asserted ? prfOf(asserted) : null;
       }
       if (!secret) return { refused: "no-prf", why: "the passkey's provider gave no PRF output" };
+      const attestation = credential.response as AuthenticatorAttestationResponse;
+      const spki = attestation.getPublicKey?.() ?? null;
+      const registration = spki
+        ? {
+            publicKey: b64u(bytesOf(spki)),
+            algorithm: attestation.getPublicKeyAlgorithm?.() ?? 0,
+            clientDataJSON: b64u(bytesOf(attestation.clientDataJSON)),
+          }
+        : undefined;
       const adopt = await documents();
-      return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt));
+      return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt, registration));
     },
     (error: unknown) => ({ refused: "cancelled" as const, why: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
   );
 }
 
 /** Makes and keeps the owner key, its two wraps, the record, and the documents' wraps. */
-async function keep(owner: string, credential: string, prf: Uint8Array<ArrayBuffer>, documents: readonly string[]): Promise<{ enrolled: string }> {
+async function keep(
+  owner: string,
+  credential: string,
+  prf: Uint8Array<ArrayBuffer>,
+  documents: readonly string[],
+  registration?: OwnerRecord["registration"],
+): Promise<{ enrolled: string }> {
   const keychainSecret = b64u(crypto.getRandomValues(new Uint8Array(32)));
   const keychain = (await offerToKeychain(owner, keychainSecret)) ? "offered" : "not offered";
+  // Ed25519 is in every engine that makes a passkey with PRF; where it is not, the keychain path has no verifier.
+  const verifier = await keychainVerifier(new TextEncoder().encode(keychainSecret)).then(
+    (derived) => derived.pub,
+    () => undefined,
+  );
   const made = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
   const prfKey = await wrappingKey(prf, "prf");
   const wraps = {
@@ -241,7 +275,16 @@ async function keep(owner: string, credential: string, prf: Uint8Array<ArrayBuff
   };
   // The key kept is the one the PRF wrap opens, so a wrap that does not open fails here, before anything is kept.
   const key = await crypto.subtle.unwrapKey("raw", wraps.prf, prfKey, "AES-KW", { name: "AES-KW", length: 256 }, false, ["wrapKey", "unwrapKey"]);
-  const record: OwnerRecord = { owner, credential, key, wraps, keychain, enrolled: new Date().toISOString() };
+  const record: OwnerRecord = {
+    owner,
+    credential,
+    key,
+    wraps,
+    keychain,
+    enrolled: new Date().toISOString(),
+    ...(registration ? { registration } : {}),
+    ...(verifier ? { verifier } : {}),
+  };
   await keepInKeyStore(ownerRecordKey(owner), record);
   await keepInKeyStore(KEYS.OWNER, owner);
   announceOwnerChange();
