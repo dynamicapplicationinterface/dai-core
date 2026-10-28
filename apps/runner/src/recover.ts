@@ -6,7 +6,10 @@
  * opens the owner key's wrap, which the store hands over on Admit: this
  * context is admitted as a new author under the same owner (R-E). Then the
  * library, each document's heads and envelopes, opened with the data key the
- * owner key unwraps.
+ * owner key unwraps. Or, with no passkey, the password the password manager
+ * kept at enrollment (R-D as amended, D298): its owner id names the owner,
+ * and its secret proves the owner to Admit and opens the owner key's other
+ * wrap. Each path recovers alone.
  *
  * Every revision restored is verified first (R-C): each envelope back to the
  * root opens under the data key, is signed by an author the store enrolled
@@ -20,7 +23,20 @@
  * synchronously.
  */
 import { KEYS, dataKeyKey, keptKey, ownerRecordKey } from "../../../src/keys.js";
-import { admitChallenge, b64u, checkpointDigest, digestOf, fromB64u, openEnvelope, utf8, verifyOpened, type Author, type Opened, type Unverified } from "../../owner-store/src/envelope.js";
+import {
+  admitChallenge,
+  b64u,
+  checkpointDigest,
+  digestOf,
+  fromB64u,
+  keychainVerifier,
+  openEnvelope,
+  utf8,
+  verifyOpened,
+  type Author,
+  type Opened,
+  type Unverified,
+} from "../../owner-store/src/envelope.js";
 import { admitAuthor, getEnvelope, headsOf, isRefused, isUnavailable, libraryOf } from "../../owner-store/src/client.js";
 import { keepInKeyStore } from "./opfs.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
@@ -56,15 +72,28 @@ export type Recovered =
 const bytesOf = (buffer: ArrayBuffer | ArrayBufferView): Uint8Array<ArrayBuffer> =>
   buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
 
-async function prfWrappingKey(secret: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+/** The wrapping key for one path, as enrollment made it (owner.ts, docs/store.md "Keys"). */
+async function wrappingKey(secret: Uint8Array<ArrayBuffer>, path: "prf" | "keychain"): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: utf8("dai owner key v1"), info: utf8("prf") },
+    { name: "HKDF", hash: "SHA-256", salt: utf8("dai owner key v1"), info: utf8(path) },
     base,
     { name: "AES-KW", length: 256 },
     false,
     ["wrapKey", "unwrapKey"],
   );
+}
+
+/** The owner key, opened from one of its wraps, kept non-extractable; null when the secret does not open it. */
+async function openOwnerKey(wrapped: string, secret: Uint8Array<ArrayBuffer>, path: "prf" | "keychain"): Promise<CryptoKey | null> {
+  try {
+    return await crypto.subtle.unwrapKey("raw", fromB64u(wrapped), await wrappingKey(secret, path), "AES-KW", { name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+  } catch {
+    return null;
+  }
 }
 
 /** Recovers this owner's library from the store at `base`. Call it from the tap. */
@@ -87,42 +116,63 @@ export function recover(base: string | undefined, install: (one: Install) => Pro
       const secret = (assertion.getClientExtensionResults() as { prf?: { results?: { first?: ArrayBuffer } } }).prf?.results?.first;
       if (!secret) return { refused: "the passkey's provider gave no PRF output" };
       if (!base) return { unavailable: "no store is configured here" };
+      const prf = bytesOf(secret);
       return restore(base, install, {
         owner: b64u(bytesOf(response.userHandle)),
-        credential: b64u(bytesOf(assertion.rawId)),
-        prf: bytesOf(secret),
-        proof: {
+        proof: async () => ({
           kind: "passkey",
           credential: b64u(bytesOf(assertion.rawId)),
           clientDataJSON: b64u(bytesOf(response.clientDataJSON)),
           authenticatorData: b64u(bytesOf(response.authenticatorData)),
           signature: b64u(bytesOf(response.signature)),
-        },
+        }),
+        open: async (wraps) => (await openOwnerKey(wraps.prf, prf, "prf")) ?? "the passkey does not open the owner key",
       });
     },
     (error: unknown) => ({ cancelled: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
   );
 }
 
+/**
+ * Recovers this owner's library with the keychain secret alone, as the
+ * password manager filled it in, with no passkey (R-D as amended): the secret
+ * derives the verifier's key, which signs the Admit's challenge, and the key
+ * that opens the owner key's keychain wrap. A secret that is not the owner's
+ * is refused by the store, and opens nothing here either.
+ */
+export async function recoverWithKeychain(base: string | undefined, owner: string, secret: string, install: (one: Install) => Promise<void>): Promise<Recovered> {
+  if (!owner || !secret) return { cancelled: "no saved password filled in" };
+  if (!base) return { unavailable: "no store is configured here" };
+  const bytes = utf8(secret);
+  return restore(base, install, {
+    owner,
+    proof: async (author) => {
+      const challenge = `${admitChallenge()}:${author}`;
+      const { privateKey } = await keychainVerifier(bytes);
+      return { kind: "keychain", challenge, signature: b64u(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateKey, utf8(challenge)))) };
+    },
+    open: async (wraps) => (await openOwnerKey(wraps.keychain, bytes, "keychain")) ?? "the saved password does not open the owner key",
+  });
+}
+
 async function restore(
   base: string,
   install: (one: Install) => Promise<void>,
-  asked: { owner: string; credential: string; prf: Uint8Array<ArrayBuffer>; proof: Parameters<typeof admitAuthor>[3] },
+  asked: {
+    owner: string;
+    /** The proof Admit is given, for the author it admits. */
+    proof: (author: string) => Promise<Parameters<typeof admitAuthor>[3]>;
+    /** The owner key, opened from the wraps the store answered with, or why it did not open. */
+    open: (wraps: { prf: string; keychain: string }) => Promise<CryptoKey | string>;
+  },
 ): Promise<Recovered> {
   const me = await person();
   const author: Author = { privateKey: me.keys.privateKey, pub: me.pub, id: me.author };
-  const admitted = await admitAuthor(base, author, asked.owner, asked.proof);
+  const admitted = await admitAuthor(base, author, asked.owner, await asked.proof(author.id));
   if (isUnavailable(admitted)) return { unavailable: admitted.unavailable };
   if (isRefused(admitted)) return { refused: admitted.refused };
-  let ownerKey: CryptoKey;
-  try {
-    ownerKey = await crypto.subtle.unwrapKey("raw", fromB64u(admitted.wraps.prf), await prfWrappingKey(asked.prf), "AES-KW", { name: "AES-KW", length: 256 }, false, [
-      "wrapKey",
-      "unwrapKey",
-    ]);
-  } catch {
-    return { refused: "the passkey does not open the owner key" };
-  }
+  const ownerKey = await asked.open(admitted.wraps);
+  if (typeof ownerKey === "string") return { refused: ownerKey };
   const library = await libraryOf(base, author, asked.owner);
   if (isUnavailable(library)) return { unavailable: library.unavailable };
   if (isRefused(library)) return { refused: library.refused };
@@ -142,7 +192,7 @@ async function restore(
   // Signed in only once there is something true to show: the owner's record, its key held non-extractable.
   const record: OwnerRecord = {
     owner: asked.owner,
-    credential: asked.credential,
+    credential: admitted.credential,
     key: ownerKey,
     wraps: { prf: fromB64u(admitted.wraps.prf), keychain: fromB64u(admitted.wraps.keychain) },
     keychain: "not offered",

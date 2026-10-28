@@ -624,9 +624,35 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (PUSH_ONLY) return;
   const request = event.request;
   const target = new URL(request.url);
+
+  if (request.method === "POST" && target.pathname.endsWith("/keychain")) {
+    /*
+     * The keychain secret's form (D298), answered here so it never leaves the
+     * browser, by every worker of this opener's, the push-only one included.
+     *
+     * Where a browser has no Credential Management API (Safari), a password
+     * manager is offered a secret only by a form submission, which navigates;
+     * the page posts the owner's keychain secret here, and the password
+     * manager offers to save it as the navigation goes. The body is never
+     * read: the answer is the page the person was on, which reopens the
+     * document it had open. The page submits only while a worker of this
+     * opener's controls it, so the form has nowhere else to go.
+     */
+    const back = (() => {
+      try {
+        const from = new URL(request.referrer);
+        return from.origin === self.location.origin ? `${from.pathname}${from.search}` : "./";
+      } catch {
+        return "./";
+      }
+    })();
+    event.respondWith(Response.redirect(back, 303));
+    return;
+  }
+
+  if (PUSH_ONLY) return;
 
   if (request.method === "POST" && target.pathname.endsWith("/shared")) {
     /*

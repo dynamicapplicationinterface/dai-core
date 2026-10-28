@@ -90,7 +90,7 @@ import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
-import { recover, type Install } from "./recover.js";
+import { recover, recoverWithKeychain, type Install, type Recovered } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -3848,9 +3848,37 @@ const NOT_ENROLLED: Record<NotEnrolled, string> = {
 async function showKeepBeyond(): Promise<void> {
   if (keepBeyond) keepBeyond.hidden = (await currentOwner().catch(() => null)) !== null;
 }
+/**
+ * The keychain secret, offered by a form submission (D298): where the browser
+ * has no Credential Management API, a password manager offers to save a
+ * secret only as a form submits. The submission navigates, so the open
+ * document's writes are saved first, and it is answered by this opener's
+ * worker with the page it came from, so the secret never leaves the browser.
+ * With no worker controlling the page the form would reach the network, so it
+ * is not submitted at all.
+ */
+async function offerKeychainByForm(owner: string, secret: string, offered: () => Promise<void>): Promise<boolean> {
+  const form = document.getElementById("keychain-offer") as HTMLFormElement | null;
+  const username = form?.querySelector<HTMLInputElement>('input[name="username"]');
+  const password = form?.querySelector<HTMLInputElement>('input[name="password"]');
+  if (!form || !username || !password || !navigator.serviceWorker?.controller) return false;
+  if (loaded && !(await flushDocument())) console.warn("dai: the open document did not confirm its writes before the keychain form");
+  // Every save asked, written: the navigation must not cut one off.
+  for (let waited = 0; hostSavesWritten < hostSaves && waited < 10_000; waited += 50) await new Promise((settle) => window.setTimeout(settle, 50));
+  username.value = owner;
+  password.value = secret;
+  await offered();
+  console.info("dai: keychain secret offered by a form, answered by this opener's worker");
+  form.submit();
+  return true;
+}
 function keepBeyondThisBrowser(): void {
   // The documents written in this browser are what keeping beyond it keeps; one only opened here is claimed by nobody.
-  const enrolling = enroll(location.hostname, async () => (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid));
+  const enrolling = enroll(
+    location.hostname,
+    async () => (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid),
+    offerKeychainByForm,
+  );
   void enrolling.then((result) => {
     if ("refused" in result) {
       console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
@@ -3969,58 +3997,87 @@ const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], 
 function restoredSentence(at: string): string {
   return `Restored the copy kept at ${shortTime(at)}. Changes saved only in the cleared browser are not included.`;
 }
+const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
 async function showRecover(): Promise<void> {
-  if (recoverButton) recoverButton.hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+  const hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+  if (recoverButton) recoverButton.hidden = hidden;
+  if (recoverKeychain) recoverKeychain.hidden = hidden;
 }
+/** What each recovery path says when it was not used, or did not open the owner key. */
+const RECOVERY_WORDS = {
+  passkey: { cancelled: "No passkey was used, so nothing was recovered.", refused: "This passkey did not recover any documents. Nothing was restored." },
+  keychain: {
+    cancelled: "Fill in the saved password first: tap the field and choose it from your saved passwords.",
+    refused: "This password did not recover any documents. Nothing was restored.",
+  },
+} as const;
 recoverButton?.addEventListener("click", () => {
   // The ceremony first, inside the tap.
   const recovering = recover(storeBase(), installRestored);
   say("");
-  void recovering.then((outcome) => {
-    if (recoveredList) {
-      recoveredList.replaceChildren();
-      recoveredList.hidden = true;
-    }
-    if ("unavailable" in outcome) {
-      console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
-      say("Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.", true);
-    } else if ("cancelled" in outcome) {
-      console.info(`dai: recovery cancelled: ${outcome.cancelled}`);
-      say("No passkey was used, so nothing was recovered.");
-    } else if ("refused" in outcome && typeof outcome.refused === "string") {
-      console.info(`dai: recovery refused: ${outcome.refused}`);
-      say("This passkey did not recover any documents. Nothing was restored.", true);
-    } else if ("restored" in outcome) {
-      for (const one of outcome.restored) {
-        restoredNotes.set(one.documentUuid, one.at);
-        const row = document.createElement("li");
-        const open = document.createElement("button");
-        open.type = "button";
-        open.dataset.document = one.documentUuid;
-        open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
-        open.addEventListener("click", () => {
-          void (async () => {
-            const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === one.documentUuid);
-            if (item) await launchFromLibrary(item, "a recovered copy");
-          })();
-        });
-        row.append(open);
-        recoveredList?.append(row);
-      }
-      if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
-      const unverified = outcome.refused.length;
-      say(
-        outcome.restored.length === 0 && unverified === 0
-          ? "Nothing kept was found for this passkey."
-          : unverified > 0
-            ? "A kept copy could not be verified, so it was not restored."
-            : "",
-        unverified > 0,
-      );
-    }
-    void showRecover();
-  });
+  void recovering.then((outcome) => showRecovered(outcome, "passkey"));
 });
+/*
+ * The keychain path (R-D, D298): the password the password manager kept at
+ * enrollment, filled into this form, recovers with no passkey. No ceremony, so
+ * nothing here must start inside the tap.
+ */
+recoverKeychain?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const owner = (document.getElementById("recover-owner") as HTMLInputElement | null)?.value.trim() ?? "";
+  const secret = (document.getElementById("recover-secret") as HTMLInputElement | null)?.value ?? "";
+  say("");
+  void recoverWithKeychain(storeBase(), owner, secret, installRestored).then((outcome) => showRecovered(outcome, "keychain"));
+});
+function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
+  // A refused password leaves nothing in the field to fill again by mistake.
+  if (path === "keychain" && !("restored" in outcome)) {
+    const secret = document.getElementById("recover-secret") as HTMLInputElement | null;
+    if (secret) secret.value = "";
+  }
+  if (recoveredList) {
+    recoveredList.replaceChildren();
+    recoveredList.hidden = true;
+  }
+  if ("unavailable" in outcome) {
+    console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
+    say("Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.", true);
+  } else if ("cancelled" in outcome) {
+    console.info(`dai: recovery (${path}) cancelled: ${outcome.cancelled}`);
+    say(RECOVERY_WORDS[path].cancelled);
+  } else if ("refused" in outcome && typeof outcome.refused === "string") {
+    console.info(`dai: recovery (${path}) refused: ${outcome.refused}`);
+    say(RECOVERY_WORDS[path].refused, true);
+  } else if ("restored" in outcome) {
+    for (const one of outcome.restored) {
+      restoredNotes.set(one.documentUuid, one.at);
+      const row = document.createElement("li");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.dataset.document = one.documentUuid;
+      open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
+      open.addEventListener("click", () => {
+        void (async () => {
+          const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === one.documentUuid);
+          if (item) await launchFromLibrary(item, "a recovered copy");
+        })();
+      });
+      row.append(open);
+      recoveredList?.append(row);
+    }
+    if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
+    const unverified = outcome.refused.length;
+    say(
+      outcome.restored.length === 0 && unverified === 0
+        ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
+        : unverified > 0
+          ? "A kept copy could not be verified, so it was not restored."
+          : "",
+      unverified > 0,
+    );
+  }
+  void showRecover();
+}
 void showRecover();
 
 onOwnerChange(() => {

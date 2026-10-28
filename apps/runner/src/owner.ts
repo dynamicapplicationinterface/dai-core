@@ -36,9 +36,10 @@ export interface OwnerRecord {
   wraps: { prf: Uint8Array; keychain: Uint8Array };
   /**
    * How the keychain secret was handed to a password manager: through the
-   * Credential Management API, or not at all, where the browser has none or
-   * refused it. Never whether the keychain kept it: `store()` settles when the
-   * browser offers to save, before the person answers, so no page can know.
+   * Credential Management API, or a form submission where the browser has no
+   * such API, or not at all, where it refused it or the form could not be
+   * answered in the browser. Never whether the keychain kept it: no page can
+   * know that.
    */
   keychain: "offered" | "not offered";
   /** When this context enrolled, ISO 8601. */
@@ -214,6 +215,7 @@ export type NotEnrolled =
 export function enroll(
   rpName: string,
   documents: () => Promise<readonly string[]>,
+  byForm?: OfferByForm,
 ): Promise<{ enrolled: string } | { refused: NotEnrolled; why: string }> {
   if (!window.PublicKeyCredential || !navigator.credentials?.create) {
     return Promise.resolve({ refused: "unsupported", why: "no WebAuthn" });
@@ -261,7 +263,7 @@ export function enroll(
           }
         : undefined;
       const adopt = await documents();
-      return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt, registration));
+      return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt, registration, byForm));
     },
     (error: unknown) => ({ refused: "cancelled" as const, why: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
   );
@@ -274,9 +276,9 @@ async function keep(
   prf: Uint8Array<ArrayBuffer>,
   documents: readonly string[],
   registration?: OwnerRecord["registration"],
+  byForm?: OfferByForm,
 ): Promise<{ enrolled: string }> {
   const keychainSecret = b64u(crypto.getRandomValues(new Uint8Array(32)));
-  const keychain = (await offerToKeychain(owner, keychainSecret)) ? "offered" : "not offered";
   // Ed25519 is in every engine that makes a passkey with PRF; where it is not, the keychain path has no verifier.
   const verifier = await keychainVerifier(new TextEncoder().encode(keychainSecret)).then(
     (derived) => derived.pub,
@@ -295,7 +297,7 @@ async function keep(
     credential,
     key,
     wraps,
-    keychain,
+    keychain: "not offered",
     enrolled: new Date().toISOString(),
     ...(registration ? { registration } : {}),
     ...(verifier ? { verifier } : {}),
@@ -304,31 +306,50 @@ async function keep(
   await keepInKeyStore(KEYS.OWNER, owner);
   announceOwnerChange();
   for (const documentUuid of documents) await wrapUnder(documentUuid, record);
-  console.info(`dai: enrolled as owner ${owner}; keychain secret ${keychain}; ${documents.length} document(s) adopted`);
+  console.info(`dai: enrolled as owner ${owner}; ${documents.length} document(s) adopted`);
+  // Last, once everything is kept: the form path reloads the page, and an enrollment must not depend on what follows it.
+  const offered = async (): Promise<void> =>
+    keepInKeyStore(ownerRecordKey(owner), { ...((await ownerRecord(owner)) ?? record), keychain: "offered" } satisfies OwnerRecord);
+  const keychain = await offerToKeychain(owner, keychainSecret, offered, byForm);
+  console.info(`dai: keychain secret ${keychain}`);
   return { enrolled: owner };
 }
 
 /**
- * Hands the keychain secret to the browser's password manager, where it has
- * the Credential Management API for it, and says whether it was handed over.
+ * How the opener hands the keychain secret to a password manager by a form
+ * submission: it fills the form with the owner id and the secret, calls
+ * `offered` once nothing can stop the submission, and submits. Answers false,
+ * having called nothing, when it cannot submit without the secret leaving the
+ * browser. A submission reloads the page, so a true answer is seldom seen.
+ */
+export type OfferByForm = (owner: string, secret: string, offered: () => Promise<void>) => Promise<boolean>;
+
+/**
+ * Hands the keychain secret to the browser's password manager, and says
+ * whether it was handed over: through the Credential Management API where the
+ * browser has it (Chromium), and where it has none (Safari), through a form
+ * submission the password manager offers to save, which reloads the page
+ * ("Owner/author spike", probe fault 2; D298). The owner id is the entry's
+ * name, so each owner's secret is its own entry.
  *
- * Whether the keychain kept it is not knowable here: Chromium's `store()`
- * settles when it offers to save, before the person answers, and nothing reads
- * it back. Safari has no such API: its keychain is reached through a form
- * submission it offers to save, which reloads the page ("Owner/author spike",
- * probe fault 2), and is owed with the iPhone reading. So the keychain wrap is
- * made whatever this answers, and that the secret is in a keychain is a device
+ * Whether the keychain kept it is not knowable here: `store()` settles when
+ * the browser offers to save, before the person answers, a form submission
+ * says nothing at all, and nothing reads it back. So the keychain wrap is made
+ * whatever this answers, and that the secret is in a keychain is a device
  * reading, never a claim the page makes.
  */
-async function offerToKeychain(owner: string, secret: string): Promise<boolean> {
+async function offerToKeychain(owner: string, secret: string, offered: () => Promise<void>, byForm?: OfferByForm): Promise<OwnerRecord["keychain"]> {
   const Password = (window as unknown as { PasswordCredential?: new (data: { id: string; password: string; name: string }) => Credential }).PasswordCredential;
-  if (!Password || !navigator.credentials?.store) return false;
-  try {
-    await navigator.credentials.store(new Password({ id: owner, password: secret, name: "Your documents" }));
-    return true;
-  } catch {
-    return false;
+  if (Password && navigator.credentials?.store) {
+    try {
+      await navigator.credentials.store(new Password({ id: owner, password: secret, name: "Your documents" }));
+    } catch {
+      return "not offered";
+    }
+    await offered();
+    return "offered";
   }
+  return byForm && (await byForm(owner, secret, offered)) ? "offered" : "not offered";
 }
 
 /**

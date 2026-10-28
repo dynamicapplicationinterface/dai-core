@@ -446,6 +446,12 @@
       #recover { margin-top: 10px; background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
       #recovered { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
       #recovered button { width: 100%; text-align: left; font: inherit; padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; cursor: pointer; }
+      #recover-keychain[hidden] { display: none; }
+      #recover-keychain { margin-top: 8px; display: grid; gap: 6px; max-width: 320px; margin-inline: auto; }
+      #recover-keychain input { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; }
+      #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+      /* Out of sight and out of the tab order, but a real form a password manager reads (D298). */
+      #keychain-offer { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
       #save-state[data-offer] { cursor: pointer; }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
@@ -1524,6 +1530,16 @@
           when a store is set and no owner is signed in here.
         -->
         <button id="recover" type="button" hidden>Recover documents kept beyond this browser</button>
+        <!--
+          The same, with no passkey (R-D, D298): the password the password
+          manager saved when keeping began. Tapping the field fills both from
+          the saved passwords; the account is the owner's id.
+        -->
+        <form id="recover-keychain" hidden>
+          <input id="recover-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
+          <input id="recover-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
+          <button id="recover-with-password" type="submit">Recover with the saved password</button>
+        </form>
         <ul id="recovered" hidden></ul>
         <p class="hint">
           Not sure what you have?
@@ -1663,6 +1679,17 @@
 
     <!-- The badge count, shared with the service worker (backlog D34). -->
     <script src="/badge.js"></script>
+    <!--
+      The keychain secret's form (D298). Where the browser has no Credential
+      Management API, enrollment fills it and submits it, and the password
+      manager offers to save the secret under the owner's id. This opener's
+      worker answers the submission with the page it came from, so the secret
+      never leaves the browser.
+    -->
+    <form id="keychain-offer" method="post" action="./keychain" aria-hidden="true">
+      <input name="username" autocomplete="username" tabindex="-1" />
+      <input name="password" type="password" autocomplete="new-password" tabindex="-1" />
+    </form>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
