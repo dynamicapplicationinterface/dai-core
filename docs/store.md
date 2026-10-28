@@ -1,14 +1,46 @@
 # The owner's store — an open contract
 
 What any store must do for a host to say "Kept" (R-Z, R-B, R-C, R-D, R-G in
-[backlog.md](backlog.md)). Written 26 October, with R-Z; the store and a
-local test store that meets this contract are built in Build 2b-2. The
-contract names no service. Any store that meets it works with any host
-that does.
+[backlog.md](backlog.md)). Written 26 October, with R-Z. The store, and a
+local test store that meets this contract, were built in Build 2b-2; the
+store is deployed, and the keychain path and verification on restore are
+built, in Build 2b-2b. The contract names no service. Any store that meets
+it works with any host that does.
 
 The application never reaches a store. The container's `connect-src 'none'`
 is unchanged: the host reaches the store, on the person's behalf, and the
 application learns only the status word.
+
+## What is settled, and what is open
+
+**Settled: built, and tested red against its own weakening.** Each item
+names where.
+
+- The seven operations, as "The wire" gives them: the store
+  (`apps/owner-store/`), its local test store, and the same suite against
+  the deployed one (`tests/owner-store.spec.ts`).
+- Append's two modes: `head` is a compare-and-swap, `branch` is kept on
+  purpose (Build 2b-2 item 1).
+- The receipt, held to what was sent, as the only source of "Kept"
+  (`tests/checkpoints.spec.ts`, `tests/kept.spec.ts`).
+- Envelopes in a blob store, the chain in the objects (Build 2b-2b item 7).
+- Recovery by either path alone, each with the other broken
+  (`tests/recovery.spec.ts`, `tests/keychain.spec.ts`).
+- Verification on restore: a forged signature, an author the store does not
+  list under the owner, and a broken parent link are each refused
+  (`tests/restore-verify.spec.ts`).
+
+**Open.**
+
+- **Branches reconcile at the host** (R-F as R-Z amends it): not built. A
+  host keeps a branch, and restores the newest head; nothing yet merges two
+  heads into one.
+- **A stale recovery** (R-G): a surviving client's memory of the newest head
+  it saw, and the report when a store serves an older one, is not built.
+- **The keychain path on a device** (D298): whether Safari and a Home Screen
+  app offer to save the secret from the form, and fill it at recovery, is a
+  device reading still owed.
+- **Production** (`dai-store`) is configured and not deployed.
 
 ## Trust
 
@@ -20,7 +52,8 @@ The store is trusted for liveness, never for content (R-B).
 - **It cannot forge.** Every checkpoint is signed by an author key the host
   verifies after decrypting (R-C). A checkpoint the store altered, invented
   or attributed to an author not enrolled under the owner is refused, not
-  restored.
+  restored, and the person is told "A kept copy could not be verified, so it
+  was not restored."
 - **It can withhold.** After a total wipe a store can serve an older valid
   checkpoint, or nothing. The host cannot tell this alone; a surviving client
   remembers the newest head it saw and reports a stale recovery (R-G). The
@@ -63,9 +96,24 @@ The derivations, so another host derives the same keys:
 - The owner key is AES-KW-256, wrapped by AES-KW (`raw`) under each wrapping
   key. A data key is AES-GCM-256, wrapped by AES-KW (`raw`) under the owner
   key.
+
+How the keychain secret reaches a keychain (D298):
+
+- Where the browser has the Credential Management API, the host stores it as
+  a password credential whose id is the owner id.
+- Where it has none (Safari), the host fills a form, the owner id as the
+  user name and the secret as a new password, and submits it: a password
+  manager offers to save a secret only as a form submits. The submission
+  navigates, so the enrollment is kept before it; the host's own service
+  worker answers it with the page it came from, so the secret never leaves
+  the browser, and with no worker controlling the page the form is not
+  submitted.
 - Whether a keychain kept its secret cannot be known by the page that
   offered it: the keychain wrap is made whenever an owner enrolls, and the
   keychain path is proven by a device reading (R-Z).
+- At recovery the person fills the user name and the password from the
+  keychain; the host signs the keychain proof with the secret and opens the
+  owner key's keychain wrap, with no passkey.
 
 This is R-D as amended 26 October: the owner key is wrapped twice, and each
 data key once under it. Either path still recovers every document, and a
@@ -86,7 +134,13 @@ Per owner:
 Per working document:
 
 - the data key, wrapped under the owner key;
-- the log: every envelope it accepted, and which are heads.
+- the log: every envelope it accepted, with its parents, author and the
+  time the store acknowledged it, and which are heads;
+- each envelope's bytes. An envelope carries a release's container, about
+  1 MB, so a store built from `apps/owner-store/` keeps the bytes in a blob
+  store (R2), keyed by owner, document and digest, and its objects hold
+  only the log and each envelope's key. The bytes are written before the
+  log entry that names them, so no entry names bytes the store lacks.
 
 ## The envelope
 
@@ -132,18 +186,30 @@ not part of the contract; the local test store answers them over HTTP on
   on its own, and nothing accepted is dropped (R-B): a host told `stale`
   appends the same envelope as a branch, and reconciles. A parent the store
   does not hold is refused: send the parent first. An envelope the store
-  holds already is answered as it was the first time.
-- **The acknowledgment is the only source of "Kept".** The host shows
-  "Kept" for a revision only after an Append answer names that revision's
-  envelope digest, `head` or `branch`. A timeout, a refusal or a connection
-  that only came back is not one (R-H, R-Z item 4).
+  holds already is answered as it was the first time. A store that awaits
+  anything outside itself while appending (its blob store) reads the heads
+  for the swap after that wait, not before.
+- **The acknowledgment is the receipt, and the only source of "Kept".** The
+  host shows "Kept" for a revision only after an Append answer names that
+  revision's envelope digest, as the mode it was sent, for that owner and
+  document. An answer naming any other digest, a replayed one included,
+  acknowledges nothing and advances nothing. A timeout, a refusal or a
+  connection that only came back is not one (R-H, R-Z item 4).
 - **Recovery** is Admit under the passkey or the keychain proof, then
   Library, Heads and Get, then opening each envelope with the data key the
   owner key unwraps. A context recovered this way is a new author under the
-  same owner (R-E).
+  same owner (R-E). Each envelope back to the root is fetched, its digest
+  checked, opened and verified before anything of the document is written:
+  its envelope signature and checkpoint signature under the key the store
+  lists for its author under this owner, which must be the key sealed inside
+  and the one the author id names; its database digest; its document; and
+  its checkpoint's parents, which must be the checkpoints of the envelopes
+  its clear part names. A document whose chain fails any of these is
+  refused, not restored, never listed and never called kept.
 - **Branches reconcile at the host.** The host opens every head and merges
   their change logs (R-F as R-Z amends it); the merged state is a new
-  envelope whose parents are those heads.
+  envelope whose parents are those heads. *Open: not built. A host restores
+  the newest head, and keeps a line told `stale` as a branch.*
 
 ## The wire
 
@@ -175,12 +241,13 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   `:<author id>` appended, by the key whose seed is HKDF-SHA-256 over the
   keychain secret, salt `dai owner key v1`, info `keychain verifier`. A
   challenge outside the window, or seen before, is refused. The answer is
-  the two wraps.
+  the two wraps and the passkey's credential id.
 - **Library** answers the documents with a key, and every enrolled author's
   public key: what the host verifies a checkpoint's author against.
 - **Heads** answers the wrapped data key and each head's digest with the
   time the store acknowledged it. **Get** answers the envelope's bytes, with
-  that time in `x-dai-at`.
+  that time in `x-dai-at`; an envelope the log names whose bytes the blob
+  store cannot give is answered 503, unavailable, never as absent.
 - **The envelope** is JSON: `v`, `owner`, `document`, `author`, `parents`,
   `sealed` (nonce ‖ AES-GCM ciphertext, base64url) and `signature`, ES256
   over `["dai envelope v1", owner, document, author, parents, SHA-256 of
@@ -193,27 +260,49 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   release, document, revision, database digest, parent checkpoint digests]`;
   its digest is SHA-256 of that array's JSON.
 - **The acknowledgment** is `{result, digest, at, owner, document}`. The host
-  holds it to what it sent: the digest must be the one it computed for the
-  revision it appended, or it acknowledges nothing.
+  holds it to what it sent: `result` must be the mode it appended as, and
+  `digest`, `owner` and `document` the ones it computed for the revision it
+  appended, and `at` a time, or it acknowledges nothing.
 
 ## Failure
 
 - **Unavailable:** the host keeps saving in this browser, the status says
-  so with the last kept time, and new revisions wait to be appended. The
-  last kept revision does not advance (R-Z item 4).
+  so with the last kept time ("Saved here · kept 10:42 AM", R-Z's sentence
+  as its name, D300), and the newest revision waits to be appended; a store
+  that answers again is sent that revision, never a backlog. The last kept
+  revision does not advance (R-Z item 4).
 - **Refused:** the revision stays saved in this browser and is not called
   kept. A refusal the host cannot correct by retrying is said in one host
   sentence, with Save a copy offered (P3).
 - **Recovery unavailable:** the host says so, and never presents an empty
   document as recovered (R-Z item 5).
+- **A kept copy that does not verify:** refused, not restored, and said in
+  one sentence (R-C, above).
+
+## The deployed store
+
+`apps/owner-store/wrangler.toml`, under the account that runs the relay.
+
+- **`dai-store-dev`**, the file's top level: one Durable Object class for
+  the owner's and each document's objects, and the R2 bucket
+  `dai-store-dev` for the envelopes. A preview of the opener with no
+  `DAI_STORE_BASE` points at it, and CI's node job runs the store suite
+  against it with the test owners the suite makes. Tests write here.
+- **`dai-store`**, `--env production`, with its own bucket: deployed by
+  hand once a commit has run green against dev, and never written by a test
+  or a job. [deploy.md](deploy.md) has the commands.
 
 ## The local test store
 
-A process the tests start on `localhost`, meeting this contract, holding
-everything in memory. It can write out everything it holds and every
-request it received, so a test can search them for planted values (R-Z,
-"The store cannot read the records"), and it can be told to go
-unavailable, refuse, or serve an older head, so the failure paths run.
+A process the tests start on `localhost`, meeting this contract, running the
+deployed store's own Worker and objects with their storage and the bucket in
+memory (`tests/owner-store-memory.ts`). It can write out everything it holds,
+in the objects and the bucket, and every request it received, so a test can
+search them for planted values (R-Z, "The store cannot read the records");
+it says what each object value holds, so a test can hold the objects to the
+chain; it can be told to go unavailable; and it can answer any route its own
+way, so a test can make it serve a forged envelope, name other heads, or
+leave an author out of a library, and the failure paths run.
 
 ## Not in 2b
 
