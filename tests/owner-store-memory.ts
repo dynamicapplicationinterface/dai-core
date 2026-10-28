@@ -35,7 +35,50 @@ export interface ServedStore {
   rewrite: (fn: ((path: string, answer: Response, body: Buffer) => Promise<Response> | Response) | null) => void;
   /** The names of the objects that exist. */
   objects: () => string[];
+  /** Every value every object holds, by object and key: what a Durable Object's storage is asked to keep. */
+  values: () => { object: string; key: string; bytes: Buffer }[];
+  /** Every object in the envelopes' bucket, by key. */
+  bucket: () => { key: string; bytes: Buffer }[];
   close: () => Promise<void>;
+}
+
+/**
+ * The deployed store (dai-store-dev), as a test that only speaks the wire
+ * sees it: its address, and nothing it holds or was sent. What a test can ask
+ * of the local store alone throws here by name.
+ */
+export function deployedStore(base: string): ServedStore {
+  const unreadable = (what: string) => (): never => {
+    throw new Error(`${what}: not readable from a deployed store; the local test store answers it`);
+  };
+  return {
+    base: base.replace(/\/$/, ""),
+    held: unreadable("what it holds"),
+    received: unreadable("what it received"),
+    setMode: unreadable("its mode"),
+    rewrite: unreadable("its answers"),
+    objects: unreadable("its objects"),
+    values: unreadable("its values"),
+    bucket: unreadable("its bucket"),
+    close: async () => {},
+  };
+}
+
+/** An R2 bucket in memory, as the store's binding sees one. */
+function envelopeBucket(): { bucket: R2Bucket; objects: Map<string, Uint8Array> } {
+  const objects = new Map<string, Uint8Array>();
+  return {
+    objects,
+    bucket: {
+      async put(key, value) {
+        objects.set(key, value instanceof Uint8Array ? value.slice() : new Uint8Array(value));
+      },
+      async get(key) {
+        const held = objects.get(key);
+        return held ? { arrayBuffer: async () => held.slice().buffer } : null;
+      },
+    },
+  };
 }
 
 export const valueBytes = (value: unknown): Buffer =>
@@ -47,11 +90,13 @@ export const valueBytes = (value: unknown): Buffer =>
 
 export async function serveOwnerStore(): Promise<ServedStore> {
   const objects = new Map<string, { store: StoreDO; memory: ReturnType<typeof memoryState> }>();
+  const envelopes = envelopeBucket();
   const env = {
     STORE: {
       idFromName: (name: string) => name,
       get: (id: unknown) => ({ fetch: (request: Request) => objectFor(String(id)).store.fetch(request) }),
     } as DurableObjectNamespace,
+    ENVELOPES: envelopes.bucket,
   };
   const objectFor = (name: string) => {
     let held = objects.get(name);
@@ -110,8 +155,14 @@ export async function serveOwnerStore(): Promise<ServedStore> {
           out.push(valueBytes(memory.peek(key)));
         }
       }
+      for (const [key, bytes] of envelopes.objects) {
+        out.push(Buffer.from(key, "utf8"));
+        out.push(Buffer.from(bytes));
+      }
       return out;
     },
+    values: () => [...objects].flatMap(([object, { memory }]) => memory.keys().map((key) => ({ object, key, bytes: valueBytes(memory.peek(key)) }))),
+    bucket: () => [...envelopes.objects].map(([key, bytes]) => ({ key, bytes: Buffer.from(bytes) })),
     received: () => [...received],
     setMode: (next) => {
       mode = next;

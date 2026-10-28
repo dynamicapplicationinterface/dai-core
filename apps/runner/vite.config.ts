@@ -28,6 +28,9 @@ function mergeDigest(): string {
 }
 const MERGE_DIGEST = mergeDigest();
 
+/** The owner's store a preview keeps to (apps/owner-store/wrangler.toml, top level): the dev deployment, never production. */
+const DEV_STORE = "https://dai-store-dev.opendai.workers.dev";
+
 /**
  * Records which commit a build came from.
  *
@@ -114,8 +117,12 @@ function stamp(): Plugin {
       // the relay's VAPID secret, empty (push off) until then.
       const pushKey = (process.env.DAI_PUSH_PUBLIC_KEY ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "");
       // The owner's store (docs/store.md), the same way: one address, set on the
-      // deploy; empty is no store, and nothing is ever said to be kept.
-      const ownerStore = (process.env.DAI_STORE_BASE ?? "").trim().replace(/[^A-Za-z0-9:/._-]/g, "");
+      // deploy; empty is no store, and nothing is ever said to be kept. A
+      // preview with none set points at dai-store-dev (Build 2b-2b item 7),
+      // where tests write; production names its own, and gets no default.
+      const ownerStore = (process.env.DAI_STORE_BASE ?? (process.env.VERCEL_ENV === "preview" ? DEV_STORE : ""))
+        .trim()
+        .replace(/[^A-Za-z0-9:/._-]/g, "");
       return stamped
         .replace(/<meta name="dai-relay" content="[^"]*" \/>/, `<meta name="dai-relay" content="${relay}" />`)
         .replace(/<meta name="dai-store" content="[^"]*" \/>/, `<meta name="dai-store" content="${ownerStore}" />`)

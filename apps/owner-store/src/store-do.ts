@@ -7,8 +7,11 @@
  * credential id and public key, the keychain verifier, the owner key's two
  * wraps, the enrolled authors, and the documents in the library. The document
  * object holds the wrapped data key and the log: every envelope it accepted,
- * and which are heads. Single-threaded per object, so an append's
- * compare-and-swap on the parent needs no lock.
+ * by digest with its parents, author, time and the key of its bytes in the
+ * bucket (`ENVELOPES`), and which are heads. The bytes are never an object's
+ * value. Single-threaded per object, so an append's compare-and-swap on the
+ * parent needs no lock, so long as nothing outside is awaited between its
+ * read of the heads and its write.
  *
  * Nothing here can read: every value it is sent is ciphertext, a digest, a
  * public key or an identifier, and it checks only what those let it check: a
@@ -27,7 +30,6 @@ import {
   isDigest,
   isId,
   parseEnvelope,
-  plain,
   requestBytes,
   sha256,
   utf8,
@@ -37,7 +39,16 @@ import {
 
 export interface StoreEnv {
   STORE: DurableObjectNamespace;
+  /**
+   * The envelopes' bytes, as the relay keeps its sealed batches: an envelope
+   * carries a release's container, about 1 MB, past what one Durable Object
+   * value holds. The object keeps the chain and each envelope's key here.
+   */
+  ENVELOPES: R2Bucket;
 }
+
+/** Where an envelope's bytes are kept: by owner, document and digest, so a key names exactly one envelope. */
+export const envelopeKey = (owner: string, document: string, digest: string): string => `envelopes/${owner}/${document}/${digest}`;
 
 interface OwnerRecord {
   owner: string;
@@ -62,6 +73,8 @@ interface LogEntry {
   at: string;
   /** Whether it was appended as the head or kept as a branch. */
   as: "head" | "branch";
+  /** The envelope's bytes, in the bucket. */
+  r2: string;
 }
 
 const json = (value: unknown, status = 200): Response =>
@@ -325,6 +338,18 @@ export class StoreDO {
     for (const parent of envelope.parents) {
       if (!(await this.state.storage.get(`m:${parent}`))) return refuse("a parent the store does not hold");
     }
+    /*
+     * The bytes first: a log entry never names bytes the bucket does not hold,
+     * and a put that lands without its entry is named by nothing and
+     * acknowledges nothing. The bucket is outside I/O, which lets this
+     * object's other requests run while it is awaited, so what the swap
+     * depends on is read after it, with nothing awaited outside between that
+     * read and the write.
+     */
+    const r2 = envelopeKey(owner, document, digest);
+    await this.env.ENVELOPES.put(r2, body);
+    const meanwhile = await this.state.storage.get<LogEntry>(`m:${digest}`);
+    if (meanwhile) return json({ result: meanwhile.as, digest, at: meanwhile.at, owner, document });
     const heads = (await this.state.storage.get<string[]>("heads")) ?? [];
     if (as === "head") {
       const covers = heads.every((h) => envelope.parents.includes(h)) && envelope.parents.length === heads.length;
@@ -333,8 +358,7 @@ export class StoreDO {
     const at = new Date().toISOString();
     const next = [...heads.filter((h) => !envelope.parents.includes(h)), digest];
     await this.state.storage.put({
-      [`e:${digest}`]: b64u(body),
-      [`m:${digest}`]: { parents: envelope.parents, author: envelope.author, at, as } satisfies LogEntry,
+      [`m:${digest}`]: { parents: envelope.parents, author: envelope.author, at, as, r2 } satisfies LogEntry,
       heads: next,
     });
     return json({ result: as, digest, at, owner, document });
@@ -352,9 +376,11 @@ export class StoreDO {
     const denied = await this.authorized(request, path, owner, new Uint8Array());
     if (denied) return denied;
     if (!isDigest(digest)) return refuse("not a digest", 400);
-    const bytes = await this.state.storage.get<string>(`e:${digest}`);
     const entry = await this.state.storage.get<LogEntry>(`m:${digest}`);
-    if (!bytes || !entry) return refuse("no such envelope", 404);
-    return new Response(plain(fromB64u(bytes)), { headers: { "content-type": "application/octet-stream", "x-dai-at": entry.at } });
+    if (!entry) return refuse("no such envelope", 404);
+    const held = await this.env.ENVELOPES.get(entry.r2);
+    // Named in the log and absent from the bucket: the store cannot serve it, which is not the same as not holding it.
+    if (!held) return json({ unavailable: "the envelope's bytes are not in the bucket" }, 503);
+    return new Response(new Uint8Array(await held.arrayBuffer()), { headers: { "content-type": "application/octet-stream", "x-dai-at": entry.at } });
   }
 }

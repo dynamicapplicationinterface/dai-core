@@ -7,6 +7,7 @@ import {
   digestOf,
   fromB64u,
   keychainVerifier,
+  openEnvelope,
   parseEnvelope,
   plain,
   sealEnvelope,
@@ -28,7 +29,7 @@ import {
   type Ack,
   type Proof,
 } from "../apps/owner-store/src/client.js";
-import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
+import { deployedStore, serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 import { base as twoCopies, item } from "./changesets/scenarios.js";
 
 /**
@@ -143,9 +144,16 @@ const ack = (answer: unknown): Ack => {
   return answer as Ack;
 };
 
+/*
+ * The store under test: the local test store, or, with DAI_STORE_DEV set to
+ * its address, the deployed dai-store-dev (Build 2b-2b item 7), which CI runs
+ * this suite against with test owners made here. Production is never named.
+ */
+const DEPLOYED = (process.env.DAI_STORE_DEV ?? "").trim();
+
 let store: ServedStore;
 test.beforeEach(async () => {
-  store = await serveOwnerStore();
+  store = DEPLOYED ? deployedStore(DEPLOYED) : await serveOwnerStore();
 });
 test.afterEach(async () => {
   await store.close();
@@ -305,7 +313,43 @@ function found(haystacks: Buffer[], plants: string[]): string[] {
   return plants.filter((plant) => encodingsOf(plant).some((needle) => text.some((t) => t.includes(needle)) || utf.some((t) => t.includes(needle))));
 }
 
+/*
+ * A release's container is about 1 MB, and the envelope carries it with a
+ * database, base64url inside JSON: an envelope near 1.4 MB. Over the wire a
+ * store keeping it as one object value answers the same (on 28 October the
+ * deployed object held a 4.2 MB value and served it), so where the bytes are
+ * is read from the local test store, which runs the same object code.
+ */
+test("a 1 MB container round-trips: its envelope's bytes kept apart, and the objects hold only the chain", async () => {
+  const o = await newOwner(store);
+  const d = await newDocument(store, o, o.first);
+  const container = `<!doctype html>${b64u(new Uint8Array(Array.from({ length: 12 }, () => [...crypto.getRandomValues(new Uint8Array(65_536))]).flat()))}`;
+  const database = crypto.getRandomValues(new Uint8Array(65_536));
+  revision += 1;
+  const checkpoint: Checkpoint = { release: "r".repeat(43), document: d.document, revision, database: await digestOf(database), parents: [] };
+  const sealed = await sealEnvelope({ owner: o.owner, document: d.document, author: o.first.id, parents: [] }, { checkpoint, title: "Notes", database, container }, d.dataKey, o.first);
+  expect(sealed.bytes.byteLength, "an envelope past 128 KiB, a key-value object's value limit").toBeGreaterThan(1_000_000);
+
+  expect(ack(await appendEnvelope(store.base, o.first, o.owner, d.document, sealed.bytes, "head"))).toMatchObject({ result: "head", digest: sealed.digest });
+  const heads = (await headsOf(store.base, o.first, o.owner, d.document)) as { heads: { digest: string }[] };
+  expect(heads.heads.map((h) => h.digest)).toEqual([sealed.digest]);
+  const got = await getEnvelope(store.base, o.first, o.owner, d.document, sealed.digest);
+  expect(isRefused(got), JSON.stringify(got).slice(0, 200)).toBe(false);
+  const bytes = (got as { bytes: Uint8Array }).bytes;
+  expect(await digestOf(bytes), "the same bytes back").toBe(sealed.digest);
+  const opened = await openEnvelope(bytes, d.dataKey);
+  expect(opened.inside.container).toBe(container);
+  expect(Buffer.from(opened.database).equals(Buffer.from(database))).toBe(true);
+
+  if (DEPLOYED) return;
+  // The bytes are in the bucket, once, and no object value holds them, or anything near an envelope's size.
+  expect(store.bucket().filter((held) => held.bytes.equals(Buffer.from(sealed.bytes))), "the envelope in the bucket").toHaveLength(1);
+  const largest = store.values().reduce((top, held) => (held.bytes.byteLength > top.bytes.byteLength ? held : top));
+  expect(largest.bytes.byteLength, `the largest object value, ${largest.object} ${largest.key}`).toBeLessThan(16 * 1024);
+});
+
 test("the store holds nothing it can read: planted values appear nowhere it holds or was sent", async () => {
+  test.skip(DEPLOYED !== "", "what a deployed store holds and was sent is not readable from here; the local test store answers it");
   const PLANTS = {
     record: "PLANTED-RECORD-q7Zx",
     history: "PLANTED-DELETED-k3Wv",
