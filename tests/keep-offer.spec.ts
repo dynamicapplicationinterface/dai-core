@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { expect, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, pointAtStore, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -57,10 +58,51 @@ async function decidedForEverySave(page: Page): Promise<void> {
 
 test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () => {
   test.slow();
+  // An opener offers to keep beyond this browser only with a store to keep in: these tests have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
+
+  test("an opener with no store offers nothing beyond this browser: no invitation after a change, no row, no ceremony; given a store, the row is there", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const file = await buildNotes(scratch, "Nowhere");
+    await countCeremonies(page);
+    await page.goto(RUNNER_URL);
+    expect(await page.evaluate(() => (window as Any).__runner.keeping.base() ?? null), "this opener names no store").toBeNull();
+    const app = await openFile(page, file);
+    await typeNote(app, "kept nowhere else");
+    await decidedForEverySave(page);
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
+    await expect(offer(page)).toHaveCount(0);
+
+    await page.locator("#more").click();
+    await expect(page.locator("#sheet")).toBeVisible();
+    await expect(page.locator("#keep-beyond")).toBeHidden();
+    await expect(page.locator("#keep-not-now")).toBeHidden();
+    expect(await ceremonies(page)).toBe(0);
+    expect(await currentOwner(page)).toBeNull();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#sheet")).toBeHidden();
+
+    // The same page, given a store: keeping beyond this browser is something it can do, so the menu offers it.
+    const store = await serveOwnerStore();
+    try {
+      await page.evaluate((base) => (window as Any).__runner.useStore(base), store.base);
+      await page.locator("#more").click();
+      await expect(page.locator("#keep-beyond")).toBeVisible();
+    } finally {
+      await store.close();
+    }
+  });
 
   test("a document opened and not touched, its seed and the runtime's bookkeeping saved, shows no invitation", async ({ page }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Starter", true);
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     await expect(app.locator("#note")).toHaveValue("starter");
@@ -72,6 +114,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     // Not a change (R-X), but a write: the save after it is not the document's setup alone.
     const file = await buildNotes(scratch, "Echo", true, "UPDATE notes SET body = body WHERE id = 1");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     await expect(app.locator("#note")).toHaveValue("starter");
@@ -83,6 +126,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     // After a tap the page is used: what keeps this save from being an offer is that it carries no change (R-X).
     const file = await buildNotes(scratch, "Focus", true, "", "UPDATE notes SET body = body WHERE id = 1");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     await expect(app.locator("#note")).toHaveValue("starter");
@@ -120,6 +164,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
 
     // This device: the same document, opened and not touched, then the copy opened into it.
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
@@ -138,6 +183,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
   test("the offer appears after the first change while typing goes on uninterrupted, and takes nothing from the field", async ({ page }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     const uuid = await uuidOf(page);
@@ -164,6 +210,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const first = await buildNotes(scratch, "First");
     const second = await buildNotes(scratch, "Second");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     let app = await openFile(page, first);
@@ -193,6 +240,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await countCeremonies(page);
     await page.goto(RUNNER_URL);
@@ -233,6 +281,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     await addPasskeyProvider(context, page);
@@ -255,7 +304,8 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await expect.poll(() => storedHolds(page, uuid, "mine"), { timeout: 30_000 }).toBe(true);
     await decidedForEverySave(page);
     await expect(offer(page)).toHaveCount(0);
-    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
+    // With a store the change is kept, so the words are the status's, whichever it has reached, and never carry the offer.
+    await expect(page.locator("#save-state")).not.toContainText("Keep?");
     expect(offered.some((text) => text.includes("an owner is signed in")), offered.join("\n")).toBe(true);
     await context.close();
   });
@@ -263,6 +313,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
   test("a tap that lands before the seed's first save is the person's change: the offer and the status follow it, not the next one", async ({ page }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const taps = await buildTaps(scratch, "Taps");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", taps.file);
     const app = appIn(page);
@@ -288,6 +339,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const first = await buildNotes(scratch, "First");
     const second = await buildNotes(scratch, "Second");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const one = await context.newPage();
     await one.goto(RUNNER_URL);
     await typeNote(await openFile(one, first), "first");
@@ -319,6 +371,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
       const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
       const taps = await buildTaps(scratch, "Taps");
       const context = await browser.newContext({ viewport });
+      await pointAtStore(context, store.base);
       const page = await context.newPage();
       await countCeremonies(page);
       await page.goto(RUNNER_URL);

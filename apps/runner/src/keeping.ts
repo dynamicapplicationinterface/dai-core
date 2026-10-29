@@ -51,9 +51,18 @@ export interface Revision {
   build: string | undefined;
 }
 
-let base: string | undefined = document.querySelector('meta[name="dai-store"]')?.getAttribute("content")?.trim() || undefined;
+/*
+ * The page's own address for the store, or one a test injects before the page
+ * loads through `window.__daiOwnerStore`, the same move as `__daiStore`: an
+ * injected address holds across the reloads a test drives, as a deploy's does.
+ */
+const injectedBase = (window as unknown as { __daiOwnerStore?: unknown }).__daiOwnerStore;
+let base: string | undefined =
+  (typeof injectedBase === "string" && injectedBase.trim()) ||
+  document.querySelector('meta[name="dai-store"]')?.getAttribute("content")?.trim() ||
+  undefined;
 
-/** The store's address, or undefined when this opener has none. */
+/** The store's address, or undefined when this opener has none: then nothing is kept beyond this browser, nor offered. */
 export const storeBase = (): string | undefined => base;
 
 /** A test points the opener at the store it stands up. */

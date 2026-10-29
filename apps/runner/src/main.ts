@@ -3845,8 +3845,14 @@ const NOT_ENROLLED: Record<NotEnrolled, string> = {
   "no-prf": "This device's passkeys cannot keep work beyond this browser yet. Your work is still saved in this browser.",
   unsupported: "This browser cannot make a passkey. Your work is still saved in this browser.",
 };
+/*
+ * Offered only by an opener with a store to keep in. With none, enrolling
+ * would make a passkey and hand a password manager a secret for an owner no
+ * store can hold, and nothing would ever be kept: the row is not shown, as
+ * Recover is not.
+ */
 async function showKeepBeyond(): Promise<void> {
-  if (keepBeyond) keepBeyond.hidden = (await currentOwner().catch(() => null)) !== null;
+  if (keepBeyond) keepBeyond.hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
 }
 /**
  * The keychain secret, offered by a form submission (D298): where the browser
@@ -3907,8 +3913,9 @@ void showKeepBeyond();
  *
  * Decided after each written save, in the order they land: offered when the
  * save carried a change of the person's (the runtime says so: never the seed,
- * a projection, or its own bookkeeping), the browser context has not answered
- * the offer, and no owner is signed in here. Made once per page at most, and
+ * a projection, or its own bookkeeping), the opener has a store to keep in, the
+ * browser context has not answered the offer, and no owner is signed in here.
+ * Made once per page at most, and
  * withdrawn when an owner signs in while it stands.
  * The pill reads "Saved in this browser · Keep?" in the box it already has, a
  * tap on it opens the menu, and the menu's first two rows answer it; the
@@ -3932,6 +3939,10 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
       // From here the status is shown (showStorage).
       personsChangeLanded = true;
       if (keepOfferMade) return;
+      if (!storeBase()) {
+        console.info(`dai: keep offer not made after save ${saveNumber}: this opener has no store`);
+        return;
+      }
       const [answered, owner] = await Promise.all([keepOfferAnswer(), currentOwner()]);
       if (answered !== null || owner !== null) {
         console.info(`dai: keep offer not made after save ${saveNumber}: ${answered !== null ? `answered "${answered}" in this browser` : "an owner is signed in"}`);

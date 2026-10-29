@@ -16,9 +16,10 @@ import { storageSentence, storageWords } from "../apps/runner/src/status.js";
  * acknowledged; there is no store in this build (2b-2), so it is never shown.
  * Reconnecting alone changes nothing: only an acknowledgment would.
  *
- * The words appear once a change of the person's has landed, and while the
- * offer to keep beyond this browser stands they carry it: "Saved in this
- * browser · Keep?", in the same pill.
+ * The words appear once a change of the person's has landed. These tests run
+ * with no store, so no offer to keep beyond this browser is made: an opener
+ * offers it only when it has a store (keep-offer.spec.ts), and the pill says
+ * where the document is, alone.
  */
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,12 +28,19 @@ const status = (page: Page) => page.locator("#save-state");
 /** The host's own text, the application's frames left out. */
 const hostText = (page: Page): Promise<string> => page.evaluate(() => document.body.innerText);
 
-/** Types a first change, and answers the offer "Not now", as a person who goes on would. */
+/** Types a first change, and waits until the offer is decided for every save written: with no store, none is made. */
 async function firstChange(page: Page, app: Awaited<ReturnType<typeof openFile>>, text: string): Promise<void> {
   await typeNote(app, text);
-  await expect(page.locator("#save-state[data-offer]")).toHaveText(`${SAVED} · Keep?`, { timeout: 30_000 });
-  await status(page).click();
-  await page.locator("#keep-not-now").click();
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const runner = (window as { __runner?: { savesWritten: number; keepOfferDecided: number } }).__runner;
+          return Boolean(runner && runner.savesWritten > 0 && runner.keepOfferDecided >= runner.savesWritten);
+        }),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   await expect(page.locator("#save-state[data-offer]")).toHaveCount(0);
 }
 

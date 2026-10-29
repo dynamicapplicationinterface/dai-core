@@ -2217,8 +2217,8 @@
       "tests/keep-intent.spec.ts"
     ],
     "tests/keep-offer.spec.ts": [
-      "apps/owner-store/src/client.ts",
-      "apps/owner-store/src/envelope.ts",
+      "apps/owner-store/src/",
+      "apps/relay/src/",
       "apps/runner/",
       "src/bridge.ts",
       "src/bundle.ts",
@@ -2274,7 +2274,9 @@
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/keep-offer.spec.ts",
-      "tests/owner.ts"
+      "tests/owner-store-memory.ts",
+      "tests/owner.ts",
+      "tests/relay-memory.ts"
     ],
     "tests/kept.spec.ts": [
       "apps/owner-store/src/",
@@ -3602,8 +3604,8 @@
       "tsup.config.ts"
     ],
     "tests/owner-boundary.spec.ts": [
-      "apps/owner-store/src/client.ts",
-      "apps/owner-store/src/envelope.ts",
+      "apps/owner-store/src/",
+      "apps/relay/src/",
       "apps/runner/",
       "src/bridge.ts",
       "src/bundle.ts",
@@ -3659,11 +3661,13 @@
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/owner-boundary.spec.ts",
-      "tests/owner.ts"
+      "tests/owner-store-memory.ts",
+      "tests/owner.ts",
+      "tests/relay-memory.ts"
     ],
     "tests/owner-enrollment.spec.ts": [
-      "apps/owner-store/src/client.ts",
-      "apps/owner-store/src/envelope.ts",
+      "apps/owner-store/src/",
+      "apps/relay/src/",
       "apps/runner/",
       "src/bridge.ts",
       "src/bundle.ts",
@@ -3721,11 +3725,13 @@
       "tests/offline-detector.spec.ts",
       "tests/offline.ts",
       "tests/owner-enrollment.spec.ts",
-      "tests/owner.ts"
+      "tests/owner-store-memory.ts",
+      "tests/owner.ts",
+      "tests/relay-memory.ts"
     ],
     "tests/owner-library.spec.ts": [
-      "apps/owner-store/src/client.ts",
-      "apps/owner-store/src/envelope.ts",
+      "apps/owner-store/src/",
+      "apps/relay/src/",
       "apps/runner/",
       "src/bridge.ts",
       "src/bundle.ts",
@@ -3781,7 +3787,9 @@
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/owner-library.spec.ts",
-      "tests/owner.ts"
+      "tests/owner-store-memory.ts",
+      "tests/owner.ts",
+      "tests/relay-memory.ts"
     ],
     "tests/owner-store.spec.ts": [
       "apps/owner-store/src/",

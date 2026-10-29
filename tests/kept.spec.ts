@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, buildNotes, openFile, storedHolds, typeNote, uuidOf } from "./owner.js";
+import { RUNNER_URL, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf } from "./owner.js";
 import { KEYS } from "../src/keys.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keepingLog, keptRecord, libraryRevision, openerWithStore, pillText, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
@@ -115,6 +115,9 @@ test.describe("Kept (R-Z sentences 2 and 4, Build 2b-2 item 3)", () => {
   ] as const) {
     test(`at ${width} wide the pill's box is one box in every state it shows: the offer, saving, saved, kept, and kept earlier`, async ({ browser }) => {
       const context = await browser.newContext({ viewport: { width, height } });
+      // The offer is made only by an opener with a store; the owner planted below has no record, so nothing is sent to it.
+      const store = await serveOwnerStore();
+      await pointAtStore(context, store.base);
       try {
         const page = await context.newPage();
         // Every box the pill has while it is shown, with its words, from the moment the page loads.
@@ -186,6 +189,7 @@ test.describe("Kept (R-Z sentences 2 and 4, Build 2b-2 item 3)", () => {
         expect(boxes.filter((b) => !b.fits).map((b) => b.words), "words cut to fit the box").toEqual([]);
       } finally {
         await context.close();
+        await store.close();
       }
     });
   }

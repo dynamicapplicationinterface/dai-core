@@ -17,9 +17,11 @@ import {
   storedHolds,
   typeNote,
   uuidOf,
+  pointAtStore,
   waitMounted,
   withKeyStore,
 } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 
 /**
  * Owner enrollment, Build 2b-1 (R-Z sentences 1, 3 and 8; R-D as amended).
@@ -82,6 +84,14 @@ const revisionOf = (page: Page, uuid: string): Promise<number> =>
 
 test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
   test.slow();
+  // An opener offers to keep beyond this browser only with a store to keep in: the tests that enroll have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
 
   test("with no owner and no connection, a document opens, is edited and saved in this browser, and its data key is minted unwrapped", async ({ browser, browserName }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
@@ -179,6 +189,7 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await watchKeychain(page);
     await page.goto(RUNNER_URL);
@@ -244,6 +255,7 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     let provider = await addPasskeyProvider(context, page);

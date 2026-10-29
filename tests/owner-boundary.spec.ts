@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, addPasskeyProvider, buildNotes, currentOwner, keepFromMenu, openFile, savesWritten, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, buildNotes, currentOwner, keepFromMenu, openFile, pointAtStore, savesWritten, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 import { KEYS } from "../src/keys.js";
 
 /**
@@ -56,6 +57,14 @@ async function enrollNow(page: Page, not: string | null = null): Promise<string>
 }
 
 test.describe("the library by owner, as a boundary (R-Z sentence 5, Build 2b-2 item 4)", () => {
+  // An opener offers to keep beyond this browser only with a store to keep in: these tests have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
   test.slow();
 
   test("signed in as one owner, another owner's document is neither listed nor opened: not by a resume, not by its file", async ({ browser, browserName }) => {
@@ -63,6 +72,7 @@ test.describe("the library by owner, as a boundary (R-Z sentence 5, Build 2b-2 i
     const scratch = mkdtempSync(join(tmpdir(), "dai-boundary-"));
     const [alpha, gamma] = await Promise.all(["Alpha", "Gamma"].map((name) => buildNotes(scratch, name)));
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     await addPasskeyProvider(context, page);
@@ -105,6 +115,7 @@ test.describe("the library by owner, as a boundary (R-Z sentence 5, Build 2b-2 i
       buildNotes(scratch, "Zeta", true),
     ]);
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     await addPasskeyProvider(context, page);
