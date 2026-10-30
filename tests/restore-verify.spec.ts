@@ -82,10 +82,27 @@ function like(answer: Response, set: Record<string, string>): Headers {
   return headers;
 }
 
-/** Serves `forged` as the document's one head, under its own digest, and everything else as the store holds it. */
-async function serveAsHead(store: ServedStore, uuid: string, forged: Uint8Array, at: string): Promise<string> {
+/** The log as the store holds it, from what was appended: what Chain answers from the newest envelope back. */
+async function chainOfAppended(appended: Uint8Array[], at: string): Promise<{ digest: string; parents: string[]; author: string; at: string }[]> {
+  return Promise.all(
+    appended.map(async (bytes) => {
+      const envelope = parseEnvelope(bytes);
+      return { digest: await digestOf(bytes), parents: envelope.parents, author: envelope.author, at };
+    }),
+  );
+}
+
+/**
+ * Serves `forged` as the document's one head, in place of the envelope
+ * `replaces`, and everything else as the store holds it. Heads, Get and Chain
+ * agree: a store that forges an envelope can name it in its log too, so what
+ * refuses it is the envelope's own check, not a log that gives it away.
+ */
+async function serveAsHead(store: ServedStore, uuid: string, forged: Uint8Array, at: string, replaces: string, appended: Uint8Array[]): Promise<string> {
   const digest = await digestOf(forged);
+  const chain = (await chainOfAppended(appended, at)).map((link) => (link.digest === replaces ? { ...link, digest } : link));
   store.rewrite(async (path, answer) => {
+    if (path.endsWith(`/${uuid}/c/${digest}`)) return new Response(JSON.stringify({ chain }), { headers: like(answer, { "content-type": "application/json" }) });
     if (path.endsWith(`/${uuid}/heads`)) {
       const held = (await answer.json()) as { key: string };
       return new Response(JSON.stringify({ key: held.key, heads: [{ digest, at }] }), { headers: like(answer, { "content-type": "application/json" }) });
@@ -124,8 +141,28 @@ test.describe("every kept revision verifies on restore (R-C; Build 2b-2b item 8)
       const real = parseEnvelope(await appendedAs(appended, head.digest));
       // The same envelope, its signature changed: it opens under the data key (the signature is not sealed), and does not verify.
       const flipped = real.signature.startsWith("A") ? `B${real.signature.slice(1)}` : `A${real.signature.slice(1)}`;
-      await serveAsHead(store, uuid, utf8(JSON.stringify({ ...real, signature: flipped })), head.at);
+      await serveAsHead(store, uuid, utf8(JSON.stringify({ ...real, signature: flipped })), head.at, head.digest, appended);
       await refusedOnRecover(page, uuid, "envelope-signature");
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("a store whose Chain stops short of a root: refused, not restored, and said", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, uuid, head, appended } = await twoKeptThenWiped(context, store);
+      const roots = (await chainOfAppended(appended, head.at)).filter((link) => link.parents.length === 0).map((link) => link.digest);
+      expect(roots.length, "the log has its root").toBeGreaterThan(0);
+      store.rewrite(async (path, answer) => {
+        if (!path.endsWith(`/${uuid}/c/${head.digest}`)) return answer;
+        const held = (await answer.json()) as { chain: { digest: string }[] };
+        return new Response(JSON.stringify({ chain: held.chain.filter((link) => !roots.includes(link.digest)) }), { headers: like(answer, { "content-type": "application/json" }) });
+      });
+      await refusedOnRecover(page, uuid, "parent-chain");
     } finally {
       await context.close();
       await store.close();
