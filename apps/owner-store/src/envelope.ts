@@ -142,6 +142,12 @@ export interface Inside {
    * in. Absent otherwise, and found up the chain.
    */
   container?: string;
+  /**
+   * Where the container is, when this envelope does not carry it: the digest
+   * of the envelope up the chain that does, so a host with nothing fetches
+   * that one envelope and not every one between.
+   */
+  containerIn?: string;
 }
 
 export interface Opened {
@@ -190,7 +196,7 @@ export interface Author {
 /** Seals and signs an envelope. Returns its bytes, its digest and the checkpoint's digest. */
 export async function sealEnvelope(
   clear: Clear,
-  content: { checkpoint: Checkpoint; title: string; database: Uint8Array; container?: string },
+  content: { checkpoint: Checkpoint; title: string; database: Uint8Array; container?: string; containerIn?: string },
   dataKey: CryptoKey,
   author: Author,
 ): Promise<{ bytes: Uint8Array<ArrayBuffer>; digest: string; checkpoint: string }> {
@@ -201,6 +207,7 @@ export async function sealEnvelope(
     pub: b64u(author.pub),
     title: content.title,
     ...(content.container !== undefined ? { container: content.container } : {}),
+    ...(content.containerIn !== undefined ? { containerIn: content.containerIn } : {}),
   };
   // The header is JSON, which never holds a raw newline, then a newline, then the database.
   const plaintext = concat(utf8(JSON.stringify(inside)), utf8("\n"), content.database);
@@ -248,13 +255,15 @@ export type Unverified =
  * key the store enrolled for that author, which must be the key sealed inside
  * and the one the author id is the fingerprint of; the database digest; the
  * document; and the checkpoint's parents, which must be the checkpoints sealed
- * in the envelopes the clear part names, given here opened and verified.
+ * in the envelopes the clear part names, given here opened and verified. Null
+ * for an envelope whose parents were not fetched: then only as many as the
+ * clear part names.
  */
 export async function verifyOpened(
   bytes: Uint8Array,
   opened: Opened,
   enrolled: ReadonlyMap<string, string>,
-  parentCheckpoints: readonly string[],
+  parentCheckpoints: readonly string[] | null,
 ): Promise<Unverified | null> {
   const pub = enrolled.get(opened.clear.author);
   if (!pub) return "author-not-enrolled";
@@ -263,6 +272,7 @@ export async function verifyOpened(
   if (!(await verifyES256(fromB64u(pub), fromB64u(opened.inside.signature), checkpointBytes(opened.inside.checkpoint)))) return "signature";
   if (opened.inside.checkpoint.document !== opened.clear.document) return "document";
   if ((await digestOf(opened.database)) !== opened.inside.checkpoint.database) return "database";
+  if (parentCheckpoints === null) return opened.inside.checkpoint.parents.length === opened.clear.parents.length ? null : "parent-chain";
   const named = [...opened.inside.checkpoint.parents].sort();
   const held = [...parentCheckpoints].sort();
   if (named.length !== held.length || named.some((d, i) => d !== held[i])) return "parent-chain";

@@ -175,6 +175,7 @@ not part of the contract; the local test store answers them over HTTP on
 | **Append** an envelope | an enrolled author's signature (in the envelope) | `head` or `branch`, with the envelope digest it stored; or refused |
 | **Heads** of a document | an enrolled author (a recovering context is one, once admitted) | the head envelope digests, each with its acknowledgment time, and the wrapped data key |
 | **Get** an envelope | as Heads | the envelope's bytes |
+| **Chain** from an envelope | as Heads | that envelope and every one before it, as the log holds them: digest, parents, author and acknowledgment time, no bytes |
 | **Library** of an owner | as Heads | the working document ids the owner holds, and the enrolled authors' public keys |
 
 - **Append is compare-and-swap on the parent.** An append says what it is.
@@ -196,16 +197,28 @@ not part of the contract; the local test store answers them over HTTP on
   acknowledges nothing and advances nothing. A timeout, a refusal or a
   connection that only came back is not one (R-H, R-Z item 4).
 - **Recovery** is Admit under the passkey or the keychain proof, then
-  Library, Heads and Get, then opening each envelope with the data key the
-  owner key unwraps. A context recovered this way is a new author under the
-  same owner (R-E). Each envelope back to the root is fetched, its digest
-  checked, opened and verified before anything of the document is written:
-  its envelope signature and checkpoint signature under the key the store
-  lists for its author under this owner, which must be the key sealed inside
-  and the one the author id names; its database digest; its document; and
-  its checkpoint's parents, which must be the checkpoints of the envelopes
-  its clear part names. A document whose chain fails any of these is
-  refused, not restored, never listed and never called kept.
+  Library, Heads, Chain and Get, then opening the envelopes fetched with the
+  data key the owner key unwraps. A context recovered this way is a new
+  author under the same owner (R-E). Before anything of the document is
+  written: the chain from the head, as Chain answers it, reaches a root and
+  names only authors the store lists under this owner. Only these envelopes
+  are fetched, each digest checked, each opened and held to what Chain
+  said of it (its author and its parents, which its author signed): the
+  head; the envelopes it names as parents; and the one that carries the
+  release's container, which the head names (`containerIn`) when it does not
+  carry it. Each is verified: its envelope signature and checkpoint
+  signature under the key the store lists for its author under this owner,
+  which must be the key sealed inside and the one the author id names; its
+  database digest; its document. The head's checkpoint must name as parents
+  exactly the checkpoints of its parents, and the container's envelope must
+  be on the chain and of the head's release. A document that fails any of
+  these is refused, not restored, never listed and never called kept. So a
+  document kept many times costs about the container's envelope and two
+  revisions to recover, not every revision kept; the checkpoints further up
+  the chain are not opened, and what they hold is believed of the authors
+  the owner enrolled. A chain sealed before envelopes named their container,
+  or a store with no Chain, is walked up the first parents to the envelope
+  that carries it.
 - **Branches reconcile at the host.** The host opens every head and merges
   their change logs (R-F as R-Z amends it); the merged state is a new
   envelope whose parents are those heads. *Open: not built. A host restores
@@ -221,7 +234,8 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
 - **Requests.** `POST /o/<owner>/enroll`, `POST /o/<owner>/admit`,
   `GET /o/<owner>/library`, `PUT /d/<owner>/<document>/key`,
   `POST /d/<owner>/<document>/append?as=head|branch`,
-  `GET /d/<owner>/<document>/heads`, `GET /d/<owner>/<document>/e/<digest>`.
+  `GET /d/<owner>/<document>/heads`, `GET /d/<owner>/<document>/e/<digest>`,
+  `GET /d/<owner>/<document>/c/<digest>`.
   One object per owner, and one per working document.
 - **Every request is signed** by an author key: `x-dai-author`,
   `x-dai-time` (milliseconds) and `x-dai-signature`, ES256 over
@@ -255,7 +269,11 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   sealed plaintext is a JSON header, a newline, and the database. The header
   holds the checkpoint, its signature, the author's public key, the title,
   and the release's container when the parent's release differs or there is
-  no parent.
+  no parent; otherwise `containerIn`, the digest of the envelope up the
+  chain that carries it.
+- **Chain** answers `{chain: [{digest, parents, author, at}]}` for the
+  envelope named and every one before it. A store that has no Chain answers
+  404 `no such operation`.
 - **The checkpoint** is signed and named as the array `["dai checkpoint v1",
   release, document, revision, database digest, parent checkpoint digests]`;
   its digest is SHA-256 of that array's JSON.

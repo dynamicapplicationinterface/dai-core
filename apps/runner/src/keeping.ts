@@ -43,6 +43,8 @@ export interface KeptRecord {
   at: string;
   /** Appended as the head, or kept as a branch after the head moved elsewhere. */
   as: "head" | "branch";
+  /** The envelope on this line that carries the release's container, which the next envelope names instead of carrying it. */
+  containerIn?: string;
 }
 
 /** An envelope sent and not yet answered: resent as it is, never sealed afresh. */
@@ -275,13 +277,15 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     database: await digestOf(revision.database),
     parents: parent ? [parent.checkpoint] : [],
   };
+  // The container travels when the release changes, and otherwise is named where it is (a record from before that carries it once more).
+  const containerIn = parent && parent.release === release ? parent.containerIn : undefined;
   const sealed = await sealEnvelope(
     { owner: owner.owner, document: revision.documentUuid, author: author.id, parents: parent ? [parent.digest] : [] },
     {
       checkpoint,
       title: revision.title,
       database: revision.database,
-      ...(!parent || parent.release !== release ? { container: revision.html } : {}),
+      ...(containerIn === undefined ? { container: revision.html } : { containerIn }),
     },
     dataKey.key,
     author,
@@ -294,6 +298,7 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     checkpoint: await checkpointDigest(checkpoint),
     release,
     as: parent?.as === "branch" ? "branch" : "head",
+    containerIn: containerIn ?? sealed.digest,
     bytes: sealed.bytes,
   };
   // Held before it is sent: an answer lost on the way back finds it here.

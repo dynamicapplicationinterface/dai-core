@@ -11,12 +11,16 @@
  * and its secret proves the owner to Admit and opens the owner key's other
  * wrap. Each path recovers alone.
  *
- * Every revision restored is verified first (R-C): each envelope back to the
- * root opens under the data key, is signed by an author the store enrolled
- * under this owner whose key it carries, and names as parents exactly the
- * checkpoints of the envelopes before it. A document whose chain does not
- * verify is refused, not restored. The store is trusted for liveness, never
- * for content (R-B).
+ * Every revision restored is verified first (R-C): the chain, as the store's
+ * log answers it without bytes, reaches a root and names only authors the
+ * store enrolled under this owner; the head opens under the data key, is
+ * signed by its author with the key it carries, and names as parents exactly
+ * the checkpoints of the envelopes before it, which are fetched for that; and
+ * the envelope that carries the release's container, named by the head, is
+ * on the chain and of the head's release. Nothing else is fetched: a document
+ * kept many times costs a few envelopes, not every revision ever kept. A
+ * document that does not verify is refused, not restored. The store is
+ * trusted for liveness, never for content (R-B).
  *
  * A passkey ceremony must start inside the tap, so `recover` reaches
  * `navigator.credentials.get` before its first await, with a challenge made
@@ -37,7 +41,7 @@ import {
   type Opened,
   type Unverified,
 } from "../../owner-store/src/envelope.js";
-import { admitAuthor, getEnvelope, headsOf, isRefused, isUnavailable, libraryOf } from "../../owner-store/src/client.js";
+import { admitAuthor, chainOf, getEnvelope, headsOf, isRefused, isUnavailable, libraryOf } from "../../owner-store/src/client.js";
 import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
@@ -274,13 +278,25 @@ async function restoreOne(
   // The newest acknowledged head. Branches are reconciled by the host that holds them (R-F as R-Z amends it).
   const head = [...heads.heads].sort((x, y) => Date.parse(y.at) - Date.parse(x.at))[0]!;
 
-  // Every envelope back to the root, opened and verified, each once.
-  const opened = new Map<string, { opened: Opened; bytes: Uint8Array; at: string }>();
-  const order: string[] = [];
-  const pending = [head.digest];
-  while (pending.length > 0) {
-    const digest = pending.pop()!;
-    if (opened.has(digest)) continue;
+  // The chain as the store's log holds it, without bytes: back to a root, every author enrolled under this owner.
+  const links = await chainOf(base, author, owner, documentUuid, head.digest);
+  if (isUnavailable(links)) return { unavailable: links.unavailable };
+  // A store that has no Chain yet answers no such operation: the envelopes themselves are the chain then.
+  if (isRefused(links) && links.refused !== "no such operation") return { why: `chain: ${links.refused}` };
+  const chain = isRefused(links) ? null : new Map(links.chain.map((link) => [link.digest, link]));
+  if (chain) {
+    if (!chain.has(head.digest) || ![...chain.values()].some((link) => link.parents.length === 0)) return { why: "parent-chain" };
+    for (const link of chain.values()) {
+      if (link.parents.some((parent) => !chain.has(parent))) return { why: "parent-chain" };
+      if (!enrolled.has(link.author)) return { why: "author-not-enrolled" };
+    }
+  }
+
+  // Each envelope fetched once, its digest checked, opened, and held to what the log said of it.
+  const opened = new Map<string, { opened: Opened; bytes: Uint8Array }>();
+  const fetchOpen = async (digest: string): Promise<Opened | { why: string } | { unavailable: string }> => {
+    const held = opened.get(digest);
+    if (held) return held.opened;
     const got = await getEnvelope(base, author, owner, documentUuid, digest);
     if (isUnavailable(got)) return { unavailable: got.unavailable };
     if (isRefused(got)) return { why: `get: ${got.refused}` };
@@ -292,25 +308,50 @@ async function restoreOne(
       return { why: "an envelope does not open under the data key" };
     }
     if (one.clear.owner !== owner || one.clear.document !== documentUuid) return { why: "document" };
-    opened.set(digest, { opened: one, bytes: got.bytes, at: got.at });
-    order.push(digest);
-    pending.push(...one.clear.parents);
-  }
-  for (const digest of order) {
-    const { opened: one, bytes } = opened.get(digest)!;
-    const parents = await Promise.all(one.clear.parents.map((p) => checkpointDigest(opened.get(p)!.opened.inside.checkpoint)));
-    const why = await verifyOpened(bytes, one, enrolled, parents);
-    if (why) return { why };
-  }
+    const link = chain?.get(digest);
+    if (chain && (!link || link.author !== one.clear.author || link.parents.join(" ") !== one.clear.parents.join(" "))) return { why: "parent-chain" };
+    opened.set(digest, { opened: one, bytes: got.bytes });
+    return one;
+  };
+  const failed = (got: Opened | { why: string } | { unavailable: string }): got is { why: string } | { unavailable: string } => !("clear" in got);
 
-  const top = opened.get(head.digest)!.opened;
-  let container: string | undefined;
-  for (let at: string | undefined = head.digest; at && container === undefined; ) {
-    const one: Opened = opened.get(at)!.opened;
+  // The head, verified against its parents' checkpoints, which are fetched for that and nothing more.
+  const top = await fetchOpen(head.digest);
+  if (failed(top)) return top;
+  const parentCheckpoints: string[] = [];
+  for (const parent of top.clear.parents) {
+    const one = await fetchOpen(parent);
+    if (failed(one)) return one;
+    parentCheckpoints.push(await checkpointDigest(one.inside.checkpoint));
+  }
+  const why = await verifyOpened(opened.get(head.digest)!.bytes, top, enrolled, parentCheckpoints);
+  if (why) return { why };
+
+  // The container: carried by the head, named by it, or, on a chain sealed before envelopes named it, found up the first parents.
+  let container = top.inside.container;
+  let containerIn = head.digest;
+  if (container === undefined && top.inside.containerIn !== undefined) {
+    if (chain && !chain.has(top.inside.containerIn)) return { why: "parent-chain" };
+    const holder = await fetchOpen(top.inside.containerIn);
+    if (failed(holder)) return holder;
+    if (holder.inside.checkpoint.release !== top.inside.checkpoint.release) return { why: "the container named is another release's" };
+    container = holder.inside.container;
+    containerIn = top.inside.containerIn;
+  }
+  for (let at = top.clear.parents[0]; container === undefined && at !== undefined; ) {
+    const one = await fetchOpen(at);
+    if (failed(one)) return one;
     container = one.inside.container;
+    containerIn = at;
     at = one.clear.parents[0];
   }
   if (container === undefined) return { why: "no container in the chain" };
+  // Every other envelope fetched verifies on its own: its signatures under its enrolled author, its database, its document.
+  for (const [digest, { opened: one, bytes }] of opened) {
+    if (digest === head.digest) continue;
+    const unverified = await verifyOpened(bytes, one, enrolled, null);
+    if (unverified) return { why: unverified };
+  }
   const cartridge = await readCartridge(new File([container], `${top.inside.title}.dai.html`, { type: "text/html" }));
   if (cartridge.manifest.documentUuid !== documentUuid) return { why: "document" };
   const resealed = await resealCartridge(cartridge, top.database);
@@ -325,6 +366,7 @@ async function restoreOne(
     release: top.inside.checkpoint.release,
     at: head.at,
     as: "head",
+    containerIn,
   } satisfies KeptRecord);
   await install({
     documentUuid,

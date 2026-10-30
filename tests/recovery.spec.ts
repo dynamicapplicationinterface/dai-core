@@ -163,6 +163,56 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
   test("with the store unreachable, recovery says so and presents nothing as recovered", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
     const store = await serveOwnerStore();
+  test("a document kept many times is recovered from its head, the head's parent and its container's envelope, not every revision kept", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, provider } = await openerWithStore(context, store.base);
+      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-recover-")), "Notes"));
+      const uuid = await uuidOf(page);
+      await enrollHere(page);
+      for (let n = 1, after = 0; n <= 6; n += 1) {
+        await typeNote(app, ` r${n}`);
+        after = (await waitSettledKept(page, uuid, after)).revision;
+      }
+      const text = await app.locator("#note").inputValue();
+      const appended = store.bucket().filter((o) => o.key.includes(`/${uuid}/`));
+      expect(appended.length, "kept many times").toBeGreaterThanOrEqual(6);
+      const size = new Map(appended.map((o) => [o.key.split("/").pop()!, o.bytes.length]));
+
+      const recoverAndCount = async (): Promise<{ gets: number; bytes: number }> => {
+        await wipe(page, provider.cdp);
+        await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+        const from = store.received().length;
+        await page.locator("#recover").click();
+        await expect(page.locator(`#recovered button[data-document="${uuid}"]`)).toBeVisible({ timeout: 30_000 });
+        expect(await storedHolds(page, uuid, text), "the head, exactly").toBe(true);
+        const gets = store.received().slice(from).filter((r) => r.method === "GET" && r.url.includes(`/d/`) && r.url.includes("/e/"));
+        return { gets: gets.length, bytes: gets.reduce((sum, r) => sum + (size.get(r.url.split("/e/")[1]!.split("?")[0]!) ?? 0), 0) };
+      };
+
+      const now = await recoverAndCount();
+      const largest = Math.max(...size.values());
+      const later = [...size.values()].filter((n) => n !== largest);
+      console.log(`recovery after ${appended.length} kept: ${now.gets} envelopes, ${now.bytes} bytes (all kept: ${[...size.values()].reduce((a, b) => a + b, 0)} bytes)`);
+      expect(now.gets, "the head, its parent, the container's envelope").toBeLessThanOrEqual(3);
+      expect(now.bytes).toBeLessThanOrEqual(largest + 2 * Math.max(...later));
+
+      // A store with no Chain yet: the envelopes are the chain, and the document still comes back.
+      store.rewrite((path, answer) => (/\/c\/[A-Za-z0-9_-]{43}$/.test(path) ? new Response(JSON.stringify({ refused: "no such operation" }), { status: 404, headers: answer.headers }) : answer));
+      const without = await recoverAndCount();
+      console.log(`recovery without Chain: ${without.gets} envelopes, ${without.bytes} bytes`);
+      expect(without.gets).toBeLessThanOrEqual(3);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
     const context = await browser.newContext();
     try {
       const { page, provider } = await openerWithStore(context, store.base);

@@ -36,6 +36,14 @@ export interface Heads {
   heads: { digest: string; at: string }[];
 }
 
+/** One envelope of a chain, as the store's log holds it: no bytes. */
+export interface Link {
+  digest: string;
+  parents: string[];
+  author: string;
+  at: string;
+}
+
 export interface Library {
   documents: string[];
   authors: Record<string, string>;
@@ -117,6 +125,9 @@ export const appendEnvelope = async (
 
 export const headsOf = async (base: string, author: Author, owner: string, document: string): Promise<Heads | Refused | Unavailable> =>
   answered(await call(base, author, "GET", `/d/${owner}/${document}/heads`));
+
+export const chainOf = async (base: string, author: Author, owner: string, document: string, from: string): Promise<{ chain: Link[] } | Refused | Unavailable> =>
+  answered(await call(base, author, "GET", `/d/${owner}/${document}/c/${from}`));
 
 export const libraryOf = async (base: string, author: Author, owner: string): Promise<Library | Refused | Unavailable> =>
   answered(await call(base, author, "GET", `/o/${owner}/library`));

@@ -133,12 +133,13 @@ export class StoreDO {
       if (op === "admit" && request.method === "POST") return this.admit(request, path, owner);
       if (op === "library" && request.method === "GET") return this.library(request, path, owner);
     }
-    if ((m = /^\/d\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,64})\/(key|append|heads|e\/([A-Za-z0-9_-]{43}))$/.exec(path))) {
-      const [, owner, document, op, digest] = m as unknown as [string, string, string, string, string | undefined];
+    if ((m = /^\/d\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,64})\/(key|append|heads|e\/([A-Za-z0-9_-]{43})|c\/([A-Za-z0-9_-]{43}))$/.exec(path))) {
+      const [, owner, document, op, digest, from] = m as unknown as [string, string, string, string, string | undefined, string | undefined];
       if (op === "key" && request.method === "PUT") return this.putKey(request, path, owner, document);
       if (op === "append" && request.method === "POST") return this.append(request, path, owner, document, url.searchParams.get("as"));
       if (op === "heads" && request.method === "GET") return this.heads(request, path, owner);
       if (digest && request.method === "GET") return this.get(request, path, owner, digest);
+      if (from && request.method === "GET") return this.chain(request, path, owner, from);
     }
     return refuse("no such operation", 404);
   }
@@ -370,6 +371,34 @@ export class StoreDO {
     const heads = (await this.state.storage.get<string[]>("heads")) ?? [];
     const entries = await Promise.all(heads.map(async (digest) => ({ digest, at: (await this.state.storage.get<LogEntry>(`m:${digest}`))!.at })));
     return json({ key: (await this.state.storage.get<string>("key")) ?? null, heads: entries });
+  }
+
+  /**
+   * Chain: what the log holds of an envelope and every one before it, without
+   * their bytes: each digest, its parents, its author and the store's time. A
+   * host with nothing reads the chain from this and fetches only the envelopes
+   * it opens.
+   */
+  private async chain(request: Request, path: string, owner: string, from: string): Promise<Response> {
+    const denied = await this.authorized(request, path, owner, new Uint8Array());
+    if (denied) return denied;
+    const log = await this.state.storage.list<LogEntry>({ prefix: "m:" });
+    const entry = (digest: string): LogEntry | undefined => log.get(`m:${digest}`);
+    if (!entry(from)) return refuse("no such envelope", 404);
+    const chain: { digest: string; parents: string[]; author: string; at: string }[] = [];
+    const seen = new Set<string>();
+    const pending = [from];
+    while (pending.length > 0) {
+      const digest = pending.pop()!;
+      if (seen.has(digest)) continue;
+      seen.add(digest);
+      const held = entry(digest);
+      // Every parent was held when its child was appended, and nothing is removed.
+      if (!held) return json({ unavailable: "a parent the log does not name" }, 503);
+      chain.push({ digest, parents: held.parents, author: held.author, at: held.at });
+      pending.push(...held.parents);
+    }
+    return json({ chain });
   }
 
   private async get(request: Request, path: string, owner: string, digest: string): Promise<Response> {
