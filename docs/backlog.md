@@ -11904,6 +11904,34 @@ pill's box measures no larger than with "Saved in this browser · Keep?", at
 phone and desktop width, on three engines (the measurement in
 `keep-offer.spec.ts`'s pill tests).
 
+#### D301 — After one branch, no append is ever the head again
+
+*Status: open, for Build 2b-3 (branch reconciliation, R-F as R-Z amends
+it). Filed 29 October, from the code review of PR #15 (2b2-M2).*
+
+An append as the head must name every current head as a parent
+(`apps/owner-store/src/store-do.ts`, `append`). Once one context's append is
+refused `stale` and kept as a branch, the document has two heads, and no host
+names both: the context that held the head is refused `stale` on its next
+append and appends it as a branch, and the branched line stays a branch
+(`keeping.ts` keeps a line branched until the host reconciles it). From then
+on every append of both is a branch, the heads only grow, and each append of
+the context that held the head costs two requests. Recovery restores the
+newest head by the store's time (`recover.ts`), so a revision one context was
+told is "Kept" is not what Recover brings back once another line is newer.
+
+Nothing accepted is dropped (R-B), and each "Kept" is still the store's
+acknowledgment of that revision; what is missing is the merge. The lost
+answer, which made a context branch against itself, is fixed apart from this
+(Build 2b-2r item 3): only two contexts appending at once branch now.
+
+**Change, in 2b-3:** the host that holds the heads opens them, merges their
+change logs, and appends the merged state as the head with every head as a
+parent (docs/store.md, "Branches reconcile at the host"). **Acceptance:** two
+contexts of one owner, each keeping one change after the other's last
+acknowledged one; after reconciliation one head holds both changes, the next
+append of either is a head, and Recover restores both changes.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

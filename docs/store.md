@@ -34,7 +34,9 @@ names where.
 
 - **Branches reconcile at the host** (R-F as R-Z amends it): not built. A
   host keeps a branch, and restores the newest head; nothing yet merges two
-  heads into one.
+  heads into one. Until something does, after one branch no append is the
+  head again, and Recover may bring back another line than the one a
+  context was told is kept (D301, for 2b-3).
 - **A stale recovery** (R-G): a surviving client's memory of the newest head
   it saw, and the report when a store serves an older one, is not built.
 - **The keychain path on a device** (D298): whether Safari and a Home Screen
