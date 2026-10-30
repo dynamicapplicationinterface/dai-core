@@ -27,6 +27,9 @@ type Any = any;
 
 const PASSKEY = "an owner needs a passkey with PRF: Chromium's virtual authenticator";
 
+/** What the opener says when the store refuses to keep a revision (docs/store.md, "Failure"). */
+const REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
+
 test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
   test.slow();
 
@@ -128,6 +131,42 @@ test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
       expect(after, "the kept record is the first one still").toEqual(first);
       const at = new Date(first.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe(`Saved here · kept ${at}`);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("a store that refuses an append is said, once, over the document, with Save a copy; kept again, the sentence goes", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", PASSKEY);
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page } = await openerWithStore(context, store.base);
+      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-keep-")), "Notes"));
+      const uuid = await uuidOf(page);
+      await enrollHere(page);
+      await typeNote(app, "first");
+      const first = await waitSettledKept(page, uuid);
+
+      // From here every append is refused, as a store refuses an envelope whose signature does not hold.
+      store.rewrite((path, answer) =>
+        path.endsWith("/append") ? new Response(JSON.stringify({ refused: "the envelope's signature does not hold" }), { status: 409, headers: answer.headers }) : answer,
+      );
+      const before = (await keepingLog(page)).refused;
+      await typeNote(app, " second");
+      await expect.poll(async () => (await keepingLog(page)).refused, { timeout: 45_000 }).toBeGreaterThan(before);
+      await expect(page.locator("#doc-note")).toHaveText(REFUSED);
+      await expect(page.locator("#doc-note")).toHaveClass(/\berror\b/);
+      expect(await pillText(page)).not.toContain("Kept");
+      expect(await keptRecord(page, uuid)).toEqual(first);
+
+      // Kept again: the sentence is no longer true, and goes.
+      store.rewrite(null);
+      await typeNote(app, " third");
+      await waitSettledKept(page, uuid, first.revision);
+      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
+      await expect(page.locator("#doc-note")).toBeHidden();
     } finally {
       await context.close();
       await store.close();

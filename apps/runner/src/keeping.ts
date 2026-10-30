@@ -91,9 +91,13 @@ export const keepingLog: { sent: number; kept: number; refusedReceipts: number; 
   last: "",
 };
 
-/** Whether the store's last attempt for a document reached it: false while it is unavailable or refusing. */
-const reachable = new Map<string, boolean>();
-export const storeReached = (documentUuid: string): boolean | undefined => reachable.get(documentUuid);
+/**
+ * Why the store last refused to keep a document, until a revision of it is
+ * kept: a refusal retrying cannot correct, which the opener says (docs/store.md,
+ * "Failure"). An unavailable store is not a refusal, and says nothing.
+ */
+const refusals = new Map<string, string>();
+export const storeRefused = (documentUuid: string): string | undefined => refusals.get(documentUuid);
 
 const listeners = new Set<(documentUuid: string) => void>();
 /** Called when a document's kept record, or whether the store is reached, changes. */
@@ -182,7 +186,6 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     keepingLog.unavailable += 1;
     keepingLog.last = `unavailable: ${why}`;
     console.info(`dai: store unavailable for ${revision.documentUuid} r${revision.revision}: ${why}`);
-    reachable.set(revision.documentUuid, false);
     tell(revision.documentUuid);
     return "unavailable";
   };
@@ -190,7 +193,7 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     keepingLog.refused += 1;
     keepingLog.last = `refused: ${why}`;
     console.info(`dai: store refused ${revision.documentUuid} r${revision.revision}: ${why}`);
-    reachable.set(revision.documentUuid, false);
+    refusals.set(revision.documentUuid, why);
     tell(revision.documentUuid);
     return "refused";
   };
@@ -239,7 +242,7 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
       keepingLog.refusedReceipts += 1;
       keepingLog.last = `receipt refused: names ${String((answer as Partial<Ack>).digest)}, sent ${sending.digest}`;
       console.warn(`dai: the store's receipt for ${document} r${sending.revision} is not for what was sent; nothing is kept`);
-      reachable.set(document, false);
+      refusals.set(document, "a receipt for something not sent");
       tell(document);
       return "refused";
     }
@@ -248,7 +251,7 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     keepingLog.kept += 1;
     keepingLog.last = `kept r${sending.revision} ${sending.digest} as ${sending.as}`;
     console.info(`dai: kept ${document} r${sending.revision} (${sending.as}) at ${answer.at}`);
-    reachable.set(document, true);
+    refusals.delete(document);
     tell(document);
     return "kept";
   };

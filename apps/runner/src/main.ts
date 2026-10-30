@@ -91,7 +91,7 @@ import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
 import { recover, recoverWithKeychain, type Here, type Install, type Recovered } from "./recover.js";
-import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
+import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -651,8 +651,24 @@ async function refreshKept(): Promise<void> {
   keptShown = record && shown === loaded?.manifest.documentUuid && record.owner === owner ? record : null;
   showStorage();
 }
+/*
+ * A store that refuses to keep the document on screen is said once, over the
+ * document, with what to do instead (docs/store.md, "Failure"; P3); the
+ * status alone reads as offline does. Kept again, the sentence goes.
+ */
+const STORE_REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
+let refusalSaid: string | null = null;
 onKept((documentUuid) => {
-  if (documentUuid === loaded?.manifest.documentUuid) void refreshKept();
+  if (documentUuid !== loaded?.manifest.documentUuid) return;
+  void refreshKept();
+  const refused = storeRefused(documentUuid);
+  if (refused !== undefined && refusalSaid !== documentUuid) {
+    refusalSaid = documentUuid;
+    tellOverDocument(STORE_REFUSED, true);
+  } else if (refused === undefined && refusalSaid === documentUuid) {
+    refusalSaid = null;
+    if (document.getElementById("doc-note")?.textContent === STORE_REFUSED) tellOverDocument("");
+  }
 });
 function showStorage(): void {
   const el = document.getElementById("save-state");
