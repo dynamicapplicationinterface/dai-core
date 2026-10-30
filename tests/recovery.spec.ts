@@ -254,10 +254,36 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await page.keyboard.press("Escape");
       await expect(page.locator("#sheet")).toBeHidden();
 
-      // The store back: the row restores the rest, lists both, says nothing, and the mark goes; the document stays open.
-      await context.unroute(`${store.base}/**`);
-      // The chooser's line, under the document, holds what opening it said; the recovery says nothing anywhere, there or over the document.
+      // The chooser's line, under the document, holds what opening it said; the menu's recovery speaks over the document, never there.
       const chooserLine = await page.locator("#report").textContent();
+
+      /*
+       * 2b2f-L1 (Build 2b-2fr item 3): the row's words when the store cuts it
+       * short name only what this run restored, and the way back on screen,
+       * which is the row, never Recover. First was restored by the earlier run.
+       */
+      // The store answering again, and stopping at the second's Heads once more: this run restored nothing.
+      await context.unroute(`${store.base}/**`);
+      await cutAtHeadsOf(context, store.base, ids[second]!);
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await expect(page.locator("#doc-note")).toHaveText(
+        "The rest could not be reached: the store stopped answering. Finish recovering again when you are online.",
+        { timeout: 30_000 },
+      );
+      expect(await recoveringMark()).toBe(true);
+      expect(await page.locator("#doc-note").innerText(), "no restoration this run did not make").not.toContain(first);
+      // The store, cut from there on, not answering at all: nothing of this run's, and the row is the way back.
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await expect(page.locator("#doc-note")).toHaveText(
+        "The rest of your library could not be reached right now: the store did not answer. Finish recovering again when you are online.",
+        { timeout: 30_000 },
+      );
+      expect(await recoveringMark()).toBe(true);
+
+      // The store back: the row restores the rest, lists both, says what came back, and the mark goes; the document stays open.
+      await context.unroute(`${store.base}/**`);
       await page.locator("#more").click();
       await page.locator("#finish-recovering").click();
       await expect(page.locator("#sheet")).toBeHidden();
@@ -267,10 +293,15 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
       await expect(page.locator("#recovered li")).toHaveCount(2);
-      await expect(page.locator("#doc-note")).toBeHidden();
+      // 2b2f-M2 (Build 2b-2fr item 3): one sentence over the document naming what this run restored (R-Z sentence 5).
+      await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`, { timeout: 10_000 });
       expect(await page.locator("#report").textContent(), "the chooser's line, unchanged").toBe(chooserLine);
       await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
       expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null)).toBe(ids[first]);
+      // The sentence goes at the open document's next save.
+      await typeNote(appIn(page), "-more");
+      await expect.poll(() => storedHolds(page, ids[first]!, `${first}-text-more`), { timeout: 30_000 }).toBe(true);
+      await expect(page.locator("#doc-note")).toBeHidden({ timeout: 10_000 });
 
       // From the menu's next opening, the row is gone.
       await page.locator("#more").click();
@@ -351,6 +382,10 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
       expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null)).toBe(ids[first]);
       expect(await page.locator("#finish-secret").inputValue(), "nothing left in the field").toBe("");
+      // Said over the document (Build 2b-2fr item 3), and gone when dismissed.
+      await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`);
+      await page.locator("#doc-note").click();
+      await expect(page.locator("#doc-note")).toBeHidden();
 
       // From the menu's next opening, neither the row nor the form.
       await page.locator("#more").click();

@@ -310,7 +310,9 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   could not be reached. Recover stays offered to that owner, and a second
   recovery restores the rest, passing over what is held here already. With
   a document open, which hides Recover, the host's menu offers the same
-  recovery until it is complete.
+  recovery until it is complete, by the passkey or, when no passkey
+  answers, the saved password, and says over the document what that run
+  restored.
 - **A kept copy that does not verify:** refused, not restored, and said in
   one sentence (R-C, above).
 

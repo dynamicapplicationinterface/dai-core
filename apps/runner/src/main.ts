@@ -3480,6 +3480,11 @@ window.addEventListener("message", (event) => {
      */
     el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
     showStorage();
+    // What "Finish recovering" said goes at the open document's next save.
+    if (state === "saved" && finishSaid !== null) {
+      if (document.getElementById("doc-note")?.textContent === finishSaid) tellOverDocument("");
+      finishSaid = null;
+    }
     if (state === "failed" && wonElsewhere(data.error)) {
       tellOverDocument(elsewhereSentence(data.error), true);
     } else if (state === "failed" && data.error === SAVE_REFUSED) {
@@ -4077,6 +4082,8 @@ const RECOVERY_WORDS = {
 } as const;
 /** Where a recovery was asked from: the chooser's Recover, or the menu's "Finish recovering". */
 type AskedFrom = "chooser" | "menu";
+/** What a recovery asked from the menu said over the open document: it goes at that document's next save, or when dismissed. */
+let finishSaid: string | null = null;
 /** Recover with the passkey, from the chooser or the menu: one recovery, whichever row asked for it. */
 function recoverWithPasskey(from: AskedFrom): void {
   // The ceremony first, inside the tap.
@@ -4144,7 +4151,12 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
   }
   if ("unavailable" in outcome) {
     console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
-    sayWhereAsked("Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.", true);
+    sayWhereAsked(
+      from === "menu"
+        ? "The rest of your library could not be reached right now: the store did not answer. Finish recovering again when you are online."
+        : "Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.",
+      true,
+    );
   } else if ("cancelled" in outcome) {
     console.info(`dai: recovery (${path}) cancelled: ${outcome.cancelled}`);
     sayWhereAsked(RECOVERY_WORDS[path].cancelled);
@@ -4171,7 +4183,23 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     }
     if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
     const unverified = outcome.refused.length;
-    if (outcome.unreached !== undefined) {
+    if (from === "menu") {
+      /*
+       * Over the open document, what this run restored, by name: one held here
+       * since an earlier run is not this run's. Cut short, the way back is the
+       * row it was asked from, since Recover is under the document.
+       */
+      const now = outcome.restored.filter((one) => !one.alreadyHere).map((one) => one.title);
+      const recovered = now.length > 0 ? `Recovered ${namesOf(now)}. ` : "";
+      const notVerified = "A kept copy could not be verified, so it was not restored.";
+      if (outcome.unreached !== undefined) console.info(`dai: finish recovering cut short: ${outcome.unreached}`);
+      const sentence =
+        outcome.unreached !== undefined
+          ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.`
+          : `${recovered}${unverified > 0 ? notVerified : "Your library is complete."}`;
+      sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
+      finishSaid = sentence;
+    } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
       sayWhereAsked(
         `Restored ${namesOf(outcome.restored.map((one) => one.title))}. ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.`,
