@@ -42,9 +42,9 @@ const CHOOSER = {
   namePublisher: "asked from the card, before the document opens",
   refusedByShell: "the shell refused the document and the frame comes down: the chooser is what is left",
   'document.getElementById("remove")?.addEventListener("click", () => {': "the document is removed: the chooser is what is left",
-  'recoverButton?.addEventListener("click", () => {': "Recover is on the chooser, on a browser with nothing open (R-Z sentence 5)",
   'recoverKeychain?.addEventListener("submit", (event) => {': "Recover with the saved password is on the chooser, beside Recover (D298)",
-  showRecovered: "what either recovery path found, said on the chooser it was asked from",
+  sayWhereAsked:
+    "a recovery's words, where it was asked from: the chooser, or over the document when \"Finish recovering\" was asked from the menu with one open (R-Z sentence 5)",
 };
 
 /**

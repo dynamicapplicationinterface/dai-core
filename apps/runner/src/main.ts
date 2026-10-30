@@ -3812,7 +3812,7 @@ const closeSheet = (): void => {
 openButton.addEventListener("click", () => fileInput.click());
 // Its rows settled first: nothing is added to an open menu (sheet.ts).
 async function openMenu(): Promise<void> {
-  await showKeepBeyond();
+  await Promise.all([showKeepBeyond(), showRecover()]);
   slideOpen(sheet);
   // Checked here, on menu open, and never at load: the offline-open guarantee is
   // that a held document asks the network for nothing (T1 note in showVersion).
@@ -4037,12 +4037,25 @@ function restoredSentence(at: string): string {
   return `Restored the copy kept at ${shortTime(at)}. Changes saved only in the cleared browser are not included.`;
 }
 const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
+/*
+ * A recovery the store cut short, finished from the menu: Recover lives in the
+ * chooser, which a document on screen hides, so the person who opened what
+ * came back reaches the rest here. The same recovery, from a row that is in
+ * the menu only while the signed-in owner's record is marked recovering, and
+ * only from the menu's next opening either way (sheet.ts).
+ */
+const finishRecovering = document.getElementById("finish-recovering") as HTMLButtonElement | null;
 async function showRecover(): Promise<void> {
   // Offered with nobody signed in, and to an owner whose recovery the store cut short.
   const owner = await currentOwner().catch(() => null);
-  const hidden = !storeBase() || (owner !== null && !(await ownerRecord(owner).catch(() => null))?.recovering);
+  const unfinished = owner !== null && (await ownerRecord(owner).catch(() => null))?.recovering === true;
+  const hidden = !storeBase() || (owner !== null && !unfinished);
   if (recoverButton) recoverButton.hidden = hidden;
   if (recoverKeychain) recoverKeychain.hidden = hidden;
+  const row = !!storeBase() && unfinished;
+  whileClosed(sheet, "finish-recovering", () => {
+    if (finishRecovering) finishRecovering.hidden = !row;
+  });
 }
 /** What each recovery path says when it was not used, or did not open the owner key. */
 const RECOVERY_WORDS = {
@@ -4052,11 +4065,17 @@ const RECOVERY_WORDS = {
     refused: "This password did not recover any documents. Nothing was restored.",
   },
 } as const;
-recoverButton?.addEventListener("click", () => {
+/** Recover with the passkey, from the chooser or the menu: one recovery, whichever row asked for it. */
+function recoverWithPasskey(): void {
   // The ceremony first, inside the tap.
   const recovering = recover(storeBase(), recoveryHere);
-  say("");
+  sayWhereAsked("");
   void recovering.then((outcome) => showRecovered(outcome, "passkey"));
+}
+recoverButton?.addEventListener("click", recoverWithPasskey);
+finishRecovering?.addEventListener("click", () => {
+  closeSheet();
+  recoverWithPasskey();
 });
 /*
  * The keychain path (R-D, D298): the password the password manager kept at
@@ -4074,6 +4093,11 @@ recoverKeychain?.addEventListener("submit", (event) => {
 function namesOf(titles: readonly string[]): string {
   return titles.length <= 2 ? titles.join(" and ") : `${titles.slice(0, -1).join(", ")}, and ${titles[titles.length - 1]}`;
 }
+/** A recovery's words, where it was asked from: on the chooser, or over the document when it was asked from the menu with one open. */
+function sayWhereAsked(sentence: string, isError = false): void {
+  if (loaded) tellOverDocument(sentence, isError);
+  else say(sentence, isError);
+}
 function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
   // A refused password leaves nothing in the field to fill again by mistake.
   if (path === "keychain" && !("restored" in outcome)) {
@@ -4086,13 +4110,13 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): v
   }
   if ("unavailable" in outcome) {
     console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
-    say("Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.", true);
+    sayWhereAsked("Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.", true);
   } else if ("cancelled" in outcome) {
     console.info(`dai: recovery (${path}) cancelled: ${outcome.cancelled}`);
-    say(RECOVERY_WORDS[path].cancelled);
+    sayWhereAsked(RECOVERY_WORDS[path].cancelled);
   } else if ("refused" in outcome && typeof outcome.refused === "string") {
     console.info(`dai: recovery (${path}) refused: ${outcome.refused}`);
-    say(RECOVERY_WORDS[path].refused, true);
+    sayWhereAsked(RECOVERY_WORDS[path].refused, true);
   } else if ("restored" in outcome) {
     for (const one of outcome.restored) {
       // One held here since an earlier recovery may have changed since: no sentence about where it came from.
@@ -4115,12 +4139,12 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): v
     const unverified = outcome.refused.length;
     if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
-      say(
+      sayWhereAsked(
         `Restored ${namesOf(outcome.restored.map((one) => one.title))}. ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.`,
         true,
       );
     } else {
-      say(
+      sayWhereAsked(
         outcome.restored.length === 0 && unverified === 0
           ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
           : unverified > 0

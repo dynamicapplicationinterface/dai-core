@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type CDPSession, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf } from "./owner.js";
+import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keptRecord, openerWithStore, waitSettledKept } from "./keeping.js";
 
@@ -157,6 +157,93 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
       await expect(page.locator("#recover")).toBeHidden();
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * 2b2-H2, finished from the menu (R-Z sentence 5, Build 2b-2f item 3).
+   * Recover lives in the chooser, and a document on screen hides the chooser:
+   * after a cut-short recovery and the first document opened, the person
+   * reaches the rest only through the menu. The row runs the same second
+   * recovery Recover runs, and is there only while the owner's record carries
+   * the recovering mark, from the menu's next opening.
+   */
+  test("a recovery the store cut short is finished from the menu: with a document open, the menu carries Finish recovering until every document is here", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, provider } = await openerWithStore(context, store.base);
+      const scratch = mkdtempSync(join(tmpdir(), "dai-recover-"));
+      const files = { First: await buildNotes(scratch, "First"), Second: await buildNotes(scratch, "Second") };
+      const ids: Record<string, string> = {};
+      let owner = "";
+      for (const [title, file] of Object.entries(files)) {
+        const app = await openFile(page, file);
+        ids[title] = await uuidOf(page);
+        if (!owner) owner = await enrollHere(page);
+        await typeNote(app, `${title}-text`);
+        await expect.poll(() => storedHolds(page, ids[title]!, `${title}-text`), { timeout: 30_000 }).toBe(true);
+        await waitSettledKept(page, ids[title]!);
+      }
+
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      const [first, second] = Object.keys(ids).sort((x, y) => (ids[x]! < ids[y]! ? -1 : 1)) as [string, string];
+      let cut = false;
+      await context.route(`${store.base}/**`, async (route) => {
+        if (route.request().url().includes(`/${ids[second]}/heads`)) cut = true;
+        return cut ? route.abort("connectionrefused") : route.continue();
+      });
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 30_000 },
+      );
+      const recoveringMark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+      expect(await recoveringMark(), "the owner's record is marked recovering").toBe(true);
+
+      // The person opens what came back, as they would. The chooser, and Recover in it, is under the document now.
+      await page.locator(`#recovered button[data-document="${ids[first]}"]`).click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
+      await expect(page.locator("#recover")).toBeHidden();
+
+      // The menu, the store still cut: the row is there, since what offers it is held here.
+      await page.locator("#more").click();
+      await expect(page.locator("#sheet")).toBeVisible();
+      await expect(page.locator("#finish-recovering"), "the menu carries Finish recovering").toBeVisible();
+      await expect(page.locator("#finish-recovering")).toHaveText("Finish recovering");
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#sheet")).toBeHidden();
+
+      // The store back: the row restores the rest, lists both, says nothing, and the mark goes; the document stays open.
+      await context.unroute(`${store.base}/**`);
+      // The chooser's line, under the document, holds what opening it said; the recovery says nothing anywhere, there or over the document.
+      const chooserLine = await page.locator("#report").textContent();
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await expect(page.locator("#sheet")).toBeHidden();
+      await expect
+        .poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid).sort(), { timeout: 30_000 })
+        .toEqual([ids[first], ids[second]].sort());
+      expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
+      expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
+      await expect(page.locator("#recovered li")).toHaveCount(2);
+      await expect(page.locator("#doc-note")).toBeHidden();
+      expect(await page.locator("#report").textContent(), "the chooser's line, unchanged").toBe(chooserLine);
+      await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
+      expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null)).toBe(ids[first]);
+
+      // From the menu's next opening, the row is gone.
+      await page.locator("#more").click();
+      await expect(page.locator("#sheet")).toBeVisible();
+      await expect(page.locator("#finish-recovering")).toBeHidden();
     } finally {
       await context.close();
       await store.close();
