@@ -308,7 +308,9 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   refuses its own owner. A store that stops answering partway leaves the
   documents restored listed, and the sentence names them and says the rest
   could not be reached. Recover stays offered to that owner, and a second
-  recovery restores the rest, passing over what is held here already.
+  recovery restores the rest, passing over what is held here already. With
+  a document open, which hides Recover, the host's menu offers the same
+  recovery until it is complete.
 - **A kept copy that does not verify:** refused, not restored, and said in
   one sentence (R-C, above).
 
