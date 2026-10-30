@@ -4045,6 +4045,14 @@ const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormE
  * only from the menu's next opening either way (sheet.ts).
  */
 const finishRecovering = document.getElementById("finish-recovering") as HTMLButtonElement | null;
+/*
+ * Each recovery path recovers alone (R-D as amended): an owner who recovered
+ * here with the saved password alone has no passkey to answer the row. Once no
+ * passkey answered it on this page, the menu offers the saved-password form
+ * the chooser offers, in the row's place, until the recovery is finished.
+ */
+const finishKeychain = document.getElementById("finish-keychain") as HTMLFormElement | null;
+let finishByPassword = false;
 async function showRecover(): Promise<void> {
   // Offered with nobody signed in, and to an owner whose recovery the store cut short.
   const owner = await currentOwner().catch(() => null);
@@ -4053,8 +4061,10 @@ async function showRecover(): Promise<void> {
   if (recoverButton) recoverButton.hidden = hidden;
   if (recoverKeychain) recoverKeychain.hidden = hidden;
   const row = !!storeBase() && unfinished;
+  const byPassword = finishByPassword;
   whileClosed(sheet, "finish-recovering", () => {
-    if (finishRecovering) finishRecovering.hidden = !row;
+    if (finishRecovering) finishRecovering.hidden = !row || byPassword;
+    if (finishKeychain) finishKeychain.hidden = !row || !byPassword;
   });
 }
 /** What each recovery path says when it was not used, or did not open the owner key. */
@@ -4065,29 +4075,53 @@ const RECOVERY_WORDS = {
     refused: "This password did not recover any documents. Nothing was restored.",
   },
 } as const;
+/** Where a recovery was asked from: the chooser's Recover, or the menu's "Finish recovering". */
+type AskedFrom = "chooser" | "menu";
 /** Recover with the passkey, from the chooser or the menu: one recovery, whichever row asked for it. */
-function recoverWithPasskey(): void {
+function recoverWithPasskey(from: AskedFrom): void {
   // The ceremony first, inside the tap.
   const recovering = recover(storeBase(), recoveryHere);
   sayWhereAsked("");
-  void recovering.then((outcome) => showRecovered(outcome, "passkey"));
+  void recovering.then((outcome) => {
+    // No passkey answered the menu's row (the engine refused, or this owner recovered with the saved password alone): the menu offers that path.
+    if (from === "menu" && "cancelled" in outcome) {
+      console.info(`dai: finish recovering: no passkey answered (${outcome.cancelled}); the saved password offered`);
+      finishByPassword = true;
+      whileClosed(sheet, "finish-by-password", () => void openMenu());
+      return;
+    }
+    showRecovered(outcome, "passkey", from);
+  });
 }
-recoverButton?.addEventListener("click", recoverWithPasskey);
+recoverButton?.addEventListener("click", () => recoverWithPasskey("chooser"));
 finishRecovering?.addEventListener("click", () => {
   closeSheet();
-  recoverWithPasskey();
+  recoverWithPasskey("menu");
 });
 /*
  * The keychain path (R-D, D298): the password the password manager kept at
- * enrollment, filled into this form, recovers with no passkey. No ceremony, so
- * nothing here must start inside the tap.
+ * enrollment, filled into the chooser's form or the menu's, recovers with no
+ * passkey. No ceremony, so nothing here must start inside the tap.
  */
+function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
+  sayWhereAsked("");
+  void recoverWithKeychain(storeBase(), owner, secret, recoveryHere).then((outcome) => showRecovered(outcome, "keychain", from));
+}
 recoverKeychain?.addEventListener("submit", (event) => {
   event.preventDefault();
   const owner = (document.getElementById("recover-owner") as HTMLInputElement | null)?.value.trim() ?? "";
   const secret = (document.getElementById("recover-secret") as HTMLInputElement | null)?.value ?? "";
-  say("");
-  void recoverWithKeychain(storeBase(), owner, secret, recoveryHere).then((outcome) => showRecovered(outcome, "keychain"));
+  recoverWithPassword(owner, secret, "chooser");
+});
+finishKeychain?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const owner = (document.getElementById("finish-owner") as HTMLInputElement | null)?.value.trim() ?? "";
+  const field = document.getElementById("finish-secret") as HTMLInputElement | null;
+  const secret = field?.value ?? "";
+  // Nothing left in the field once it is used, whatever the outcome.
+  if (field) field.value = "";
+  closeSheet();
+  recoverWithPassword(owner, secret, "menu");
 });
 /** Titles as a sentence names them: "A", "A and B", "A, B, and C". */
 function namesOf(titles: readonly string[]): string {
@@ -4098,7 +4132,7 @@ function sayWhereAsked(sentence: string, isError = false): void {
   if (loaded) tellOverDocument(sentence, isError);
   else say(sentence, isError);
 }
-function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
+function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom): void {
   // A refused password leaves nothing in the field to fill again by mistake.
   if (path === "keychain" && !("restored" in outcome)) {
     const secret = document.getElementById("recover-secret") as HTMLInputElement | null;

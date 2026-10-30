@@ -1,9 +1,10 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, type CDPSession, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type CDPSession, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { watchKeychain } from "./keychain.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keptRecord, openerWithStore, waitSettledKept } from "./keeping.js";
 
@@ -30,6 +31,37 @@ async function wipe(page: Page, cdp: CDPSession): Promise<void> {
   await cdp.send("Storage.clearDataForOrigin", { origin: new URL(RUNNER_URL).origin, storageTypes: "all" });
   await page.goto(RUNNER_URL);
   expect(await page.evaluate(() => (window as Any).__runner.listLibrary()), "nothing is left").toEqual([]);
+}
+
+/**
+ * 2b2-H2's two documents, First and Second, kept under one new owner: the ids,
+ * the owner, and which of the two the library lists first (it lists them
+ * sorted by id, so a store cut at the second's Heads restores the first alone).
+ */
+async function twoKept(page: Page): Promise<{ ids: Record<string, string>; owner: string; first: string; second: string }> {
+  const scratch = mkdtempSync(join(tmpdir(), "dai-recover-"));
+  const files = { First: await buildNotes(scratch, "First"), Second: await buildNotes(scratch, "Second") };
+  const ids: Record<string, string> = {};
+  let owner = "";
+  for (const [title, file] of Object.entries(files)) {
+    const app = await openFile(page, file);
+    ids[title] = await uuidOf(page);
+    if (!owner) owner = await enrollHere(page);
+    await typeNote(app, `${title}-text`);
+    await expect.poll(() => storedHolds(page, ids[title]!, `${title}-text`), { timeout: 30_000 }).toBe(true);
+    await waitSettledKept(page, ids[title]!);
+  }
+  const [first, second] = Object.keys(ids).sort((x, y) => (ids[x]! < ids[y]! ? -1 : 1)) as [string, string];
+  return { ids, owner, first, second };
+}
+
+/** The store stops answering from one document's Heads on, until the route is taken away. */
+async function cutAtHeadsOf(context: BrowserContext, base: string, documentUuid: string): Promise<void> {
+  let cut = false;
+  await context.route(`${base}/**`, async (route) => {
+    if (route.request().url().includes(`/${documentUuid}/heads`)) cut = true;
+    return cut ? route.abort("connectionrefused") : route.continue();
+  });
 }
 
 test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
@@ -244,6 +276,87 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await page.locator("#more").click();
       await expect(page.locator("#sheet")).toBeVisible();
       await expect(page.locator("#finish-recovering")).toBeHidden();
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * 2b2f-M1 (Build 2b-2fr item 2): an owner who recovered with the saved
+   * password alone has no passkey to answer the row's ceremony. Each recovery
+   * path recovers alone (R-Z, "Each recovery path ... one never stands in for
+   * the other"), so when no passkey answers, the menu offers the saved-password
+   * form the chooser offers, and the recovery finishes from it.
+   */
+  test("an owner who recovered with the saved password alone finishes from the menu: no passkey answers, the menu offers the saved password, and the rest comes back", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const handed = await watchKeychain(context);
+      const { page, provider } = await openerWithStore(context, store.base);
+      const { ids, owner, first, second } = await twoKept(page);
+      expect(handed, "the saved password, handed to the password manager once").toHaveLength(1);
+
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      // The passkey gone: the saved password is the one way back.
+      await provider.cdp.send("WebAuthn.clearCredentials", { authenticatorId: provider.id });
+      await cutAtHeadsOf(context, store.base, ids[second]!);
+      await page.locator("#recover-owner").fill(handed[0]!.owner);
+      await page.locator("#recover-secret").fill(handed[0]!.secret);
+      await page.locator("#recover-with-password").click();
+      await expect(page.locator("#report")).toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 30_000 },
+      );
+      const recoveringMark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+      expect(await recoveringMark()).toBe(true);
+      await page.locator(`#recovered button[data-document="${ids[first]}"]`).click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
+
+      // The store back; the row's ceremony finds no passkey, and the menu offers the saved password instead.
+      await context.unroute(`${store.base}/**`);
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await expect
+        .poll(
+          async () =>
+            (await page.locator("#finish-keychain").isVisible())
+              ? "the saved-password form"
+              : (await page.locator("#doc-note").isVisible())
+                ? `said: ${await page.locator("#doc-note").innerText()}`
+                : "nothing yet",
+          { timeout: 30_000 },
+        )
+        .toBe("the saved-password form");
+      await expect(page.locator("#sheet")).toBeVisible();
+      await expect(page.locator("#finish-recovering"), "the form in the row's place").toBeHidden();
+      expect(await recoveringMark(), "nothing recovered yet").toBe(true);
+
+      // Filled as a password manager fills it, and submitted: the rest comes back, the mark goes, the document stays open.
+      await page.locator("#finish-owner").fill(handed[0]!.owner);
+      await page.locator("#finish-secret").fill(handed[0]!.secret);
+      await page.locator("#finish-with-password").click();
+      await expect(page.locator("#sheet")).toBeHidden();
+      await expect
+        .poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid).sort(), { timeout: 30_000 })
+        .toEqual([ids[first], ids[second]].sort());
+      expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
+      expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
+      await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
+      expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null)).toBe(ids[first]);
+      expect(await page.locator("#finish-secret").inputValue(), "nothing left in the field").toBe("");
+
+      // From the menu's next opening, neither the row nor the form.
+      await page.locator("#more").click();
+      await expect(page.locator("#sheet")).toBeVisible();
+      await expect(page.locator("#finish-recovering")).toBeHidden();
+      await expect(page.locator("#finish-keychain")).toBeHidden();
     } finally {
       await context.close();
       await store.close();

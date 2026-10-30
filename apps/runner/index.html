@@ -449,6 +449,10 @@
       #recover-keychain[hidden] { display: none; }
       #recover-keychain { margin-top: 8px; display: grid; gap: 6px; max-width: 320px; margin-inline: auto; }
       #recover-keychain input { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; }
+      #finish-keychain[hidden] { display: none; }
+      #finish-keychain { display: grid; gap: 6px; padding: 6px 16px; }
+      #finish-with-password { color: var(--accent); font-weight: 600; padding-inline: 0; }
+      #finish-keychain input { font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; }
       #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
       /* Out of sight and out of the tab order, but a real form a password manager reads (D298). */
       #keychain-offer { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
@@ -1445,6 +1449,17 @@
           menu's next opening once it is not.
         -->
         <button id="finish-recovering" type="button" hidden>Finish recovering</button>
+        <!--
+          The same, with the saved password (R-D as amended, D298), in the
+          row's place once no passkey answered the row: an owner who recovered
+          here with the saved password alone has no passkey to answer it. The
+          chooser's form, offered where the person is.
+        -->
+        <form id="finish-keychain" hidden>
+          <input id="finish-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
+          <input id="finish-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
+          <button id="finish-with-password" type="submit">Recover with the saved password</button>
+        </form>
         <button id="export" type="button">Save a copy…</button>
         <!--
           Modify this app (backlog 4.2).
