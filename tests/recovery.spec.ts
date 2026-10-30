@@ -49,14 +49,17 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       const uuid = await uuidOf(page);
       await enrollHere(page);
 
-      // 1. A, kept.
-      await typeNote(app, "A-kept-7Q");
-      await expect.poll(() => storedHolds(page, uuid, "A-kept-7Q"), { timeout: 30_000 }).toBe(true);
-      const a = await waitSettledKept(page, uuid);
+      // 1. A, kept, at two revisions that differ: a recovery that restores the head's parent is not A.
+      await typeNote(app, "A-7Q");
+      await expect.poll(() => storedHolds(page, uuid, "A-7Q"), { timeout: 30_000 }).toBe(true);
+      const earlier = await waitSettledKept(page, uuid);
+      await typeNote(app, "-kept");
+      await expect.poll(() => storedHolds(page, uuid, "A-7Q-kept"), { timeout: 30_000 }).toBe(true);
+      const a = await waitSettledKept(page, uuid, earlier.revision);
       // 2. The store cut off. 3. B, saved in this browser only.
       store.setMode("unavailable");
       await typeNote(app, " B-local-3X");
-      await expect.poll(() => storedHolds(page, uuid, "A-kept-7Q B-local-3X"), { timeout: 30_000 }).toBe(true);
+      await expect.poll(() => storedHolds(page, uuid, "A-7Q-kept B-local-3X"), { timeout: 30_000 }).toBe(true);
       await page.evaluate(() => (window as Any).__runner.flush());
       expect(await keptRecord(page, uuid), "B was never kept").toEqual(a);
       // 4. The browser's storage wiped; the store back.
@@ -75,7 +78,7 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
 
       // A exactly, identified by its time; nothing about B, and no count of anything.
       app = appIn(page);
-      await expect(app.locator("#note")).toHaveValue("A-kept-7Q", { timeout: 60_000 });
+      await expect(app.locator("#note")).toHaveValue("A-7Q-kept", { timeout: 60_000 });
       await expect(page.locator("#doc-note")).toHaveText(`Restored the copy kept at ${at}. ${SENTENCE_TAIL}`);
       const said = `${await page.locator("body").innerText()}`;
       expect(said).not.toContain("B-local-3X");
@@ -160,9 +163,6 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
     }
   });
 
-  test("with the store unreachable, recovery says so and presents nothing as recovered", async ({ browser, browserName }) => {
-    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
-    const store = await serveOwnerStore();
   test("a document kept many times is recovered from its head, the head's parent and its container's envelope, not every revision kept", async ({
     browser,
     browserName,
@@ -213,6 +213,9 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
     }
   });
 
+  test("with the store unreachable, recovery says so and presents nothing as recovered", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
     const context = await browser.newContext();
     try {
       const { page, provider } = await openerWithStore(context, store.base);
