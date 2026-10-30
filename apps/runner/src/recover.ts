@@ -38,10 +38,10 @@ import {
   type Unverified,
 } from "../../owner-store/src/envelope.js";
 import { admitAuthor, getEnvelope, headsOf, isRefused, isUnavailable, libraryOf } from "../../owner-store/src/client.js";
-import { keepInKeyStore } from "./opfs.js";
+import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
-import { announceOwnerChange, type DataKeyRecord, type OwnerRecord } from "./owner.js";
+import { announceOwnerChange, currentOwner, type DataKeyRecord, type OwnerRecord } from "./owner.js";
 import type { KeptRecord } from "./keeping.js";
 
 const PRF_INPUT = utf8("dai owner prf v1");
@@ -51,6 +51,8 @@ export interface Restored {
   title: string;
   /** The store's acknowledgment of the restored checkpoint, ISO 8601. */
   at: string;
+  /** Restored by an earlier recovery that the store cut short, and held here since: nothing of it was written this time. */
+  alreadyHere?: true;
 }
 
 /** What the opener writes into its library for one restored document, under that document's lock. */
@@ -63,8 +65,15 @@ export interface Install {
   revision: number;
 }
 
+/** What the opener lends recovery: a way to write one document into its library, and the title of one it holds already. */
+export interface Here {
+  install: (one: Install) => Promise<void>;
+  held: (documentUuid: string) => Promise<string | null>;
+}
+
 export type Recovered =
-  | { restored: Restored[]; refused: { documentUuid: string; why: Unverified | string }[] }
+  /** `unreached`: the store stopped answering after these, and the rest of the library was not reached. */
+  | { restored: Restored[]; refused: { documentUuid: string; why: Unverified | string }[]; unreached?: string }
   | { unavailable: string }
   | { cancelled: string }
   | { refused: string };
@@ -97,7 +106,7 @@ async function openOwnerKey(wrapped: string, secret: Uint8Array<ArrayBuffer>, pa
 }
 
 /** Recovers this owner's library from the store at `base`. Call it from the tap. */
-export function recover(base: string | undefined, install: (one: Install) => Promise<void>): Promise<Recovered> {
+export function recover(base: string | undefined, here: Here): Promise<Recovered> {
   if (!window.PublicKeyCredential || !navigator.credentials?.get) return Promise.resolve({ cancelled: "this browser has no passkeys" });
   const challenge = admitChallenge();
   // Reached before any await: the ceremony runs inside the tap.
@@ -117,7 +126,7 @@ export function recover(base: string | undefined, install: (one: Install) => Pro
       if (!secret) return { refused: "the passkey's provider gave no PRF output" };
       if (!base) return { unavailable: "no store is configured here" };
       const prf = bytesOf(secret);
-      return restore(base, install, {
+      return restore(base, here, {
         owner: b64u(bytesOf(response.userHandle)),
         proof: async () => ({
           kind: "passkey",
@@ -140,11 +149,11 @@ export function recover(base: string | undefined, install: (one: Install) => Pro
  * that opens the owner key's keychain wrap. A secret that is not the owner's
  * is refused by the store, and opens nothing here either.
  */
-export async function recoverWithKeychain(base: string | undefined, owner: string, secret: string, install: (one: Install) => Promise<void>): Promise<Recovered> {
+export async function recoverWithKeychain(base: string | undefined, owner: string, secret: string, here: Here): Promise<Recovered> {
   if (!owner || !secret) return { cancelled: "no saved password filled in" };
   if (!base) return { unavailable: "no store is configured here" };
   const bytes = utf8(secret);
-  return restore(base, install, {
+  return restore(base, here, {
     owner,
     proof: async (author) => {
       const challenge = `${admitChallenge()}:${author}`;
@@ -155,9 +164,18 @@ export async function recoverWithKeychain(base: string | undefined, owner: strin
   });
 }
 
+/*
+ * Each document is restored whole before the next begins: verified, then its
+ * data key and kept record, then its library record, which is what lists it.
+ * The owner is signed in before the first of these writes, so no state exists
+ * in which a restored document is held and its owner is not. A store that
+ * stops answering partway leaves the documents already restored, the owner
+ * signed in, and the record marked as recovering, so Recover stays offered
+ * and a second one brings the rest, passing over what is here already.
+ */
 async function restore(
   base: string,
-  install: (one: Install) => Promise<void>,
+  here: Here,
   asked: {
     owner: string;
     /** The proof Admit is given, for the author it admits. */
@@ -166,6 +184,8 @@ async function restore(
     open: (wraps: { prf: string; keychain: string }) => Promise<CryptoKey | string>;
   },
 ): Promise<Recovered> {
+  const signedIn = await currentOwner();
+  if (signedIn !== null && signedIn !== asked.owner) return { refused: "another owner is signed in here" };
   const me = await person();
   const author: Author = { privateKey: me.keys.privateKey, pub: me.pub, id: me.author };
   const admitted = await admitAuthor(base, author, asked.owner, await asked.proof(author.id));
@@ -177,39 +197,64 @@ async function restore(
   if (isUnavailable(library)) return { unavailable: library.unavailable };
   if (isRefused(library)) return { refused: library.refused };
 
+  // The owner's record, its key held non-extractable; marked recovering until every document was reached.
+  const signIn = async (recovering: boolean): Promise<void> => {
+    const record: OwnerRecord = {
+      owner: asked.owner,
+      credential: admitted.credential,
+      key: ownerKey,
+      wraps: { prf: fromB64u(admitted.wraps.prf), keychain: fromB64u(admitted.wraps.keychain) },
+      keychain: "not offered",
+      enrolled: new Date().toISOString(),
+      atStore: true,
+      ...(recovering ? { recovering: true } : {}),
+    };
+    await keepInKeyStore(ownerRecordKey(asked.owner), record);
+    await keepInKeyStore(KEYS.OWNER, asked.owner);
+    announceOwnerChange();
+  };
+  let writing = signedIn === asked.owner;
+  const beforeFirstWrite = async (): Promise<void> => {
+    if (writing) return;
+    await signIn(true);
+    writing = true;
+  };
+
   const enrolled = new Map(Object.entries(library.authors));
   const restored: Restored[] = [];
   const refused: { documentUuid: string; why: string }[] = [];
+  let unreached: string | undefined;
   for (const documentUuid of library.documents) {
-    const outcome = await restoreOne(base, install, author, asked.owner, documentUuid, ownerKey, enrolled);
-    if ("unavailable" in outcome) return { unavailable: outcome.unavailable };
+    const kept = await keptInKeyStore<KeptRecord>(keptKey(documentUuid));
+    const title = kept?.owner === asked.owner ? await here.held(documentUuid) : null;
+    if (kept && title !== null) {
+      restored.push({ documentUuid, title, at: kept.at, alreadyHere: true });
+      continue;
+    }
+    const outcome = await restoreOne(base, here.install, beforeFirstWrite, author, asked.owner, documentUuid, ownerKey, enrolled);
+    if ("unavailable" in outcome) {
+      unreached = outcome.unavailable;
+      break;
+    }
     if ("why" in outcome) {
       console.warn(`dai: ${documentUuid} not restored: ${outcome.why}`);
       refused.push({ documentUuid, why: outcome.why });
     } else if (outcome.restored) restored.push(outcome.restored);
   }
+  // Nothing written: nobody is signed in on nothing.
+  if (unreached !== undefined && !writing) return { unavailable: unreached };
 
-  // Signed in only once there is something true to show: the owner's record, its key held non-extractable.
-  const record: OwnerRecord = {
-    owner: asked.owner,
-    credential: admitted.credential,
-    key: ownerKey,
-    wraps: { prf: fromB64u(admitted.wraps.prf), keychain: fromB64u(admitted.wraps.keychain) },
-    keychain: "not offered",
-    enrolled: new Date().toISOString(),
-    atStore: true,
-  };
-  await keepInKeyStore(ownerRecordKey(asked.owner), record);
-  await keepInKeyStore(KEYS.OWNER, asked.owner);
-  announceOwnerChange();
-  console.info(`dai: recovered owner ${asked.owner}: ${restored.length} restored, ${refused.length} refused`);
-  return { restored, refused };
+  // Signed in only once there is something true to show.
+  await signIn(unreached !== undefined);
+  console.info(`dai: recovered owner ${asked.owner}: ${restored.length} restored, ${refused.length} refused${unreached ? `, the rest unreached: ${unreached}` : ""}`);
+  return { restored, refused, ...(unreached !== undefined ? { unreached } : {}) };
 }
 
 /** One document: its newest head, verified back to the root, installed at that revision. */
 async function restoreOne(
   base: string,
   install: (one: Install) => Promise<void>,
+  beforeFirstWrite: () => Promise<void>,
   author: Author,
   owner: string,
   documentUuid: string,
@@ -269,14 +314,8 @@ async function restoreOne(
   const cartridge = await readCartridge(new File([container], `${top.inside.title}.dai.html`, { type: "text/html" }));
   if (cartridge.manifest.documentUuid !== documentUuid) return { why: "document" };
   const resealed = await resealCartridge(cartridge, top.database);
-  await install({
-    documentUuid,
-    title: top.inside.title,
-    database: top.database,
-    html: resealed.html,
-    publicKeyFingerprint: resealed.publicKeyFingerprint,
-    revision: top.inside.checkpoint.revision,
-  });
+  // Verified and ready: the owner first, then the key and the kept record, then the library record that lists it.
+  await beforeFirstWrite();
   await keepInKeyStore(dataKeyKey(documentUuid), { key: dataKey, owner, wrapped: fromB64u(heads.key), atStore: true } satisfies DataKeyRecord);
   await keepInKeyStore(keptKey(documentUuid), {
     owner,
@@ -287,5 +326,13 @@ async function restoreOne(
     at: head.at,
     as: "head",
   } satisfies KeptRecord);
+  await install({
+    documentUuid,
+    title: top.inside.title,
+    database: top.database,
+    html: resealed.html,
+    publicKeyFingerprint: resealed.publicKeyFingerprint,
+    revision: top.inside.checkpoint.revision,
+  });
   return { restored: { documentUuid, title: top.inside.title, at: head.at } };
 }

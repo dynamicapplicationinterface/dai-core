@@ -88,9 +88,9 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
-import { recover, recoverWithKeychain, type Install, type Recovered } from "./recover.js";
+import { recover, recoverWithKeychain, type Here, type Install, type Recovered } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -4001,6 +4001,11 @@ function installRestored(one: Install): Promise<void> {
     });
   });
 }
+/** What recovery may write here, and what it finds here already. */
+const recoveryHere: Here = {
+  install: installRestored,
+  held: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.appName ?? null,
+};
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
 /** Documents recovered on this page, not yet opened: the store's time for each. */
 const restoredNotes = new Map<string, string>();
@@ -4010,7 +4015,9 @@ function restoredSentence(at: string): string {
 }
 const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
 async function showRecover(): Promise<void> {
-  const hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+  // Offered with nobody signed in, and to an owner whose recovery the store cut short.
+  const owner = await currentOwner().catch(() => null);
+  const hidden = !storeBase() || (owner !== null && !(await ownerRecord(owner).catch(() => null))?.recovering);
   if (recoverButton) recoverButton.hidden = hidden;
   if (recoverKeychain) recoverKeychain.hidden = hidden;
 }
@@ -4024,7 +4031,7 @@ const RECOVERY_WORDS = {
 } as const;
 recoverButton?.addEventListener("click", () => {
   // The ceremony first, inside the tap.
-  const recovering = recover(storeBase(), installRestored);
+  const recovering = recover(storeBase(), recoveryHere);
   say("");
   void recovering.then((outcome) => showRecovered(outcome, "passkey"));
 });
@@ -4038,8 +4045,12 @@ recoverKeychain?.addEventListener("submit", (event) => {
   const owner = (document.getElementById("recover-owner") as HTMLInputElement | null)?.value.trim() ?? "";
   const secret = (document.getElementById("recover-secret") as HTMLInputElement | null)?.value ?? "";
   say("");
-  void recoverWithKeychain(storeBase(), owner, secret, installRestored).then((outcome) => showRecovered(outcome, "keychain"));
+  void recoverWithKeychain(storeBase(), owner, secret, recoveryHere).then((outcome) => showRecovered(outcome, "keychain"));
 });
+/** Titles as a sentence names them: "A", "A and B", "A, B, and C". */
+function namesOf(titles: readonly string[]): string {
+  return titles.length <= 2 ? titles.join(" and ") : `${titles.slice(0, -1).join(", ")}, and ${titles[titles.length - 1]}`;
+}
 function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
   // A refused password leaves nothing in the field to fill again by mistake.
   if (path === "keychain" && !("restored" in outcome)) {
@@ -4061,7 +4072,8 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): v
     say(RECOVERY_WORDS[path].refused, true);
   } else if ("restored" in outcome) {
     for (const one of outcome.restored) {
-      restoredNotes.set(one.documentUuid, one.at);
+      // One held here since an earlier recovery may have changed since: no sentence about where it came from.
+      if (!one.alreadyHere) restoredNotes.set(one.documentUuid, one.at);
       const row = document.createElement("li");
       const open = document.createElement("button");
       open.type = "button";
@@ -4078,14 +4090,22 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): v
     }
     if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
     const unverified = outcome.refused.length;
-    say(
-      outcome.restored.length === 0 && unverified === 0
-        ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
-        : unverified > 0
-          ? "A kept copy could not be verified, so it was not restored."
-          : "",
-      unverified > 0,
-    );
+    if (outcome.unreached !== undefined) {
+      console.info(`dai: recovery cut short: ${outcome.unreached}`);
+      say(
+        `Restored ${namesOf(outcome.restored.map((one) => one.title))}. ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        true,
+      );
+    } else {
+      say(
+        outcome.restored.length === 0 && unverified === 0
+          ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
+          : unverified > 0
+            ? "A kept copy could not be verified, so it was not restored."
+            : "",
+        unverified > 0,
+      );
+    }
   }
   void showRecover();
 }

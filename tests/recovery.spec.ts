@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type CDPSession, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, appIn, buildNotes, openFile, storedHolds, typeNote, uuidOf } from "./owner.js";
+import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf } from "./owner.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keptRecord, openerWithStore, waitSettledKept } from "./keeping.js";
 
@@ -84,6 +84,76 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await expect.poll(async () => (await keptRecord(page, uuid))?.owner, { timeout: 30_000 }).toBe(a.owner);
       expect((await keptRecord(page, uuid))!.revision).toBeGreaterThanOrEqual(a.revision);
       await expect(page.locator("#save-state")).toHaveText("Kept", { timeout: 30_000 });
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("the store drops out at the second document: the first is restored whole, its owner signed in, and the sentence says what came back", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, provider } = await openerWithStore(context, store.base);
+      const scratch = mkdtempSync(join(tmpdir(), "dai-recover-"));
+      const files = { First: await buildNotes(scratch, "First"), Second: await buildNotes(scratch, "Second") };
+      const ids: Record<string, string> = {};
+      let owner = "";
+      for (const [title, file] of Object.entries(files)) {
+        const app = await openFile(page, file);
+        ids[title] = await uuidOf(page);
+        if (!owner) owner = await enrollHere(page);
+        await typeNote(app, `${title}-text`);
+        await expect.poll(() => storedHolds(page, ids[title]!, `${title}-text`), { timeout: 30_000 }).toBe(true);
+        await waitSettledKept(page, ids[title]!);
+      }
+
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      // The library lists documents sorted: the store stops answering at the second's heads.
+      const [first, second] = Object.keys(ids).sort((x, y) => (ids[x]! < ids[y]! ? -1 : 1)) as [string, string];
+      let cut = false;
+      await context.route(`${store.base}/**`, async (route) => {
+        if (route.request().url().includes(`/${ids[second]}/heads`)) cut = true;
+        return cut ? route.abort("connectionrefused") : route.continue();
+      });
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 30_000 },
+      );
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toBeVisible();
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "signed in as the owner it restored for").toBe(owner);
+      // The first, whole: in the library, its data key under the owner, its kept record.
+      const listed = ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid);
+      expect(listed).toEqual([ids[first]]);
+      expect((await keptRecord(page, ids[first]!))?.owner).toBe(owner);
+      expect(await storedHolds(page, ids[first]!, `${first}-text`)).toBe(true);
+
+      // Another page of this browser: Recover is still offered there, so what offers it is held here, not in the page;
+      // and the person's own file of the restored document opens: nothing refuses it as another owner's.
+      await context.unroute(`${store.base}/**`);
+      await pointAtStore(context, store.base);
+      const other = await context.newPage();
+      await other.goto(RUNNER_URL);
+      await expect(other.locator("#recover")).toBeVisible();
+      await other.setInputFiles("#file", files[first as keyof typeof files]);
+      await other.locator("#card-open").click({ timeout: 30_000 });
+      await expect.poll(() => other.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
+      expect(await other.locator("body").innerText()).not.toContain("belongs to another owner");
+
+      // Recover again, the store back: the rest comes back, and what is here stays.
+      await page.locator("#recover").click();
+      await expect(page.locator("#recovered li")).toHaveCount(2, { timeout: 30_000 });
+      await expect(page.locator("#report")).toHaveText("");
+      expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
+      expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
+      await expect(page.locator("#recover")).toBeHidden();
     } finally {
       await context.close();
       await store.close();

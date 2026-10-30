@@ -276,6 +276,13 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   sentence, with Save a copy offered (P3).
 - **Recovery unavailable:** the host says so, and never presents an empty
   document as recovered (R-Z item 5).
+- **Recovery cut short:** each document is restored whole, its data key
+  and kept record before the library record that lists it, and the owner is
+  signed in before the first is written, so a restored document never
+  refuses its own owner. A store that stops answering partway leaves the
+  documents restored listed, and the sentence names them and says the rest
+  could not be reached. Recover stays offered to that owner, and a second
+  recovery restores the rest, passing over what is held here already.
 - **A kept copy that does not verify:** refused, not restored, and said in
   one sentence (R-C, above).
 

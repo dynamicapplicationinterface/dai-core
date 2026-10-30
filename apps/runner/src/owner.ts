@@ -55,6 +55,8 @@ export interface OwnerRecord {
   verifier?: string;
   /** Whether the store has this owner: enrolled there, or recovered from it. */
   atStore?: boolean;
+  /** A recovery the store cut short: some of the owner's documents were not reached, and Recover stays offered. */
+  recovering?: boolean;
 }
 
 /** A document's data key, and the owner it is wrapped under once it is. */
