@@ -25,7 +25,7 @@ export const CORS: Record<string, string> = {
 export function objectName(pathname: string): string | null {
   const owner = /^\/o\/([A-Za-z0-9_-]{1,64})\/(?:enroll|admit|library)$/.exec(pathname);
   if (owner) return `o:${owner[1]}`;
-  const document = /^\/d\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,64})\/(?:key|append|heads|e\/[A-Za-z0-9_-]{43})$/.exec(pathname);
+  const document = /^\/d\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,64})\/(?:key|append|heads|(?:e|c)\/[A-Za-z0-9_-]{43})$/.exec(pathname);
   if (document) return `d:${document[1]}:${document[2]}`;
   return null;
 }

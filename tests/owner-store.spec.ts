@@ -20,6 +20,7 @@ import {
 import {
   admitAuthor,
   appendEnvelope,
+  chainOf,
   enrollOwner,
   getEnvelope,
   headsOf,
@@ -27,6 +28,7 @@ import {
   libraryOf,
   putKey,
   type Ack,
+  type Link,
   type Proof,
 } from "../apps/owner-store/src/client.js";
 import { deployedStore, serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
@@ -187,6 +189,46 @@ test("a second append on the same parent is refused as the head, and kept when a
 
   const got = await getEnvelope(store.base, o.first, o.owner, d.document, root.digest);
   expect(got && "bytes" in got && (await digestOf(got.bytes))).toBe(root.digest);
+});
+
+/*
+ * Chain (2b2-M4): the log from an envelope back to the root, as the store
+ * holds it, with no bytes. Through the Worker's own routing, as every request
+ * reaches the store: a route the Worker does not know is 404 "no such
+ * operation", which is what the opener takes for a store with no Chain and
+ * walks the envelopes instead, fetching more than it needs.
+ */
+test("Chain answers an envelope and every one before it as the log holds them, no bytes, to an enrolled author only", async () => {
+  const o = await newOwner(store);
+  const d = await newDocument(store, o, o.first);
+  const root = await envelope(o, d, o.first, []);
+  ack(await appendEnvelope(store.base, o.first, o.owner, d.document, root.bytes, "head"));
+  const next = await envelope(o, d, o.first, [root.digest]);
+  ack(await appendEnvelope(store.base, o.first, o.owner, d.document, next.bytes, "head"));
+  const other = await envelope(o, d, o.first, [root.digest]);
+  ack(await appendEnvelope(store.base, o.first, o.owner, d.document, other.bytes, "branch"));
+  const merged = await envelope(o, d, o.first, [next.digest, other.digest]);
+  ack(await appendEnvelope(store.base, o.first, o.owner, d.document, merged.bytes, "head"));
+
+  // From the head: all four, each with its parents, its author and the time the store acknowledged it, and nothing else.
+  const answer = await chainOf(store.base, o.first, o.owner, d.document, merged.digest);
+  expect(isRefused(answer), `the chain, not ${JSON.stringify(answer)}`).toBe(false);
+  const chain = (answer as { chain: Link[] }).chain;
+  expect(chain.map((link) => link.digest).sort()).toEqual([root.digest, next.digest, other.digest, merged.digest].sort());
+  expect(chain.find((link) => link.digest === merged.digest)).toMatchObject({ parents: [next.digest, other.digest], author: o.first.id });
+  expect(chain.find((link) => link.digest === root.digest)).toMatchObject({ parents: [], author: o.first.id });
+  for (const link of chain) {
+    expect(Object.keys(link).sort()).toEqual(["at", "author", "digest", "parents"]);
+    expect(Date.parse(link.at), `a time: ${link.at}`).not.toBeNaN();
+  }
+
+  // From an envelope up the chain: only what is before it.
+  const fromNext = await chainOf(store.base, o.first, o.owner, d.document, next.digest);
+  expect((fromNext as { chain: Link[] }).chain.map((link) => link.digest).sort()).toEqual([root.digest, next.digest].sort());
+
+  // An envelope the store does not hold; an author not enrolled under this owner.
+  expect(await chainOf(store.base, o.first, o.owner, d.document, "x".repeat(43))).toEqual({ refused: "no such envelope" });
+  expect(await chainOf(store.base, await newAuthor(), o.owner, d.document, merged.digest)).toEqual({ refused: "author not enrolled" });
 });
 
 test("an append whose signature, author enrollment or parent link fails is refused", async () => {

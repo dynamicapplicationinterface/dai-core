@@ -184,23 +184,37 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       expect(appended.length, "kept many times").toBeGreaterThanOrEqual(6);
       const size = new Map(appended.map((o) => [o.key.split("/").pop()!, o.bytes.length]));
 
-      const recoverAndCount = async (): Promise<{ gets: number; bytes: number }> => {
+      const recoverAndCount = async (): Promise<{ gets: number; bytes: number; chains: number }> => {
         await wipe(page, provider.cdp);
         await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
         const from = store.received().length;
         await page.locator("#recover").click();
         await expect(page.locator(`#recovered button[data-document="${uuid}"]`)).toBeVisible({ timeout: 30_000 });
         expect(await storedHolds(page, uuid, text), "the head, exactly").toBe(true);
-        const gets = store.received().slice(from).filter((r) => r.method === "GET" && r.url.includes(`/d/`) && r.url.includes("/e/"));
-        return { gets: gets.length, bytes: gets.reduce((sum, r) => sum + (size.get(r.url.split("/e/")[1]!.split("?")[0]!) ?? 0), 0) };
+        const asked = store.received().slice(from).filter((r) => r.method === "GET" && r.url.includes(`/d/`));
+        const gets = asked.filter((r) => r.url.includes("/e/"));
+        return {
+          gets: gets.length,
+          bytes: gets.reduce((sum, r) => sum + (size.get(r.url.split("/e/")[1]!.split("?")[0]!) ?? 0), 0),
+          chains: asked.filter((r) => r.url.includes("/c/")).length,
+        };
       };
 
+      // What the store answered Chain with: the opener asks it either way, and takes a 404 for a store with no Chain.
+      const chainAnswers: number[] = [];
+      store.rewrite((path, answer) => {
+        if (/\/c\/[A-Za-z0-9_-]{43}$/.test(path)) chainAnswers.push(answer.status);
+        return answer;
+      });
       const now = await recoverAndCount();
       const largest = Math.max(...size.values());
       const later = [...size.values()].filter((n) => n !== largest);
       console.log(`recovery after ${appended.length} kept: ${now.gets} envelopes, ${now.bytes} bytes (all kept: ${[...size.values()].reduce((a, b) => a + b, 0)} bytes)`);
       expect(now.gets, "the head, its parent, the container's envelope").toBeLessThanOrEqual(3);
       expect(now.bytes).toBeLessThanOrEqual(largest + 2 * Math.max(...later));
+      // The chain was read from the store, not walked: a walk fetches the same three here, so the count alone cannot tell them apart.
+      expect(now.chains, "Chain asked").toBe(1);
+      expect(chainAnswers, "and answered").toEqual([200]);
 
       // A store with no Chain yet: the envelopes are the chain, and the document still comes back.
       store.rewrite((path, answer) => (/\/c\/[A-Za-z0-9_-]{43}$/.test(path) ? new Response(JSON.stringify({ refused: "no such operation" }), { status: 404, headers: answer.headers }) : answer));
