@@ -5,7 +5,7 @@ import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { buildNotes, openFile, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
-import { enrollHere, openerWithStore, waitSettledKept } from "./keeping.js";
+import { enrollHere, keptRecord, openerWithStore, putInKeyStore, waitSettledKept, type KeptRecord } from "./keeping.js";
 import { watchKeychain, wipe } from "./keychain.js";
 import {
   admitChallenge,
@@ -67,6 +67,62 @@ async function twoKeptThenWiped(context: BrowserContext, store: ServedStore) {
   await wipe(page, provider.cdp);
   await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
   return { page, uuid, owner, head, appended, dataKey, secret: handed[0]!.secret };
+}
+
+/**
+ * Keeps four revisions, A to D, the third carrying the release's container
+ * again (its kept record before it stood up as one from before `containerIn`,
+ * which carries the container once more), then wipes the browser. So
+ * recovering D fetches D and C alone: the root and B are links of Chain the
+ * opener never opens, and what Chain says of them is held by Chain's own
+ * checks or by nothing (2b2f-L2).
+ */
+async function fourKeptThenWiped(context: BrowserContext, store: ServedStore) {
+  const { page, provider } = await openerWithStore(context, store.base);
+  const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-verify-")), "Notes"));
+  const uuid = await uuidOf(page);
+  const owner = await enrollHere(page);
+  let text = "";
+  let after = 0;
+  const keep = async (more: string): Promise<KeptRecord> => {
+    await typeNote(app, more);
+    text += more;
+    await expect.poll(() => storedHolds(page, uuid, text), { timeout: 30_000 }).toBe(true);
+    const kept = await waitSettledKept(page, uuid, after);
+    after = kept.revision;
+    return kept;
+  };
+  await keep("A");
+  await keep("B");
+  const record = await keptRecord(page, uuid);
+  await putInKeyStore(page, `dai:kept:${uuid}`, { ...record, containerIn: undefined });
+  const c = await keep("C");
+  const head = await keep("D");
+  const dataKey = await withKeyStore<number[]>(page, `return [...new Uint8Array(await crypto.subtle.exportKey("raw", (await get("dai:data-key:" + arg)).key))];`, uuid);
+  const appended = store
+    .received()
+    .filter((r) => r.method === "POST" && r.url.includes(`/d/${owner}/${uuid}/append`))
+    .map((r) => new Uint8Array(r.body));
+  const links = await chainOfAppended(appended, head.at);
+  const byDigest = new Map(links.map((link) => [link.digest, link]));
+  expect(byDigest.get(head.digest)?.parents, "D's parent is C").toEqual([c.digest]);
+  const b = byDigest.get(c.digest)!.parents[0]!;
+  const root = links.find((link) => link.parents.length === 0)!.digest;
+  expect([b, root].includes(head.digest) || [b, root].includes(c.digest), "the root and B are neither D nor C").toBe(false);
+  const key = await crypto.subtle.importKey("raw", new Uint8Array(dataKey), "AES-GCM", true, ["encrypt", "decrypt"]);
+  expect((await openEnvelope(await appendedAs(appended, c.digest), key)).inside.container, "C carries the container").toBeDefined();
+  await wipe(page, provider.cdp);
+  await page.evaluate((x) => (window as Any).__runner.useStore(x), store.base);
+  return { page, uuid, head, b, root };
+}
+
+/** Chain for D, as the store answers it, with `change` made to it: what a store that does not answer truly says of its log. */
+function chainChanged(store: ServedStore, uuid: string, head: string, change: (chain: { digest: string; parents: string[]; author: string; at: string }[]) => unknown[]): void {
+  store.rewrite(async (path, answer) => {
+    if (!path.endsWith(`/${uuid}/c/${head}`)) return answer;
+    const held = (await answer.json()) as { chain: { digest: string; parents: string[]; author: string; at: string }[] };
+    return new Response(JSON.stringify({ chain: change(held.chain) }), { headers: like(answer, { "content-type": "application/json" }) });
+  });
 }
 
 /** The bytes the store holds for a digest, as the opener appended them. */
@@ -184,6 +240,74 @@ test.describe("every kept revision verifies on restore (R-C; Build 2b-2b item 8)
         return new Response(JSON.stringify({ ...held, authors }), { headers: like(answer, { "content-type": "application/json" }) });
       });
       await refusedOnRecover(page, uuid, "author-not-enrolled");
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * Chain's four checks, one test each (2b2f-L2, Build 2b-2fr item 5). Chain
+   * is the store's own unsigned account of the log, so each lie here is one a
+   * store that does not answer truly can tell, and each test is made so that
+   * only its own check can refuse it: the lie is about a link the opener never
+   * opens (the root, or B), or, for the check that holds each opened envelope
+   * to Chain, about D in a way the other three accept.
+   */
+  test("Chain with no root, every parent on it: refused by the root check alone", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, uuid, head, b, root } = await fourKeptThenWiped(context, store);
+      // The root made B's child, B being on the chain: a loop with no root, every parent present, every author enrolled.
+      chainChanged(store, uuid, head.digest, (chain) => chain.map((link) => (link.digest === root ? { ...link, parents: [b] } : link)));
+      await refusedOnRecover(page, uuid, "parent-chain");
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("Chain naming a parent it does not hold, above the head's parents: refused by the parents check alone", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, uuid, head, b } = await fourKeptThenWiped(context, store);
+      const nowhere = "Z".repeat(43);
+      chainChanged(store, uuid, head.digest, (chain) => chain.map((link) => (link.digest === b ? { ...link, parents: [...link.parents, nowhere] } : link)));
+      await refusedOnRecover(page, uuid, "parent-chain");
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("Chain naming an author not enrolled on a link the opener does not open: refused by the authors check alone", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, uuid, head, b } = await fourKeptThenWiped(context, store);
+      const stranger = "S".repeat(43);
+      chainChanged(store, uuid, head.digest, (chain) => chain.map((link) => (link.digest === b ? { ...link, author: stranger } : link)));
+      await refusedOnRecover(page, uuid, "author-not-enrolled");
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("Chain saying of the head other than its envelope says: refused by holding each envelope to Chain alone", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, uuid, head } = await fourKeptThenWiped(context, store);
+      // D named a root: a chain with roots, every parent present, every author enrolled; only D's envelope, which names C, disagrees.
+      chainChanged(store, uuid, head.digest, (chain) => chain.map((link) => (link.digest === head.digest ? { ...link, parents: [] } : link)));
+      await refusedOnRecover(page, uuid, "parent-chain");
     } finally {
       await context.close();
       await store.close();
