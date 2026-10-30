@@ -205,6 +205,43 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     expect(await offer(page).evaluate((el) => [el.closest("header") !== null, el.closest("[aria-modal='true']")])).toEqual([true, null]);
   });
 
+  test("the offer made while the menu is open adds nothing to it: a row measured, 400 ms, then tapped, is the row the tap lands on", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const file = await buildNotes(scratch, "Notes");
+    await pointAtStore(page.context(), store.base);
+    await page.goto(RUNNER_URL);
+    const app = await openFile(page, file);
+    await expect(offer(page)).toHaveCount(0);
+
+    // The menu open first, its rows measured, as Playwright and a person both do before a tap.
+    await page.locator("#more").click();
+    const send = page.locator("#send");
+    await expect(send).toBeVisible();
+    await expect.poll(() => page.locator("#sheet .sheet-panel").evaluate((el) => el.getAnimations().length)).toBe(0);
+    const box = (await send.boundingBox())!;
+    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+    const rowsBefore = await page.locator("#sheet .sheet-panel > button:visible").evaluateAll((rows) => rows.map((row) => row.id));
+
+    // Then the person's first change lands under the open menu, and the offer is decided.
+    await app.locator("#note").focus();
+    await app.locator("#note").pressSequentially("a change");
+    await decidedForEverySave(page);
+    await expect(offer(page)).toBeVisible();
+    await page.waitForTimeout(400);
+
+    expect(await page.locator("#sheet .sheet-panel > button:visible").evaluateAll((rows) => rows.map((row) => row.id)), "the open menu's rows").toEqual(rowsBefore);
+    expect(await page.evaluate(([px, py]) => document.elementFromPoint(px!, py!)?.closest("button")?.id ?? null, [x, y]), "under the tap").toBe("send");
+    await page.mouse.click(x, y);
+    await expect(page.locator("#send-go")).toBeVisible();
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+
+    // Closed by that tap, the menu takes the offer's rows for its next opening.
+    await expect(page.locator("#sheet")).toBeHidden();
+    await expect(page.locator("#keep-not-now")).not.toHaveAttribute("hidden");
+    await expect(page.locator("#keep-beyond")).not.toHaveAttribute("hidden");
+    await expect(page.locator("body")).toHaveClass(/\bkeep-offer\b/);
+  });
+
   test("after Not now, a second document in the same browser context shows no invitation, and the offer stays in the menu", async ({ browser }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const first = await buildNotes(scratch, "First");

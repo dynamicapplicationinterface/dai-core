@@ -43,7 +43,7 @@ import { loadAt } from "./navigate.js";
 import { groundKey as groundStorageKey, installAskedKey, KEYS } from "../../../src/keys.js";
 import { HINT_KEY } from "../../../src/link.js";
 import { platform, standalone } from "./platform.js";
-import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
+import { closeSheet as slideClose, openSheet as slideOpen, whileClosed } from "./sheet.js";
 
 /** What Chrome hands over, and which is not in the DOM typings. */
 interface InstallEvent extends Event {
@@ -721,6 +721,8 @@ export function watchForInstall(): Keeper | null {
   const sheetSteps = document.getElementById("keep-steps");
   const sheetBackup = document.getElementById("keep-backup");
   const done = document.getElementById("keep-done");
+  // The document's menu, where the action is a row: nothing is added to it while it is open (sheet.ts).
+  const menu = document.getElementById("sheet");
   if (!cta || !label || !titleIcon || !sheet || !sheetIcon || !sheetTitle || !sheetSub || !sheetSteps || !done) return null;
 
   let saved: InstallEvent | null = null;
@@ -837,7 +839,10 @@ export function watchForInstall(): Keeper | null {
       if (asked !== identity.uuid) closeSheet();
       label.textContent = ctaLabel(Boolean(saved));
       // Already an app on this device: nothing to add.
-      cta.hidden = standalone();
+      const app = standalone();
+      whileClosed(menu, "keep-cta", () => {
+        cta.hidden = app;
+      });
       const icon = faviconUrl(identity.favicon);
       titleIcon.hidden = !icon;
       if (icon) titleIcon.src = icon;
@@ -863,7 +868,9 @@ export function watchForInstall(): Keeper | null {
     clear() {
       forget();
       current = null;
-      cta.hidden = true;
+      whileClosed(menu, "keep-cta", () => {
+        cta.hidden = true;
+      });
       cta.classList.remove("nudge");
       titleIcon.hidden = true;
       closeSheet();

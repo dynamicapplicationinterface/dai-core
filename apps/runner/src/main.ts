@@ -54,7 +54,7 @@ import {
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { installShareStorage, installStorageIsRead, platform, standalone } from "./platform.js";
 import { askForSuccessor, checkIsDue, type Successor } from "./version-check.js";
-import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
+import { closeSheet as slideClose, hideSheet, openSheet as slideOpen, whileClosed } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
@@ -1292,7 +1292,7 @@ function eject(): void {
   keeper?.clear();
   hideCard();
   describeSelf();
-  sheet.hidden = true;
+  hideSheet(sheet);
   title.textContent = "";
   say("");
   fileInput.value = "";
@@ -3794,22 +3794,23 @@ const closeSheet = (): void => {
 };
 
 openButton.addEventListener("click", () => fileInput.click());
-function openMenu(): void {
-  void showKeepBeyond();
+// Its rows settled first: nothing is added to an open menu (sheet.ts).
+async function openMenu(): Promise<void> {
+  await showKeepBeyond();
   slideOpen(sheet);
   // Checked here, on menu open, and never at load: the offline-open guarantee is
   // that a held document asks the network for nothing (T1 note in showVersion).
   void checkForUpdate();
 }
-moreButton.addEventListener("click", openMenu);
+moreButton.addEventListener("click", () => void openMenu());
 document.getElementById("doc-note")?.addEventListener("click", (event) => {
   (event.currentTarget as HTMLElement).hidden = true;
 });
 document.getElementById("save-state")?.addEventListener("click", (event) => {
   const el = event.currentTarget as HTMLElement;
-  if (el.dataset.state === "failed") slideOpen(sheet);
+  if (el.dataset.state === "failed") void openMenu();
   // The offer's first tap: the menu, whose first rows answer it. Nothing starts here.
-  else if (el.dataset.offer !== undefined) openMenu();
+  else if (el.dataset.offer !== undefined) void openMenu();
 });
 // Anywhere off the panel dismisses it, which is what a sheet does everywhere
 // else on a phone.
@@ -3852,7 +3853,10 @@ const NOT_ENROLLED: Record<NotEnrolled, string> = {
  * Recover is not.
  */
 async function showKeepBeyond(): Promise<void> {
-  if (keepBeyond) keepBeyond.hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+  const hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+  whileClosed(sheet, "keep-beyond", () => {
+    if (keepBeyond) keepBeyond.hidden = hidden;
+  });
 }
 /**
  * The keychain secret, offered by a form submission (D298): where the browser
@@ -3924,9 +3928,12 @@ void showKeepBeyond();
  */
 function setKeepOffering(on: boolean): void {
   keepOffering = on;
-  document.body.classList.toggle("keep-offer", on);
-  const notNow = document.getElementById("keep-not-now");
-  if (notNow) notNow.hidden = !on;
+  // The pill now; the menu's rows when it is next closed.
+  whileClosed(sheet, "keep-offer", () => {
+    document.body.classList.toggle("keep-offer", on);
+    const notNow = document.getElementById("keep-not-now");
+    if (notNow) notNow.hidden = !on;
+  });
   showStorage();
 }
 let keepOfferDecided = 0;
