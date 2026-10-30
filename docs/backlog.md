@@ -11934,8 +11934,8 @@ append of either is a head, and Recover restores both changes.
 
 #### D302 — An engine with PRF and no Ed25519 enrolls an owner the store never registers
 
-*Status: open, owed a ruling. Filed 30 October (Build 2b-2f item 4), from
-Build 2b-2b's open list.*
+*Status: ruled 30 October — not built. Filed 30 October (Build 2b-2f item
+4), from Build 2b-2b's open list.*
 
 Enrollment derives the keychain path's verifier with Ed25519
 (`keychainVerifier`, `apps/owner-store/src/envelope.ts`; docs/store.md, "The
@@ -11947,8 +11947,9 @@ store's registration happens later, before the first save is kept
 (`keeping.ts`, "The owner, once"), and that step refuses an owner record
 with no verifier: "this owner was enrolled before the store's registration
 was kept". So the owner is never enrolled at the store, every save of
-theirs is refused there, nothing is ever kept, and the keychain secret was
-offered to a password manager for an owner no store holds. Since Build
+theirs is refused by the host before any request reaches the store (the
+store never hears of the owner), nothing is ever kept, and the keychain
+secret was offered to a password manager for an owner no store holds. Since Build
 2b-2r item 4 (2b2-M3) the opener says it, over the document: "The store
 would not keep this document beyond this browser. It is still saved here;
 to keep a copy elsewhere, use "Save a copy…"." The sentence is right and
@@ -11975,6 +11976,21 @@ this browser" either refuses with that sentence and makes no passkey and no
 owner record, or enrolls an owner the store lists and whose next save is
 "Kept"; in neither case is a signed-in owner left whose every save is
 refused.
+
+**Ruled 30 October.** The opener carries an Ed25519 implementation for an
+engine whose WebCrypto lacks it, and uses it only then. The verifier is
+derived from the same seed and the same challenge is signed, so the wire,
+docs/store.md and the Python reader are unchanged: no new protocol surface
+(R-P), and both recovery paths stay (R-D as amended). Enrollment never
+leaves a signed-in owner the store cannot register: if the verifier cannot
+be derived at all, enrollment refuses before the passkey is made, with a
+sentence of the no-prf family, and the offer stays. An owner record kept
+without the store's registration is not a dead end: registration is retried
+before the first save and said if it fails. "Recover with the saved
+password" uses the same implementation. Red test: on Chromium with Ed25519
+removed from crypto.subtle before the opener loads, "Keep beyond this
+browser" enrolls an owner the store lists, the next save is "Kept", and
+after a wipe "Recover with the saved password" restores the document.
 
 ### Branch review residue (filed 8 October)
 
