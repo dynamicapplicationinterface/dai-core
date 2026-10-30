@@ -8,6 +8,7 @@ import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, pointAtStore, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
+import { putInKeyStore } from "./keeping.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -240,6 +241,64 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await expect(page.locator("#keep-not-now")).not.toHaveAttribute("hidden");
     await expect(page.locator("#keep-beyond")).not.toHaveAttribute("hidden");
     await expect(page.locator("body")).toHaveClass(/\bkeep-offer\b/);
+  });
+
+  /*
+   * 2b2f-M3 (Build 2b-2fr item 4): "Finish recovering" goes through
+   * `whileClosed` as the offer's rows do (2b2-H1). The recovering mark changed
+   * under the open menu, in either direction, moves no row; the change lands
+   * from the menu's next opening. No passkey is needed: the owner and the mark
+   * are stood up in the key store as the opener keeps them, and the change is
+   * announced as another page of this browser announces it.
+   */
+  test("the recovering mark changed under the open menu moves no row: Finish recovering comes and goes from the menu's next opening", async ({ page }) => {
+    const rows = (): Promise<string[]> =>
+      page.locator("#sheet .sheet-panel > button:visible").evaluateAll((list) => list.map((row) => `${row.id}@${Math.round(row.getBoundingClientRect().top)}`));
+    const openMenu = async (): Promise<string[]> => {
+      await page.locator("#more").click();
+      await expect(page.locator("#sheet")).toBeVisible();
+      await expect.poll(() => page.locator("#sheet .sheet-panel").evaluate((el) => el.getAnimations().length)).toBe(0);
+      return rows();
+    };
+    const closeMenu = async (): Promise<void> => {
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#sheet")).toBeHidden();
+    };
+    const owner = "rows-owner-0000000000000";
+    const mark = async (recovering: boolean): Promise<void> => {
+      await putInKeyStore(page, `dai:owner:${owner}`, recovering ? { owner, recovering: true } : { owner });
+      await page.evaluate(() => new BroadcastChannel("dai:owner").postMessage("changed"));
+    };
+
+    await pointAtStore(page.context(), store.base);
+    await page.goto(RUNNER_URL);
+    await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-rows-")), "Notes"));
+    await putInKeyStore(page, "dai:owner", owner);
+    await mark(true);
+
+    // The mark on: the row is in the menu.
+    const withRow = await openMenu();
+    expect(withRow.some((row) => row.startsWith("finish-recovering@")), "the row, with the mark").toBe(true);
+    const exportBox = (await page.locator("#export").boundingBox())!;
+    // The mark cleared under the open menu: 400 ms on, every row where it was, and the row below the row's still under its point.
+    await mark(false);
+    await page.waitForTimeout(400);
+    expect(await rows(), "the open menu's rows, the mark cleared under it").toEqual(withRow);
+    expect(
+      await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest("button")?.id ?? null, [exportBox.x + exportBox.width / 2, exportBox.y + exportBox.height / 2]),
+      "under Save a copy's point",
+    ).toBe("export");
+    await closeMenu();
+    // From the next opening, no row.
+    const withoutRow = await openMenu();
+    expect(withoutRow.some((row) => row.startsWith("finish-recovering@")), "no row, from the next opening").toBe(false);
+    // The mark set again under the open menu: nothing moves, and the row is back from the next opening.
+    await mark(true);
+    await page.waitForTimeout(400);
+    expect(await rows(), "the open menu's rows, the mark set under it").toEqual(withoutRow);
+    await closeMenu();
+    expect(await openMenu(), "the row back, from the next opening").toEqual(withRow);
+    await closeMenu();
   });
 
   test("after Not now, a second document in the same browser context shows no invitation, and the offer stays in the menu", async ({ browser }) => {
