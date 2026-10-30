@@ -69,6 +69,14 @@ export const dataKeyKey = (documentUuid: string): string => `dai:data-key:${docu
  */
 export const keptKey = (documentUuid: string): string => `dai:kept:${documentUuid}`;
 
+/**
+ * IndexedDB, the opener's key store: an envelope sent to the owner's store for
+ * a document and not yet answered, its bytes and what its receipt must name.
+ * Resent as it is before anything newer is sealed, so an answer lost on the
+ * way back never forks the document against itself.
+ */
+export const sendingKey = (documentUuid: string): string => `dai:sending:${documentUuid}`;
+
 /** Local storage: the colour under the clock this document last declared, per colour scheme. */
 export const groundKey = (documentUuid: string, scheme: string): string => `dai:ground:${documentUuid}:${scheme}`;
 

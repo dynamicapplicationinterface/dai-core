@@ -133,4 +133,54 @@ test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
       await store.close();
     }
   });
+
+  test("an append the store kept whose answer was lost is resent with the same bytes, answered as it was, and nothing branches", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", PASSKEY);
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page } = await openerWithStore(context, store.base);
+      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-keep-")), "Notes"));
+      const uuid = await uuidOf(page);
+      const owner = await enrollHere(page);
+      await typeNote(app, "first");
+      const first = await waitSettledKept(page, uuid);
+      const appends = () => store.received().filter((r) => r.method === "POST" && r.url.includes(`/d/${owner}/${uuid}/append`));
+      const heads = () => JSON.parse(store.values().find((v) => v.object === `d:${owner}:${uuid}` && v.key === "heads")!.bytes.toString("utf8")) as string[];
+
+      // The next append reaches the store and is kept there; its answer is lost on the way back.
+      let dropped = 0;
+      store.rewrite((path, answer) => {
+        if (!path.endsWith("/append") || !answer.ok || dropped > 0) return answer;
+        dropped += 1;
+        return new Response(null, { status: 503 });
+      });
+      const sentBefore = appends().length;
+      await typeNote(app, " second");
+      await expect.poll(() => dropped, { timeout: 45_000 }).toBe(1);
+      const lost = appends()[sentBefore]!;
+      expect(heads(), "the store holds the append whose answer was lost").toEqual([await digestOf(lost.body)]);
+      expect(await keptRecord(page, uuid), "no answer, so nothing is kept here").toEqual(first);
+
+      // The connection back: the same bytes are sent again, answered as they were, and kept.
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+      const second = await waitSettledKept(page, uuid, first.revision);
+      const resent = appends().slice(sentBefore + 1);
+      expect(resent.length, "resent").toBeGreaterThan(0);
+      expect(Buffer.compare(resent[0]!.body, lost.body), "the same bytes").toBe(0);
+      expect(second.as).toBe("head");
+      expect(heads(), "one head, no branch").toEqual([second.digest]);
+      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
+
+      // And the line goes on as the head.
+      await typeNote(app, " third");
+      const third = await waitSettledKept(page, uuid, second.revision);
+      expect(third.as).toBe("head");
+      expect(heads(), "still one head").toEqual([third.digest]);
+      expect(appends().every((r) => new URL(r.url, store.base).searchParams.get("as") === "head"), "nothing was ever appended as a branch").toBe(true);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
 });

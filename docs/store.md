@@ -271,6 +271,12 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   as its name, D300), and the newest revision waits to be appended; a store
   that answers again is sent that revision, never a backlog. The last kept
   revision does not advance (R-Z item 4).
+- **An answer lost:** an envelope sent and not answered may be held by the
+  store all the same. The host keeps its bytes until an answer comes and
+  sends them again as they are, before anything newer is sealed; the store
+  answers an envelope it holds as it did the first time, so the resend is
+  kept on the line it was sent for and nothing branches. At most that one
+  envelope goes before the newest revision.
 - **Refused:** the revision stays saved in this browser and is not called
   kept. A refusal the host cannot correct by retrying is said in one host
   sentence, with Save a copy offered (P3).

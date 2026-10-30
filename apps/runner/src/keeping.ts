@@ -15,11 +15,17 @@
  * slow or away is never sent a backlog: when it answers again, the latest
  * revision is what it is asked to keep. Nothing here holds a save up, and a
  * failure here loses nothing a save wrote.
+ *
+ * An envelope sent and not answered may be held by the store all the same: its
+ * answer can be lost on the way back. So it is kept here until an answer
+ * comes, and sent again byte for byte before anything newer is sealed; the
+ * store answers an envelope it holds as it did the first time (docs/store.md),
+ * and a lost answer never forks a document against itself.
  */
-import { KEYS, dataKeyKey, keptKey, ownerRecordKey } from "../../../src/keys.js";
+import { KEYS, dataKeyKey, keptKey, ownerRecordKey, sendingKey } from "../../../src/keys.js";
 import { checkpointDigest, digestOf, sealEnvelope, utf8, type Author, type Checkpoint } from "../../owner-store/src/envelope.js";
 import { appendEnvelope, enrollOwner, isRefused, isUnavailable, putKey, type Ack } from "../../owner-store/src/client.js";
-import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
+import { dropFromKeyStore, keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { person } from "./person.js";
 import type { DataKeyRecord, OwnerRecord } from "./owner.js";
 
@@ -37,6 +43,11 @@ export interface KeptRecord {
   at: string;
   /** Appended as the head, or kept as a branch after the head moved elsewhere. */
   as: "head" | "branch";
+}
+
+/** An envelope sent and not yet answered: resent as it is, never sealed afresh. */
+interface Sending extends Omit<KeptRecord, "at"> {
+  bytes: Uint8Array;
 }
 
 /** One revision as a save landed it. */
@@ -206,6 +217,50 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     await keepInKeyStore(dataKeyKey(revision.documentUuid), { ...dataKey, atStore: true } satisfies DataKeyRecord);
   }
 
+  /*
+   * Sends an envelope and holds the answer to it. Kept here until the store
+   * answers: an unavailable store leaves it to be sent again as it is.
+   */
+  const deliver = async (sending: Sending): Promise<"kept" | "unavailable" | "refused"> => {
+    const document = revision.documentUuid;
+    keepingLog.sent += 1;
+    let answer = await appendEnvelope(at, author, sending.owner, document, sending.bytes, sending.as);
+    if (isRefused(answer) && answer.refused === "stale" && sending.as === "head") {
+      // The head moved under another context's append: kept as a branch on purpose, nothing dropped (R-B).
+      sending = { ...sending, as: "branch" };
+      await keepInKeyStore(sendingKey(document), sending);
+      answer = await appendEnvelope(at, author, sending.owner, document, sending.bytes, sending.as);
+    }
+    if (isUnavailable(answer)) return unavailable(answer.unavailable);
+    // Answered: whatever it says, these bytes are not sent again.
+    await dropFromKeyStore(sendingKey(document));
+    if (isRefused(answer)) return refused(answer.refused);
+    if (!receiptHolds({ digest: sending.digest, owner: sending.owner, document, as: sending.as }, answer)) {
+      keepingLog.refusedReceipts += 1;
+      keepingLog.last = `receipt refused: names ${String((answer as Partial<Ack>).digest)}, sent ${sending.digest}`;
+      console.warn(`dai: the store's receipt for ${document} r${sending.revision} is not for what was sent; nothing is kept`);
+      reachable.set(document, false);
+      tell(document);
+      return "refused";
+    }
+    const { bytes: _bytes, ...kept } = sending;
+    await keepInKeyStore(keptKey(document), { ...kept, at: answer.at } satisfies KeptRecord);
+    keepingLog.kept += 1;
+    keepingLog.last = `kept r${sending.revision} ${sending.digest} as ${sending.as}`;
+    console.info(`dai: kept ${document} r${sending.revision} (${sending.as}) at ${answer.at}`);
+    reachable.set(document, true);
+    tell(document);
+    return "kept";
+  };
+
+  // An envelope sent before and never answered goes first, as it was sealed.
+  const unanswered = await keptInKeyStore<Sending>(sendingKey(revision.documentUuid));
+  if (unanswered && unanswered.owner === owner.owner) {
+    console.info(`dai: resending ${revision.documentUuid} r${unanswered.revision}, never answered`);
+    const outcome = await deliver(unanswered);
+    if (outcome !== "kept") return outcome;
+  } else if (unanswered) await dropFromKeyStore(sendingKey(revision.documentUuid));
+
   const last = await keptOf(revision.documentUuid);
   const parent = last && last.owner === owner.owner ? last : null;
   if (parent && parent.revision >= revision.revision) return "kept";
@@ -229,41 +284,18 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     author,
   );
   // A line already branched stays a branch until the host reconciles it (R-F as R-Z amends it).
-  let as: "head" | "branch" = parent?.as === "branch" ? "branch" : "head";
-  keepingLog.sent += 1;
-  let answer = await appendEnvelope(at, author, owner.owner, revision.documentUuid, sealed.bytes, as);
-  if (isRefused(answer) && answer.refused === "stale") {
-    // The head moved under another context's append: kept as a branch on purpose, nothing dropped (R-B).
-    as = "branch";
-    answer = await appendEnvelope(at, author, owner.owner, revision.documentUuid, sealed.bytes, as);
-  }
-  if (isUnavailable(answer)) return unavailable(answer.unavailable);
-  if (isRefused(answer)) return refused(answer.refused);
-  const sent = { digest: sealed.digest, owner: owner.owner, document: revision.documentUuid, as };
-  if (!receiptHolds(sent, answer)) {
-    keepingLog.refusedReceipts += 1;
-    keepingLog.last = `receipt refused: names ${String((answer as Partial<Ack>).digest)}, sent ${sealed.digest}`;
-    console.warn(`dai: the store's receipt for ${revision.documentUuid} r${revision.revision} is not for what was sent; nothing is kept`);
-    reachable.set(revision.documentUuid, false);
-    tell(revision.documentUuid);
-    return "refused";
-  }
-  const record: KeptRecord = {
+  const sending: Sending = {
     owner: owner.owner,
     revision: revision.revision,
     digest: sealed.digest,
     checkpoint: await checkpointDigest(checkpoint),
     release,
-    at: answer.at,
-    as,
+    as: parent?.as === "branch" ? "branch" : "head",
+    bytes: sealed.bytes,
   };
-  await keepInKeyStore(keptKey(revision.documentUuid), record);
-  keepingLog.kept += 1;
-  keepingLog.last = `kept r${revision.revision} ${sealed.digest} as ${as}`;
-  console.info(`dai: kept ${revision.documentUuid} r${revision.revision} (${as}) at ${answer.at}`);
-  reachable.set(revision.documentUuid, true);
-  tell(revision.documentUuid);
-  return "kept";
+  // Held before it is sent: an answer lost on the way back finds it here.
+  await keepInKeyStore(sendingKey(revision.documentUuid), sending);
+  return deliver(sending);
 }
 
 function b64(bytes: Uint8Array): string {
