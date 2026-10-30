@@ -11932,6 +11932,50 @@ contexts of one owner, each keeping one change after the other's last
 acknowledged one; after reconciliation one head holds both changes, the next
 append of either is a head, and Recover restores both changes.
 
+#### D302 — An engine with PRF and no Ed25519 enrolls an owner the store never registers
+
+*Status: open, owed a ruling. Filed 30 October (Build 2b-2f item 4), from
+Build 2b-2b's open list.*
+
+Enrollment derives the keychain path's verifier with Ed25519
+(`keychainVerifier`, `apps/owner-store/src/envelope.ts`; docs/store.md, "The
+wire", Admit). `enroll` in `apps/runner/src/owner.ts` takes a derivation that
+throws for an engine with no Ed25519 and goes on without a verifier: the
+passkey is made, the owner record is kept here with both wraps and no
+`verifier`, the documents are adopted, and the person is signed in. The
+store's registration happens later, before the first save is kept
+(`keeping.ts`, "The owner, once"), and that step refuses an owner record
+with no verifier: "this owner was enrolled before the store's registration
+was kept". So the owner is never enrolled at the store, every save of
+theirs is refused there, nothing is ever kept, and the keychain secret was
+offered to a password manager for an owner no store holds. Since Build
+2b-2r item 4 (2b2-M3) the opener says it, over the document: "The store
+would not keep this document beyond this browser. It is still saved here;
+to keep a copy elsewhere, use "Save a copy…"." The sentence is right and
+names no way out: the owner is signed in, so "Keep beyond this browser" is
+not offered again, and nothing enrolls them.
+
+**Seen** on Playwright's Windows WebKit, which has `PublicKeyCredential` and
+no Ed25519 in WebCrypto (real Safari 17 and later have it). **I.** Not
+tested: a Chromium release with PRF from before Ed25519 shipped in its
+WebCrypto would enroll the same way.
+
+**Owed: a ruling,** one of two. (a) Refuse enrollment there, as `no-prf` is
+refused ("This device's passkeys cannot keep work beyond this browser yet.
+Your work is still saved in this browser."), with a sentence of its own:
+nothing made, the offer kept. (b) Enroll without the keychain path: register the owner with
+the passkey alone, the keychain wrap and the password-manager offer left
+out, so the passkey is the one recovery path (R-D as amended wraps the
+owner key twice; this would make the second wrap optional at the store).
+Neither is built.
+
+**Acceptance, as a red test:** on an engine whose WebCrypto has no Ed25519
+(Ed25519 removed from `crypto.subtle` before the opener loads), "Keep beyond
+this browser" either refuses with that sentence and makes no passkey and no
+owner record, or enrolls an owner the store lists and whose next save is
+"Kept"; in neither case is a signed-in owner left whose every save is
+refused.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
