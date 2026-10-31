@@ -304,11 +304,20 @@ export async function signRequest(author: Author, method: string, path: string, 
  */
 const ED25519_PKCS8_PREFIX = [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
 
-export async function keychainVerifier(secret: Uint8Array): Promise<{ privateKey: CryptoKey; pub: string }> {
+/** The verifier's Ed25519 seed, the RFC 8032 secret key, from the keychain secret. */
+export async function keychainSeed(secret: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
   const base = await crypto.subtle.importKey("raw", plain(secret), "HKDF", false, ["deriveBits"]);
-  const seed = new Uint8Array(
+  return new Uint8Array(
     await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8("dai owner key v1"), info: utf8("keychain verifier") }, base, 256),
   );
+}
+
+export async function keychainVerifier(secret: Uint8Array): Promise<{ privateKey: CryptoKey; pub: string }> {
+  return ed25519FromSeed(await keychainSeed(secret));
+}
+
+/** An Ed25519 key from its RFC 8032 seed, in WebCrypto, and its public key, base64url. Throws where WebCrypto has no Ed25519. */
+export async function ed25519FromSeed(seed: Uint8Array): Promise<{ privateKey: CryptoKey; pub: string }> {
   const privateKey = await crypto.subtle.importKey("pkcs8", concat(new Uint8Array(ED25519_PKCS8_PREFIX), seed), { name: "Ed25519" }, true, ["sign"]);
   const jwk = await crypto.subtle.exportKey("jwk", privateKey);
   if (!jwk.x) throw new Error("no public key derived");

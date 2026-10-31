@@ -27,7 +27,7 @@ import { checkpointDigest, digestOf, sealEnvelope, utf8, type Author, type Check
 import { appendEnvelope, enrollOwner, isRefused, isUnavailable, putKey, type Ack } from "../../owner-store/src/client.js";
 import { dropFromKeyStore, keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { person } from "./person.js";
-import type { DataKeyRecord, OwnerRecord } from "./owner.js";
+import { letGoOfOwner, type DataKeyRecord, type OwnerRecord } from "./owner.js";
 
 /** What the store last acknowledged for a document, from this browser context. */
 export interface KeptRecord {
@@ -99,6 +99,8 @@ export const keepingLog: { sent: number; kept: number; refusedReceipts: number; 
  * "Failure"). An unavailable store is not a refusal, and says nothing.
  */
 const refusals = new Map<string, string>();
+/** Why a document was not kept when its owner held nothing the store's Enroll needs, and was let go here (D302). */
+export const OWNER_LET_GO = "the owner held no keychain verifier or passkey key for the store, and was let go here";
 export const storeRefused = (documentUuid: string): string | undefined => refusals.get(documentUuid);
 
 const listeners = new Set<(documentUuid: string) => void>();
@@ -200,9 +202,13 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
     return "refused";
   };
 
-  // The owner, once, before anything of theirs.
+  // The owner, once, before anything of theirs: tried before each save until the store has them.
   if (!owner.atStore) {
-    if (!owner.registration || !owner.verifier) return refused("this owner was enrolled before the store's registration was kept");
+    // A record the store can never register is let go, and said: never a signed-in owner whose every save is refused (D302).
+    if (!owner.registration || !owner.verifier) {
+      await letGoOfOwner(owner.owner);
+      return refused(OWNER_LET_GO);
+    }
     const enrolled = await enrollOwner(at, author, {
       owner: owner.owner,
       credential: { id: owner.credential, publicKey: owner.registration.publicKey, algorithm: owner.registration.algorithm },

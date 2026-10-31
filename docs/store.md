@@ -255,7 +255,10 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   challenge `dai admit v1:<ms>:<16 random bytes, base64url>`, made in the tap
   itself. A keychain proof is an Ed25519 signature over that challenge with
   `:<author id>` appended, by the key whose seed is HKDF-SHA-256 over the
-  keychain secret, salt `dai owner key v1`, info `keychain verifier`. A
+  keychain secret, salt `dai owner key v1`, info `keychain verifier`. Which
+  Ed25519 implementation makes the verifier and the signature is the host's:
+  the opener uses WebCrypto's, and its own where WebCrypto has none, and
+  both give the same key and the same signature (D302). A
   challenge outside the window, or seen before, is refused. The answer is
   the two wraps and the passkey's credential id.
 - **Library** answers the documents with a key, and every enrolled author's

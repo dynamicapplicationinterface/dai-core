@@ -33,7 +33,6 @@ import {
   checkpointDigest,
   digestOf,
   fromB64u,
-  keychainVerifier,
   openEnvelope,
   utf8,
   verifyOpened,
@@ -43,6 +42,7 @@ import {
 } from "../../owner-store/src/envelope.js";
 import { admitAuthor, chainOf, getEnvelope, headsOf, isRefused, isUnavailable, libraryOf } from "../../owner-store/src/client.js";
 import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
+import { keychainKey } from "./keychain-key.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
 import { announceOwnerChange, currentOwner, type DataKeyRecord, type OwnerRecord } from "./owner.js";
@@ -161,8 +161,9 @@ export async function recoverWithKeychain(base: string | undefined, owner: strin
     owner,
     proof: async (author) => {
       const challenge = `${admitChallenge()}:${author}`;
-      const { privateKey } = await keychainVerifier(bytes);
-      return { kind: "keychain", challenge, signature: b64u(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateKey, utf8(challenge)))) };
+      // WebCrypto's Ed25519, or the opener's own where WebCrypto has none: the same key, the same signature (D302).
+      const key = await keychainKey(bytes);
+      return { kind: "keychain", challenge, signature: b64u(await key.sign(utf8(challenge))) };
     },
     open: async (wraps) => (await openOwnerKey(wraps.keychain, bytes, "keychain")) ?? "the saved password does not open the owner key",
   });

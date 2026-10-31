@@ -21,8 +21,8 @@
  * before the ceremony is made synchronously.
  */
 import { KEYS, dataKeyKey, ownerRecordKey } from "../../../src/keys.js";
-import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore } from "./opfs.js";
-import { keychainVerifier } from "../../owner-store/src/envelope.js";
+import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore, listCartridgesFromLibrary } from "./opfs.js";
+import { keychainKey, keychainKeyDerivable } from "./keychain-key.js";
 
 /** One owner, as this browser context holds it. */
 export interface OwnerRecord {
@@ -207,7 +207,13 @@ export type NotEnrolled =
   /** A passkey was made, but its provider gave no PRF output, so nothing could be wrapped under it. */
   | "no-prf"
   /** This browser has no passkeys at all. */
-  | "unsupported";
+  | "unsupported"
+  /**
+   * The store could never register this owner: no keychain verifier can be
+   * derived here (refused before the passkey is made), or the passkey's public
+   * key was not given (D302). Nothing is kept, and nobody is signed in.
+   */
+  | "unregistrable";
 
 /**
  * Enrolls this browser context as a new owner, and adopts every document
@@ -222,6 +228,8 @@ export function enroll(
   if (!window.PublicKeyCredential || !navigator.credentials?.create) {
     return Promise.resolve({ refused: "unsupported", why: "no WebAuthn" });
   }
+  // Known before the tap: an engine that can derive no keychain verifier gets no passkey made for an owner the store could never hold (D302).
+  if (keychainKeyDerivable() === false) return Promise.resolve({ refused: "unregistrable", why: "no keychain verifier can be derived here" });
   const ownerBytes = crypto.getRandomValues(new Uint8Array(16));
   const owner = b64u(ownerBytes);
   // Reached before any await: the ceremony runs inside the tap.
@@ -264,6 +272,7 @@ export function enroll(
             clientDataJSON: b64u(bytesOf(attestation.clientDataJSON)),
           }
         : undefined;
+      if (!registration) return { refused: "unregistrable" as const, why: "the passkey's public key was not given, so the store could not register it" };
       const adopt = await documents();
       return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt, registration, byForm));
     },
@@ -277,15 +286,17 @@ async function keep(
   credential: string,
   prf: Uint8Array<ArrayBuffer>,
   documents: readonly string[],
-  registration?: OwnerRecord["registration"],
+  registration: NonNullable<OwnerRecord["registration"]>,
   byForm?: OfferByForm,
-): Promise<{ enrolled: string }> {
+): Promise<{ enrolled: string } | { refused: "unregistrable"; why: string }> {
   const keychainSecret = b64u(crypto.getRandomValues(new Uint8Array(32)));
-  // Ed25519 is in every engine that makes a passkey with PRF; where it is not, the keychain path has no verifier.
-  const verifier = await keychainVerifier(new TextEncoder().encode(keychainSecret)).then(
-    (derived) => derived.pub,
-    () => undefined,
-  );
+  // WebCrypto's Ed25519, or the opener's own where WebCrypto has none (D302): never a record the store cannot register.
+  let verifier: string;
+  try {
+    verifier = (await keychainKey(new TextEncoder().encode(keychainSecret))).pub;
+  } catch (error: unknown) {
+    return { refused: "unregistrable", why: `no keychain verifier: ${error instanceof Error ? error.message : String(error)}` };
+  }
   const made = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
   const prfKey = await wrappingKey(prf, "prf");
   const wraps = {
@@ -301,8 +312,8 @@ async function keep(
     wraps,
     keychain: "not offered",
     enrolled: new Date().toISOString(),
-    ...(registration ? { registration } : {}),
-    ...(verifier ? { verifier } : {}),
+    registration,
+    verifier,
   };
   await keepInKeyStore(ownerRecordKey(owner), record);
   await keepInKeyStore(KEYS.OWNER, owner);
@@ -390,6 +401,30 @@ export async function signIn(ownerId?: string): Promise<"opened" | "refused" | "
   await keepInKeyStore(KEYS.OWNER, record.owner);
   announceOwnerChange();
   return "opened";
+}
+
+/**
+ * Lets go of an owner the store can never register: a record kept here with
+ * no keychain verifier or no passkey public key, as an opener before D302's
+ * ruling kept one on an engine with no Ed25519. Nothing of it is at the store,
+ * and nothing here can make what its Enroll needs (the keychain secret went to
+ * a password manager, and the owner key cannot be wrapped again), so it is not
+ * left signed in with every save refused. Each document wrapped under it goes
+ * back to this browser's, its data key unchanged, so nothing is lost and
+ * "Keep beyond this browser" adopts it again; the record goes, and the owner
+ * is signed out.
+ */
+export function letGoOfOwner(ownerId: string): Promise<void> {
+  return serially(async () => {
+    for (const { documentUuid } of await listCartridgesFromLibrary()) {
+      const held = await dataKeyOf(documentUuid);
+      if (held?.owner === ownerId) await keepInKeyStore(dataKeyKey(documentUuid), { key: held.key } satisfies DataKeyRecord);
+    }
+    if ((await currentOwner()) === ownerId) await dropFromKeyStore(KEYS.OWNER);
+    await dropFromKeyStore(ownerRecordKey(ownerId));
+    console.info(`dai: owner ${ownerId} let go: the store could never register it`);
+    announceOwnerChange();
+  });
 }
 
 /** Signs this browser context out of its owner. The owner's record and every wrap stay. */

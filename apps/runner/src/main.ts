@@ -91,7 +91,7 @@ import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
 import { recover, recoverWithKeychain, type Here, type Install, type Recovered } from "./recover.js";
-import { keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
+import { OWNER_LET_GO, keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -657,6 +657,9 @@ async function refreshKept(): Promise<void> {
  * status alone reads as offline does. Kept again, the sentence goes.
  */
 const STORE_REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
+/* An owner the store could never register, let go here (D302): what to do is to set keeping up again, which the menu offers once more. */
+const OWNER_LET_GO_SAID =
+  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again.';
 let refusalSaid: string | null = null;
 onKept((documentUuid) => {
   if (documentUuid !== loaded?.manifest.documentUuid) return;
@@ -664,10 +667,11 @@ onKept((documentUuid) => {
   const refused = storeRefused(documentUuid);
   if (refused !== undefined && refusalSaid !== documentUuid) {
     refusalSaid = documentUuid;
-    tellOverDocument(STORE_REFUSED, true);
+    tellOverDocument(refused === OWNER_LET_GO ? OWNER_LET_GO_SAID : STORE_REFUSED, true);
   } else if (refused === undefined && refusalSaid === documentUuid) {
     refusalSaid = null;
-    if (document.getElementById("doc-note")?.textContent === STORE_REFUSED) tellOverDocument("");
+    const said = document.getElementById("doc-note")?.textContent;
+    if (said === STORE_REFUSED || said === OWNER_LET_GO_SAID) tellOverDocument("");
   }
 });
 function showStorage(): void {
@@ -3866,6 +3870,7 @@ const NOT_ENROLLED: Record<NotEnrolled, string> = {
   cancelled: "No passkey was made. Your work is still saved in this browser.",
   "no-prf": "This device's passkeys cannot keep work beyond this browser yet. Your work is still saved in this browser.",
   unsupported: "This browser cannot make a passkey. Your work is still saved in this browser.",
+  unregistrable: "This browser cannot keep work beyond itself yet. Your work is still saved in this browser.",
 };
 /*
  * Offered only by an opener with a store to keep in. With none, enrolling
