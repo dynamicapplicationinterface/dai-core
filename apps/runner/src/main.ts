@@ -1668,7 +1668,9 @@ async function mount(cartridge: Cartridge): Promise<void> {
   mountNow = null;
   mountedNonce = null;
   // A sentence over a document was about that document: the next starts clear (D169).
-  tellOverDocument(letGo ? OWNER_LET_GO_SAID : "", letGo);
+  const fromAddress = ownAddressArrival?.documentUuid === cartridge.manifest.documentUuid ? ownAddressArrival : undefined;
+  ownAddressArrival = undefined;
+  tellOverDocument(letGo ? OWNER_LET_GO_SAID : fromAddress ? ownAddressSentence(fromAddress.at) : "", letGo);
   cartridgeFrame.src = mountedUrl;
 
   // The launch screen holds — the document's icon and name on a still
@@ -2060,7 +2062,30 @@ type Carrier = {
    * as though the address had introduced it.
    */
   hinted?: string;
+  /**
+   * Read from the page's own address: an inline address the opener minted and
+   * marked with its hint, never a link a person shares (`FRAGMENT_KEYS.opener`).
+   */
+  fromOwnAddress?: boolean;
 };
+
+/*
+ * A document opened from the page's own address with nothing held here (D303,
+ * ruled 31 October): a tab left open across a wipe, or a Home Screen icon's
+ * first launch. The address is the Home Screen carrier and stays; what it holds
+ * is the document as it was when the address was made, so the note row says
+ * so, with the date of that state, and, with a store stamped, that a kept copy
+ * may be newer and Recover brings it. Said with the document's first frame, so
+ * nothing moves under the person (R-Z), and only for the mount it was set for.
+ * The arrival is neither kept nor signed in by this.
+ */
+let ownAddressArrival: { documentUuid: string; at: string | undefined } | undefined;
+function ownAddressSentence(at: string | undefined): string {
+  const date = at !== undefined && !Number.isNaN(Date.parse(at))
+    ? ` on ${new Date(at).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" })}`
+    : "";
+  return `Opened as this page's address held it${date}.${storeBase() ? " A kept copy may be newer; Recover brings it." : ""}`;
+}
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   markStep("reading the document");
@@ -2414,6 +2439,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       carrier.consentedFor !== undefined &&
       carrier.consentedFor === cartridge.manifest.documentUuid &&
       who.state !== "conflict";
+    // The page's own address, and nothing held here to open in its place (D303).
+    const fromOwnAddress = carrier.fromOwnAddress === true && consented && !heldHere;
     /*
      * The address named a different document than it carried.
      *
@@ -2831,6 +2858,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
 
     void showArrival();
     hostMark("prepared");
+    ownAddressArrival = fromOwnAddress
+      ? { documentUuid: loaded.manifest.documentUuid, at: savedAtOf(loaded) ?? loaded.manifest.createdAt }
+      : undefined;
     await mount(loaded);
     hostMark("mounted");
   } catch (error) {
@@ -5786,6 +5816,8 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
     from: "From the link you followed. Nothing is uploaded — it runs on this device.",
     consentedFor,
     hinted: consentedFor,
+    // Only the opener writes its hint into an address (`FRAGMENT_KEYS.opener`).
+    fromOwnAddress: consentedFor !== undefined,
   });
 }
 
