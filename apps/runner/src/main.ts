@@ -4059,6 +4059,12 @@ async function keepHeldRevisions(documents: readonly string[]): Promise<void> {
       const stored = await readStored(item.documentUuid);
       const kept = await keptOf(item.documentUuid);
       if (!stored.db || (kept?.owner === owner && kept.revision >= stored.revision)) continue;
+      /*
+       * Asked again with nothing awaited before the keep: a save that landed
+       * during the reads above queued its own revision, which the read here may
+       * be older than, and the keep would replace it (2b2d-L2).
+       */
+      if (waitingDocuments().includes(item.documentUuid)) continue;
       console.info(`dai: keeping ${item.documentUuid} r${stored.revision}, adopted under ${owner}`);
       keepRevision({ documentUuid: item.documentUuid, revision: stored.revision, database: stored.db, html: item.html, title: item.appName, build: item.build });
     }
