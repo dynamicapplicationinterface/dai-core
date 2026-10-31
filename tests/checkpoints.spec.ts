@@ -5,7 +5,7 @@ import { expect } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { buildNotes, openFile, savesWritten, typeNote, uuidOf } from "./owner.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
-import { enrollHere, keepingLog, keptRecord, libraryRevision, openerWithStore, pillText, waitSettledKept } from "./keeping.js";
+import { enrollHere, keepingLog, keptRecord, libraryRevision, openerWithStore, pillText, savesSettled, waitSettledKept, watchDocumentTop } from "./keeping.js";
 import { digestOf, parseEnvelope } from "../apps/owner-store/src/envelope.js";
 
 /**
@@ -29,6 +29,8 @@ const PASSKEY = "an owner needs a passkey with PRF: Chromium's virtual authentic
 
 /** What the opener says when the store refuses to keep a revision (docs/store.md, "Failure"). */
 const REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
+/** What replaces it, in place, when the store keeps the document again (2b2fr2-M1). */
+const KEPT_AGAIN = "The store keeps this document beyond this browser again.";
 
 test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
   test.slow();
@@ -137,41 +139,53 @@ test.describe("checkpoints (R-C, Build 2b-2 item 2)", () => {
     }
   });
 
-  test("a store that refuses an append is said, once, over the document, with Save a copy; kept again, the sentence goes", async ({ browser, browserName }) => {
-    test.skip(browserName !== "chromium", PASSKEY);
-    const store = await serveOwnerStore();
-    const context = await browser.newContext();
-    try {
-      const { page } = await openerWithStore(context, store.base);
-      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-keep-")), "Notes"));
-      const uuid = await uuidOf(page);
-      await enrollHere(page);
-      await typeNote(app, "first");
-      const first = await waitSettledKept(page, uuid);
+  for (const [width, viewport] of [["phone", { width: 390, height: 700 }], ["desktop", { width: 1280, height: 720 }]] as const)
+    test(`a store that refuses an append is said, once, over the document, with Save a copy; kept again, it is replaced in place and the document does not move (${width})`, async ({ browser, browserName }) => {
+      test.skip(browserName !== "chromium", PASSKEY);
+      const store = await serveOwnerStore();
+      const context = await browser.newContext({ viewport });
+      try {
+        const { page } = await openerWithStore(context, store.base);
+        const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-keep-")), "Notes"));
+        const uuid = await uuidOf(page);
+        await enrollHere(page);
+        await typeNote(app, "first");
+        const first = await waitSettledKept(page, uuid);
 
-      // From here every append is refused, as a store refuses an envelope whose signature does not hold.
-      store.rewrite((path, answer) =>
-        path.endsWith("/append") ? new Response(JSON.stringify({ refused: "the envelope's signature does not hold" }), { status: 409, headers: answer.headers }) : answer,
-      );
-      const before = (await keepingLog(page)).refused;
-      await typeNote(app, " second");
-      await expect.poll(async () => (await keepingLog(page)).refused, { timeout: 45_000 }).toBeGreaterThan(before);
-      await expect(page.locator("#doc-note")).toHaveText(REFUSED);
-      await expect(page.locator("#doc-note")).toHaveClass(/\berror\b/);
-      expect(await pillText(page)).not.toContain("Kept");
-      expect(await keptRecord(page, uuid)).toEqual(first);
+        // From here every append is refused, as a store refuses an envelope whose signature does not hold.
+        store.rewrite((path, answer) =>
+          path.endsWith("/append") ? new Response(JSON.stringify({ refused: "the envelope's signature does not hold" }), { status: 409, headers: answer.headers }) : answer,
+        );
+        const before = (await keepingLog(page)).refused;
+        await typeNote(app, " second");
+        await expect.poll(async () => (await keepingLog(page)).refused, { timeout: 45_000 }).toBeGreaterThan(before);
+        await expect(page.locator("#doc-note")).toHaveText(REFUSED);
+        await expect(page.locator("#doc-note")).toHaveClass(/\berror\b/);
+        expect(await pillText(page)).not.toContain("Kept");
+        expect(await keptRecord(page, uuid)).toEqual(first);
 
-      // Kept again: the sentence is no longer true, and goes.
-      store.rewrite(null);
-      await typeNote(app, " third");
-      await waitSettledKept(page, uuid, first.revision);
-      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
-      await expect(page.locator("#doc-note")).toBeHidden();
-    } finally {
-      await context.close();
-      await store.close();
-    }
-  });
+        // Kept again, while the person types: the sentence is no longer true, and
+        // is replaced in the same row by one of the same height, so the document
+        // does not move under the typing (R-Z, the host's presence is fixed). It
+        // goes when the person dismisses it, like every other sentence there.
+        store.rewrite(null);
+        const top = await watchDocumentTop(page);
+        await typeNote(app, " third");
+        await waitSettledKept(page, uuid, first.revision);
+        await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
+        await savesSettled(page);
+        const moved = await top();
+        expect(moved.from, "the document sits under the sentence").toBeGreaterThan(0);
+        expect(moved, "the document's top, from before the typing to after the save was kept").toEqual({ from: moved.from, min: moved.from, max: moved.from });
+        await expect(page.locator("#doc-note"), "the sentence that replaced it").toHaveText(KEPT_AGAIN);
+        await expect(page.locator("#doc-note")).not.toHaveClass(/\berror\b/);
+        await page.locator("#doc-note").click();
+        await expect(page.locator("#doc-note"), "dismissed, the row goes").toBeHidden();
+      } finally {
+        await context.close();
+        await store.close();
+      }
+    });
 
   test("an append the store kept whose answer was lost is resent with the same bytes, answered as it was, and nothing branches", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", PASSKEY);

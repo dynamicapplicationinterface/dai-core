@@ -654,9 +654,15 @@ async function refreshKept(): Promise<void> {
 /*
  * A store that refuses to keep the document on screen is said once, over the
  * document, with what to do instead (docs/store.md, "Failure"; P3); the
- * status alone reads as offline does. Kept again, the sentence goes.
+ * status alone reads as offline does. Kept again, it is no longer true, and
+ * the store's acknowledgment lands behind a save, while the person may be
+ * typing: so it is replaced in place, in a row of the same height, by
+ * STORE_KEEPS_AGAIN, which goes when dismissed or at the next mount like every
+ * other sentence there (2b2fr2-M1; R-Z, nothing the host shows moves the
+ * document). Once the refusal is dismissed, being kept again brings no row back.
  */
 const STORE_REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
+const STORE_KEEPS_AGAIN = "The store keeps this document beyond this browser again.";
 /*
  * An owner the store could never register, let go as the document mounts
  * (D302; letGoIfUnregistrable): what to do is to set keeping up again, which
@@ -675,7 +681,8 @@ onKept((documentUuid) => {
     tellOverDocument(STORE_REFUSED, true);
   } else if (refused === undefined && refusalSaid === documentUuid) {
     refusalSaid = null;
-    if (document.getElementById("doc-note")?.textContent === STORE_REFUSED) tellOverDocument("");
+    const note = document.getElementById("doc-note");
+    if (note && !note.hidden && note.textContent === STORE_REFUSED) tellOverDocument(STORE_KEEPS_AGAIN, false, true);
   }
 });
 function showStorage(): void {
@@ -4821,9 +4828,17 @@ async function finishMerge(applied: boolean): Promise<void> {
  * `scripts/check-sentences.mjs` fails a `say(...)` anywhere not named the
  * chooser's.
  */
-function tellOverDocument(sentence: string, isError = false): void {
+function tellOverDocument(sentence: string, isError = false, inPlace = false): void {
   const note = document.getElementById("doc-note");
   if (!note) return;
+  /*
+   * Said in place of the sentence showing, the row keeps the height it has, so
+   * the document under it does not move (R-Z, the host's presence is fixed):
+   * the shorter sentence sits in the taller row until it is dismissed or the
+   * next mount. Any other sentence lets the row take its own height again.
+   */
+  const height = inPlace && !note.hidden ? note.getBoundingClientRect().height : 0;
+  note.style.minHeight = height > 0 ? `${height}px` : "";
   note.textContent = sentence;
   note.classList.toggle("error", isError);
   note.hidden = sentence === "";

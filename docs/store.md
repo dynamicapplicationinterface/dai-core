@@ -302,7 +302,12 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   envelope goes before the newest revision.
 - **Refused:** the revision stays saved in this browser and is not called
   kept. A refusal the host cannot correct by retrying is said in one host
-  sentence, with Save a copy offered (P3).
+  sentence, with Save a copy offered (P3). When the store keeps a later
+  revision, that sentence is no longer true and is replaced in its place,
+  in a row of the same height, by "The store keeps this document beyond
+  this browser again.", which goes when dismissed: the acknowledgment
+  arrives while the person may be typing, and nothing the host shows moves
+  the document (R-Z).
 - **Recovery unavailable:** the host says so, and never presents an empty
   document as recovered (R-Z item 5).
 - **Recovery cut short:** each document is restored whole, its data key
