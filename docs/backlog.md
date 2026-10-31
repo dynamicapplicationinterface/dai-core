@@ -1338,6 +1338,10 @@ own text, and puts D195 in Build 2b. The store's contract is
   existing-passkey way → the store lists one owner, that document is kept
   under it, and after Recover in a third context both documents are listed.
   Weakened so the second way enrolls: red (two owners at the store).
+  When the store already holds the document under that owner, the join still
+  adopts and keeps this context's copy; it becomes a second kept line of the
+  document. Recover opens the newest line and says when a document has more
+  than one kept line. Reconciling the lines is D301's work (Build 2b-3).
 
 **Red tests**
 
@@ -11934,6 +11938,14 @@ the context that held the head costs two requests. Recovery restores the
 newest head by the store's time (`recover.ts`), so a revision one context was
 told is "Kept" is not what Recover brings back once another line is newer.
 
+**Its first named instance: Safari and the Home Screen app** (R-Z as
+amended 31 October), R-Z's own two contexts, each keeping the same document.
+The second context's join adopts and keeps its copy of a document the store
+already holds under that owner, and its first append names no parent, so the
+document has two kept lines with no shared ancestor (2b2d-M1). Recover opens
+the newest line and says when a document has more than one kept line;
+reconciling the lines is this item's work.
+
 Nothing accepted is dropped (R-B), and each "Kept" is still the store's
 acknowledgment of that revision; what is missing is the merge. The lost
 answer, which made a context branch against itself, is fixed apart from this
@@ -12010,7 +12022,8 @@ after a wipe "Recover with the saved password" restores the document.
 
 #### D303 — Clear History and Website Data, with the opener's tab open, did not appear to wipe
 
-*Status: open. Filed 31 October, from the device reading of 30 October.*
+*Status: ruled 31 October (below); open until the device re-read. Filed 31
+October, from the device reading of 30 October.*
 
 Clear History and Website Data on iOS, with the opener's tab still open,
 showed the document at an earlier state rather than an empty chooser;
@@ -12041,6 +12054,27 @@ address. Not fixed: the same address is how a Home Screen icon carries its
 document into a context with nothing, so what it should carry is a ruling
 (the options are in that section's Open). Still to re-read on the device
 with the tab closed first.
+
+**Ruled 31 October.** The launch address stays as the Home Screen carrier.
+When a document arrives from the page's own address, not a link someone
+followed, the note row says it was opened as the page's address held it on
+<date>, and, when a store is stamped, that a kept copy may be newer and
+Recover brings it. The arrival is not kept and not signed in. Still owed: a
+device re-read with every Safari tab closed before the wipe.
+
+### Build 2b-2dr (filed 31 October)
+
+#### D304 — Recover while an owner is signed in
+
+*Status: open, after Build 2b-3. Filed 31 October, from the code review of
+Build 2b-2d (2b2d-M1).*
+
+The chooser's Recover is hidden once an owner is signed in, so a context
+that joined an owner cannot bring that owner's other documents here, and
+cannot bring the newest line of a document it holds. Wanted after 2b-3:
+Recover in the ⋯ menu while signed in, for documents the store holds that
+this context does not, and for a document whose newest kept line is not the
+one shown here.
 
 ### Branch review residue (filed 8 October)
 
