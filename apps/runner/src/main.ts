@@ -2800,6 +2800,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // The address this copy came by, when it is short enough to be an
         // address rather than the document (a store link). See identityOf.
         link: shortArrivalLink() ?? heldItem?.link,
+        // The address's snapshot until the person changes it (D303, ruled on the review of Build 2b-2dr).
+        ...(fromOwnAddress ? { addressSnapshot: true as const } : {}),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(
@@ -3236,7 +3238,9 @@ window.addEventListener("message", (event) => {
     const restoredAt = shown ? restoredNotes.get(shown.manifest.documentUuid) : undefined;
     if (shown && restoredAt) {
       restoredNotes.delete(shown.manifest.documentUuid);
-      tellOverDocument(restoredSentence(restoredAt));
+      const before = recoveredSaid?.documentUuid === shown.manifest.documentUuid ? recoveredSaid.sentence : "";
+      recoveredSaid = undefined;
+      tellOverDocument(`${before ? `${before} ` : ""}${restoredSentence(restoredAt)}`);
     }
     frameSessionLanes = data.payload?.sessionLanes === true;
 
@@ -3775,7 +3779,7 @@ window.addEventListener("message", (event) => {
           // save's job, whatever the person opened since.
           const resealed = await resealCartridge(asking.cartridge, bytes);
           settleInto(asking, resealed);
-          await saveCartridgeToLibrary({
+          const record: Parameters<typeof saveCartridgeToLibrary>[0] = {
             /*
              * What this write does not own, it keeps.
              *
@@ -3811,7 +3815,10 @@ window.addEventListener("message", (event) => {
             // Which build this copy is running, so an arriving copy can be told
             // apart by its application rather than by its data (D85).
             ...(buildOf(resealed.manifest) ? { build: buildOf(resealed.manifest) } : {}),
-          });
+          };
+          // A change of the person's: no longer the address's snapshot (D303).
+          if (data.payload?.authored === true) delete record.addressSnapshot;
+          await saveCartridgeToLibrary(record);
           // What the owner's store is asked to keep, once this save has landed.
           landed = {
             documentUuid,
@@ -4181,8 +4188,11 @@ function installRestored(one: Install): Promise<void> {
     await saveDatabaseToOpfs(one.documentUuid, one.database);
     // What this write does not own, it keeps: on a wiped browser there is nothing, but a record held here stays whole.
     const held = await getCartridgeFromLibrary(one.documentUuid).catch(() => null);
+    // Restored over the address's snapshot, it is the store's copy now (D303).
+    const { addressSnapshot: _snapshot, ...kept } = held ?? {};
+    void _snapshot;
     await saveCartridgeToLibrary({
-      ...held,
+      ...kept,
       documentUuid: one.documentUuid,
       appName: one.title,
       lastOpened: new Date().toISOString(),
@@ -4197,6 +4207,7 @@ function installRestored(one: Install): Promise<void> {
 const recoveryHere: Here = {
   install: installRestored,
   held: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.appName ?? null,
+  snapshot: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.addressSnapshot === true,
 };
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
 /** Documents recovered on this page, not yet opened: the store's time for each. */
@@ -4438,14 +4449,16 @@ function namesOf(titles: readonly string[]): string {
 }
 /**
  * For each document this recovery restored with more than one kept line, one
- * sentence saying so: Recover opens the newest, and reconciling the lines is
- * D301's (R-Z, amended 31 October). Empty when every document has one.
+ * sentence saying so: Recover opens the line the store took last, and says
+ * that, with no claim about which change is newest (envelopes carry no save
+ * time); reconciling the lines is D301's (D303, ruled on the review of Build
+ * 2b-2dr). Empty when every document has one.
  */
 function moreThanOneLine(restored: readonly Restored[]): string {
   const counted = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
   return restored
     .filter((one) => !one.alreadyHere && one.lines !== undefined && one.lines > 1)
-    .map((one) => ` ${one.title} has ${counted[one.lines!] ?? String(one.lines)} kept lines; the newest is shown.`)
+    .map((one) => ` ${one.title} has ${counted[one.lines!] ?? String(one.lines)} kept lines; the one kept last is shown.`)
     .join("");
 }
 /** A recovery's words, where it was asked from: on the chooser, or over the document when it was asked from the menu with one open. */
@@ -4538,9 +4551,27 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
             : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)}`;
       sayWhereAsked(`${said}${passed}`.trim(), unverified > 0);
     }
+    /*
+     * The document on screen restored over (the address's snapshot, D303): the
+     * restored copy is opened in its place, and the recovery's words are said
+     * over it with the restored revision's (R-Z, "The restored revision, in
+     * words"), in the one note row.
+     */
+    const open = loaded?.manifest.documentUuid;
+    const reopen = open !== undefined && outcome.restored.some((one) => one.documentUuid === open && !one.alreadyHere && !one.joined);
+    if (reopen) {
+      const note = document.getElementById("doc-note");
+      recoveredSaid = { documentUuid: open, sentence: note && !note.hidden ? (note.textContent ?? "") : "" };
+      void (async () => {
+        const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === open);
+        if (item) await launchFromLibrary(item, "a recovered copy");
+      })();
+    }
   }
   void showRecover();
 }
+/** What a recovery said over the document it restored and reopened, said again with the restored revision's words. */
+let recoveredSaid: { documentUuid: string; sentence: string } | undefined;
 void showRecover();
 
 onOwnerChange(() => {

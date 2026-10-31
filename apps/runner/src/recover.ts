@@ -59,7 +59,7 @@ export interface Restored {
   alreadyHere?: true;
   /**
    * The document's kept lines when it has more than one: its heads at the
-   * store, one per line, the newest restored (R-Z, amended 31 October; D301).
+   * store, one per line, the one the store took last restored (D303; D301).
    */
   lines?: number;
   /**
@@ -84,6 +84,8 @@ export interface Install {
 export interface Here {
   install: (one: Install) => Promise<void>;
   held: (documentUuid: string) => Promise<string | null>;
+  /** Whether a document held here is the address's snapshot, unchanged by the person since it arrived (D303). */
+  snapshot: (documentUuid: string) => Promise<boolean>;
 }
 
 export type Recovered =
@@ -342,12 +344,14 @@ async function restore(
       continue;
     }
     /*
-     * Held here and kept nowhere (the arrival from the page's own address,
-     * changed since or not): not replaced by the store's copy, which would
-     * throw this one away. It takes the path a context meeting an existing
-     * owner takes (R-Z, amended 31 October): adopted under the owner with the
-     * store's data key, and kept by the opener as a line of its own, the
-     * newest (D303, ruled 31 October).
+     * Held here and kept nowhere, and changed by the person since it arrived:
+     * not replaced by the store's copy, which would throw their work away. It
+     * takes the path a context meeting an existing owner takes (R-Z, amended
+     * 31 October): adopted under the owner with the store's data key, and kept
+     * by the opener as a line of its own, the one the store takes last (D303,
+     * as ruled on the review of Build 2b-2dr). An arrival from the page's own
+     * address unchanged since is the address's snapshot, not the person's
+     * work: the store's head is restored over it, and no line is kept.
      */
     const heldHere = await here.held(documentUuid);
     const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
@@ -357,7 +361,8 @@ async function restore(
       passed.push({ documentUuid, title: heldHere });
       continue;
     }
-    if (heldHere !== null) {
+    // The address's snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
+    if (heldHere !== null && !(await here.snapshot(documentUuid))) {
       const heads = await headsOf(base, author, asked.owner, documentUuid);
       if (isUnavailable(heads)) {
         unreached = heads.unavailable;

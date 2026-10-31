@@ -259,57 +259,107 @@ test.describe("Recover from the menu over a document (D303)", () => {
     await expect(page.locator("#menu-recover")).toBeHidden();
   });
 
-  test("after the arrival from the page's own address and a change, Recover from the menu keeps the copy here as a second line, shows the newest and says so, and leaves one copy in the library", async ({ browser, browserName }) => {
-    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+  /*
+   * The review of Build 2b-2dr (2b2dr-H1), its own scenario: a document opened
+   * from a file, "A" typed and kept; the reload takes the tab to its own
+   * address (minted before "A"); "-B" typed and kept, so the store's one head
+   * holds "A-B". Everything cleared under the live tab and the address
+   * reloaded: the field reads "". Answers the page, the field, the document,
+   * its owner, the store's heads and the kept record of "A-B".
+   */
+  async function keptThenArrived(browser: Browser): Promise<{
+    page: Page;
+    app: FrameLocator;
+    uuid: string;
+    owner: string;
+    provider: Awaited<ReturnType<typeof addPasskeyProvider>>;
+    heads: () => string[];
+    keptAB: { digest: string; revision: number };
+  }> {
     const page = await iphone(browser, store);
     await page.goto(RUNNER_URL);
     const provider = await addPasskeyProvider(page.context(), page);
-    expect(provider.id).toBeTruthy();
-    // Safari, earlier: the document opened from a file, changed, and kept under its owner.
     await page.setInputFiles("#file", await notes());
     let app = await mounted(page, null);
     const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
-    await typeNote(app, "kept");
-    await expect.poll(() => storedHolds(page, uuid, "kept"), { timeout: 30_000 }).toBe(true);
+    await typeNote(app, "A");
+    await expect.poll(() => storedHolds(page, uuid, "A"), { timeout: 30_000 }).toBe(true);
     const owner = await enrollHere(page);
-    await waitSettledKept(page, uuid);
+    const keptA = await waitSettledKept(page, uuid);
+    await page.reload();
+    app = await mounted(page, uuid);
+    expect(await ownMark(page)).toBe(uuid);
+    await typeNote(app, "-B");
+    await expect(app.locator("#note")).toHaveValue("A-B");
+    const keptAB = await waitSettledKept(page, uuid, keptA.revision);
     const heads = (): string[] => {
       const found = store.values().find((value) => value.object === `d:${owner}:${uuid}` && value.key === "heads");
       return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
     };
-    expect(heads()).toHaveLength(1);
-
-    // The tab at its own address, everything cleared under it, and the address reloaded.
-    await page.reload();
-    await mounted(page, uuid);
-    expect(page.url()).toMatch(/#.*\ba=/);
-    expect(await ownMark(page)).toBe(uuid);
+    expect(heads()).toEqual([keptAB.digest]);
     await wipeUnderLivePage(page);
     await page.reload();
     app = await mounted(page, uuid);
+    await expect(app.locator("#note")).toHaveValue("");
     await expect(page.locator("#doc-note")).toContainText(RECOVER_TOO);
-    await typeNote(app, "here");
-    await expect.poll(() => storedHolds(page, uuid, "here"), { timeout: 30_000 }).toBe(true);
-    const shown = await app.locator("#note").inputValue();
+    return { page, app, uuid, owner, provider, heads, keptAB: { digest: keptAB.digest, revision: keptAB.revision } };
+  }
 
-    // Recover, from the menu, with the passkey.
+  /** ⋯ → "Recover documents kept beyond this browser" → the passkey. */
+  async function recoverFromTheMenu(page: Page): Promise<void> {
     await page.locator("#more").click();
     await page.locator("#menu-recover").click();
     await page.locator("#finish-passkey").click();
-    await expect(page.locator("#doc-note")).toHaveText("Recovered Notes. Notes has two kept lines; the newest is shown.", { timeout: 30_000 });
-    await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current()), { timeout: 30_000 }).toBe(owner);
-    // The copy here, kept as its own line: two heads, and the revision here acknowledged by the store.
-    await expect.poll(() => heads().length, { timeout: 30_000 }).toBe(2);
-    await waitKeptCurrent(page, uuid);
-    // The newest line is the one shown, and nothing of the person's was replaced.
-    await expect(app.locator("#note")).toHaveValue(shown);
-    expect(shown).toContain("here");
+  }
+
+  test("an arrival unchanged since it arrived is restored over: the kept copy comes back, no line is kept for it, and an empty context recovers the same", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const { page, app, uuid, owner, provider, heads } = await keptThenArrived(browser);
+    await recoverFromTheMenu(page);
+    await expect(app.locator("#note")).toHaveValue("A-B", { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toHaveText(
+      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      { timeout: 30_000 },
+    );
+    expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
+    await page.waitForTimeout(3_000);
+    // One head: no line kept for the snapshot (the reopened copy's own save may follow "A-B" on its line).
+    expect(heads(), "one head: no line kept for the snapshot").toHaveLength(1);
     const copies = await page.evaluate(
       async (id) => ((await (window as Any).__runner.listLibrary()) as Any[]).filter((item) => item.documentUuid === id).length,
       uuid,
     );
     expect(copies, "one copy in the library").toBe(1);
-    expect(await storedHolds(page, uuid, "here")).toBe(true);
+
+    // A context with nothing in it: Recover brings "A-B".
+    await wipe(page, provider.cdp);
+    await page.locator("#recover").click();
+    const row = page.locator(`#recovered button[data-document="${uuid}"]`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#report")).toHaveText("Recovered Notes.");
+    await row.click();
+    await expect(appIn(page).locator("#note")).toHaveValue("A-B", { timeout: 60_000 });
+  });
+
+  test("an arrival changed since it arrived is kept as its own line: two heads, the store's earlier head kept, the line kept last shown and said", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const { page, app, uuid, owner, heads, keptAB } = await keptThenArrived(browser);
+    await typeNote(app, "C");
+    await expect.poll(() => storedHolds(page, uuid, "C"), { timeout: 30_000 }).toBe(true);
+    await recoverFromTheMenu(page);
+    await expect(page.locator("#doc-note")).toHaveText("Recovered Notes. Notes has two kept lines; the one kept last is shown.", { timeout: 30_000 });
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current()), { timeout: 30_000 }).toBe(owner);
+    // The copy here kept as its own line, and "A-B" still a head at the store.
+    await expect.poll(() => heads().length, { timeout: 30_000 }).toBe(2);
+    const keptC = await waitKeptCurrent(page, uuid);
+    expect(heads()).toContain(keptAB.digest);
+    expect(heads()).toContain(keptC.digest);
+    await expect(app.locator("#note")).toHaveValue("C");
+    const copies = await page.evaluate(
+      async (id) => ((await (window as Any).__runner.listLibrary()) as Any[]).filter((item) => item.documentUuid === id).length,
+      uuid,
+    );
+    expect(copies, "one copy in the library").toBe(1);
   });
 
   /*

@@ -189,6 +189,14 @@ export interface LibraryItem {
    */
   wrote?: boolean;
   /**
+   * Arrived from the page's own address and not changed by the person since:
+   * the address's snapshot, not their work (D303, ruled on the review of Build
+   * 2b-2dr). Set by that arrival, cleared by the first save that carries the
+   * person's change. Recover restores the store's head over such a copy and
+   * keeps no line for it.
+   */
+  addressSnapshot?: true;
+  /**
    * Which build of the application this copy is running: a digest over the
    * container's app bytes, with the database left out (`buildDigest`).
    *
