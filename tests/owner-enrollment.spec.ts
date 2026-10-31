@@ -221,6 +221,9 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     expect({ digest: await storedDigest(page, uuid), revision: await revisionOf(page, uuid), saves: await savesWritten(page) }).toEqual(before);
     // Since Build 2b-2d item 5, what enrolling adopted is kept at once: the owner registered, the wrapped key, the sealed revision, each to the owner's store and nowhere else.
     await expect.poll(() => requests.length, { timeout: 30_000 }).toBe(3);
+    // The append acknowledged, and then a while with nothing sent: a fourth request, late, would be seen (2b2d-L1).
+    await expect.poll(() => page.evaluate((id) => (window as Any).__runner.keeping.kept(id), uuid), { timeout: 30_000 }).not.toBeNull();
+    await page.waitForTimeout(3_000);
     const path = (request: string): string => request.replace(store.base, "").replace(/[A-Za-z0-9_-]{22}/, "<owner>").replace(uuid, "<document>");
     expect(requests.map(path)).toEqual(["POST /o/<owner>/enroll", "PUT /d/<owner>/<document>/key", "POST /d/<owner>/<document>/append?as=head"]);
 
