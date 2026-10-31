@@ -2073,13 +2073,6 @@ type Carrier = {
    * copies or shares, which carries no mark (D303).
    */
   fromOwnAddress?: boolean;
-  /**
-   * Carried in the address itself (`#a=`): arriving into a context that does
-   * not hold it, it is a snapshot until the person's first change, whatever
-   * address it came by (D303). The snapshot decides what Recover does; the
-   * own-address mark only what is said.
-   */
-  inline?: true;
 };
 
 /*
@@ -2807,8 +2800,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // The address this copy came by, when it is short enough to be an
         // address rather than the document (a store link). See identityOf.
         link: shortArrivalLink() ?? heldItem?.link,
-        // A snapshot until the person changes it: any inline arrival into a context that did not hold it (D303).
-        ...(carrier.inline === true && !heldHere ? { arrivedSnapshot: true as const } : {}),
+        // A snapshot until it changes here: any arrival into a context that did not hold it, whatever carried it (D303).
+        ...(!heldHere ? { arrivedSnapshot: true as const } : {}),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(
@@ -5901,8 +5894,6 @@ async function openFromLink(carried: string, consentedFor?: string, ownMark?: st
     hinted: consentedFor,
     // The page's own address is marked in the tab's history state, never in the address (D303).
     fromOwnAddress: ownMark !== undefined && ownMark === consentedFor,
-    // A document carried in the address itself: a snapshot until the person changes it (D303).
-    inline: true,
   });
 }
 

@@ -1,9 +1,12 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { inlineLink } from "../src/link.js";
+import { publish } from "../src/store.js";
+import { fsStore } from "../src/store-fs.js";
 import { test } from "./fixtures.js";
 import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, withKeyStore } from "./owner.js";
 import { watchKeychain, wipe } from "./keychain.js";
@@ -368,6 +371,54 @@ test.describe("Recover from the menu over a document (D303)", () => {
   });
 
   /*
+   * The review of Build 2b-2dr2 (2b2dr2-H1), its own scenario: a file opened,
+   * "kept-K" typed and kept; the browser wiped; the same file opened again,
+   * unchanged; Recover from the menu by the passkey. Then a context with
+   * nothing in it recovers the same.
+   */
+  test("a file opened again after a wipe, unchanged, is restored over: the kept copy comes back, and an empty context recovers it too", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const context = await browser.newContext({ viewport: PHONE });
+    await pointAtStore(context, store.base);
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    const provider = await addPasskeyProvider(context, page);
+    const file = await notes();
+    let app = await openFile(page, file);
+    const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+    await typeNote(app, "kept-K");
+    const owner = await enrollHere(page);
+    await waitSettledKept(page, uuid);
+    const heads = (): string[] => {
+      const found = store.values().find((value) => value.object === `d:${owner}:${uuid}` && value.key === "heads");
+      return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
+    };
+    await wipe(page, provider.cdp);
+    app = await openFile(page, file);
+    await expect(app.locator("#note")).toHaveValue("");
+    await recoverFromTheMenu(page);
+    await expect(app.locator("#note")).toHaveValue("kept-K", { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toHaveText(
+      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      { timeout: 30_000 },
+    );
+    await page.waitForTimeout(3_000);
+    expect(heads(), "one head: no line kept for the snapshot").toHaveLength(1);
+    expect(
+      await page.evaluate(async (id) => ((await (window as Any).__runner.listLibrary()) as Any[]).filter((item) => item.documentUuid === id).length, uuid),
+      "one copy in the library",
+    ).toBe(1);
+    // A context with nothing in it: Recover brings "kept-K".
+    await wipe(page, provider.cdp);
+    await page.locator("#recover").click();
+    const row = page.locator(`#recovered button[data-document="${uuid}"]`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#report")).toHaveText("Recovered Notes.");
+    await row.click();
+    await expect(appIn(page).locator("#note")).toHaveValue("kept-K", { timeout: 60_000 });
+  });
+
+  /*
    * D303, ruled on the review of Build 2b-2dr (2b2dr-H2): a document held here
    * under another owner is passed over by Recover, not restored, not re-keyed,
    * not touched, and the note row says it was left as it is.
@@ -442,7 +493,7 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
   });
 
   /** The document kept under its owner, changed past what the link carries; the link, the owner, its saved password and the store's heads. */
-  async function keptElsewhere(): Promise<{ link: string; uuid: string; owner: string; account: string; secret: string; heads: () => string[] }> {
+  async function keptElsewhere(): Promise<{ file: string; link: string; uuid: string; owner: string; account: string; secret: string; heads: () => string[] }> {
     const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-followed-")), "Notes");
     const link = await inlineLink(readFileSync(file, "utf8"), RUNNER_URL, {
       template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
@@ -469,7 +520,7 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
         return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
       };
       expect(heads()).toHaveLength(1);
-      return { link, uuid, owner, account: password.account, secret: password.secret, heads };
+      return { file, link, uuid, owner, account: password.account, secret: password.secret, heads };
     } finally {
       await elsewhere.close();
     }
@@ -526,5 +577,88 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
     await expect.poll(() => kept.heads().length, { timeout: 30_000 }).toBe(2);
     await expect(app.locator("#note")).toHaveValue("C");
     expect(await copiesOf(page, kept.uuid), "one copy in the library").toBe(1);
+  });
+
+  /*
+   * Every carrier, not only `#a=` (D303 as amended on the review of Build
+   * 2b-2dr2, 2b2dr2-H1 and M1): a file, the share target and a store link,
+   * each arriving unchanged into an empty context, are restored over.
+   */
+  type Kept = Awaited<ReturnType<typeof keptElsewhere>>;
+
+  /** A context of this engine pointed at the store, at the opener. */
+  async function emptyContext(browser: Browser, address = RUNNER_URL): Promise<Page> {
+    const context = await browser.newContext({ viewport: PHONE });
+    await pointAtStore(context, store.base);
+    const page = await context.newPage();
+    await page.goto(address);
+    return page;
+  }
+
+  /** Recover with the saved password over a document that arrived unchanged: the kept copy, one head, one copy, no lines clause. */
+  async function restoredOver(page: Page, app: FrameLocator, kept: Kept): Promise<void> {
+    await expect(app.locator("#note")).toHaveValue("");
+    await recoverWithThePassword(page, kept.account, kept.secret);
+    await expect(app.locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toHaveText(
+      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      { timeout: 30_000 },
+    );
+    await page.waitForTimeout(3_000);
+    expect(kept.heads(), "one head: no line kept for the snapshot").toHaveLength(1);
+    expect(await copiesOf(page, kept.uuid), "one copy in the library").toBe(1);
+  }
+
+  /** Files served as a dumb store serves them, for a link that names one. */
+  async function serveFiles(root: string): Promise<{ server: Server; origin: string }> {
+    const server = createServer((request, response) => {
+      const name = decodeURIComponent((request.url ?? "/").split("?")[0]!.slice(1));
+      const file = join(root, name);
+      if (!name || !existsSync(file) || statSync(file).isDirectory()) {
+        response.writeHead(404, { "access-control-allow-origin": "*" }).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/octet-stream", "access-control-allow-origin": "*" });
+      createReadStream(file).pipe(response);
+    });
+    await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+    return { server, origin: `http://127.0.0.1:${(server.address() as { port: number }).port}` };
+  }
+
+  test("unchanged since it arrived from a file, a document is restored over", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const page = await emptyContext(browser);
+    await page.setInputFiles("#file", kept.file);
+    const app = await mounted(page, kept.uuid);
+    await restoredOver(page, app, kept);
+  });
+
+  test("unchanged since it arrived by the share target, a document is restored over", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const page = await emptyContext(browser);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, { timeout: 30_000 });
+    await page.evaluate(async (body: string) => {
+      const form = new FormData();
+      form.append("container", new File([body], "Notes.dai.html", { type: "text/html" }));
+      await fetch("./shared", { method: "POST", body: form });
+    }, readFileSync(kept.file, "utf8"));
+    await page.goto(`${RUNNER_URL}?shared=1`);
+    const app = await mounted(page, kept.uuid);
+    await restoredOver(page, app, kept);
+  });
+
+  test("unchanged since it arrived by a store link, a document is restored over", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const root = mkdtempSync(join(tmpdir(), "dai-link-store-"));
+    const files = await serveFiles(root);
+    try {
+      const { sealed } = await publish(readFileSync(kept.file, "utf8"), fsStore({ root, baseUrl: files.origin }), RUNNER_URL);
+      const link = `${RUNNER_URL}#h=${sealed.hash}&u=${encodeURIComponent(`${files.origin}/${sealed.hash}`)}&k=${sealed.key}`;
+      const page = await emptyContext(browser, link);
+      const app = await mounted(page, kept.uuid);
+      await restoredOver(page, app, kept);
+    } finally {
+      files.server.close();
+    }
   });
 });

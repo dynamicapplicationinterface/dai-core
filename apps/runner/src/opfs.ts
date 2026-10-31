@@ -189,12 +189,13 @@ export interface LibraryItem {
    */
   wrote?: boolean;
   /**
-   * Arrived by an inline carrier (`#a=`) into a context that did not hold it,
-   * and not changed by the person since: a snapshot, not their work, whether
-   * it came from the page's own address or from a link someone followed (D303,
-   * ruled on the review of Build 2b-2dr). Set at that arrival, cleared by the
-   * first save that carries the person's change. Recover restores the store's
-   * head over such a copy and keeps no line for it.
+   * Arrived into a context that did not hold it, whatever carried it (an
+   * inline link, a file, the share target, a link to a file on another host,
+   * a store or mailbox link), and not changed here since: a snapshot, not the
+   * person's work (D303, as amended on the review of Build 2b-2dr2). Set at
+   * that arrival, cleared by any write here other than the restore: the
+   * person's change, or changes that came across from another copy. Recover
+   * restores the store's head over such a copy and keeps no line for it.
    */
   arrivedSnapshot?: true;
   /**
