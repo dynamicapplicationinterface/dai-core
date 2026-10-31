@@ -104,11 +104,21 @@ async function atOwnAddress(page: Page): Promise<{ address: string; uuid: string
   await page.reload();
   await mounted(page, uuid);
   const address = page.url();
-  expect(address, "the inline address the opener minted, with its own hint").toMatch(/#.*\ba=.*opener-doc=/);
+  // The inline address the opener minted, its own mark in the tab's history state and never in the address.
+  expect(address, "the document in the address").toMatch(/#.*\ba=/);
+  expect(address, "no hint in the address bar").not.toContain("opener-doc=");
+  expect(await ownMark(page), "the mark, in the tab's history state").toBe(uuid);
   // Nothing said over a document reopened from the library.
   await expect(page.locator("#doc-note")).toBeHidden();
   return { address, uuid };
 }
+
+/** The page's own-address mark: the document the tab's history state names, or null. */
+const ownMark = (page: Page): Promise<string | null> =>
+  page.evaluate(() => {
+    const state = history.state as { daiOwnAddress?: unknown } | null;
+    return typeof state?.daiOwnAddress === "string" ? state.daiOwnAddress : null;
+  });
 
 /** The date the address's state was written, in the person's own words for a date. */
 const heldOn = (page: Page): Promise<string> =>
@@ -169,23 +179,22 @@ test.describe("a document from the page's own address (D303)", () => {
     expect(store.received().slice(before).filter((request) => request.method !== "GET")).toEqual([]);
   });
 
-  test("a link someone followed is not the page's own address, and gets no such sentence", async ({ browser }) => {
+  /*
+   * The address bar as a person copies it, or as Safari's share sheet sends
+   * it, opened in another context: a link someone followed (D303, ruled on
+   * the review of Build 2b-2dr, 2b2dr-M1). The address carries the document
+   * and no mark; the tab's history state is not in it.
+   */
+  test("the address bar, copied and opened elsewhere, is a link someone followed, and gets no such sentence", async ({ browser }) => {
     const first = await iphone(browser, store);
     const { address, uuid } = await atOwnAddress(first);
-    // The same document as a link a person shares: the opener's hint is never in one.
-    const shared = new URL(address);
-    shared.hash = `#${shared.hash
-      .replace(/^#/, "")
-      .split("&")
-      .filter((part) => !part.startsWith("opener-doc="))
-      .join("&")}`;
-    shared.searchParams.delete("ground");
     const page = await iphone(browser, store);
-    await page.goto(shared.href);
+    await page.goto(address);
     await mounted(page, uuid);
-    // The iOS reload has taken it to its own address since, where it is held.
-    await expect.poll(() => page.url()).toContain("opener-doc=");
-    await expect(page.locator("#doc-note")).not.toContainText("this page's address");
+    expect(await page.locator("#doc-note").textContent()).not.toContain("this page's address");
+    // Held here now, at its own address: the bar still carries the document and no hint.
+    expect(page.url()).toMatch(/#.*\ba=/);
+    expect(page.url()).not.toContain("opener-doc=");
   });
 });
 
@@ -273,7 +282,8 @@ test.describe("Recover from the menu over a document (D303)", () => {
     // The tab at its own address, everything cleared under it, and the address reloaded.
     await page.reload();
     await mounted(page, uuid);
-    expect(page.url()).toMatch(/#.*\ba=.*opener-doc=/);
+    expect(page.url()).toMatch(/#.*\ba=/);
+    expect(await ownMark(page)).toBe(uuid);
     await wipeUnderLivePage(page);
     await page.reload();
     app = await mounted(page, uuid);

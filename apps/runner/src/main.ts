@@ -45,6 +45,9 @@ import {
   keepGround,
   knownGround,
   launchAddress,
+  markOwnAddress,
+  ownAddressMark,
+  pageAddress,
   RELAUNCHED,
   sameLaunch,
   watchForInstall,
@@ -1170,7 +1173,7 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   }
   describedIdentity = identity;
   const target = launchAddress(identity);
-  if (sameLaunch(location.href, target)) {
+  if (sameLaunch(pageAddress(), target)) {
     if (!reloadedAlready) reloadGate = "not needed: already at the document's address";
     return false;
   }
@@ -1461,7 +1464,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       pendingMerge &&
       platform() === "ios" &&
       !relaunchedAlready(identity.uuid) &&
-      !sameLaunch(location.href, launchAddress(identity))
+      !sameLaunch(pageAddress(), launchAddress(identity))
     ) {
       // Rehearsed, like a first open: see finishMerge.
       entryPoint = entry;
@@ -1668,6 +1671,8 @@ async function mount(cartridge: Cartridge): Promise<void> {
   mountNow = null;
   mountedNonce = null;
   // A sentence over a document was about that document: the next starts clear (D169).
+  // At an address that names it, the hint leaves the address bar and the mark goes into the tab's history state (D303).
+  markOwnAddress(cartridge.manifest.documentUuid);
   const fromAddress = ownAddressArrival?.documentUuid === cartridge.manifest.documentUuid ? ownAddressArrival : undefined;
   ownAddressArrival = undefined;
   tellOverDocument(letGo ? OWNER_LET_GO_SAID : fromAddress ? ownAddressSentence(fromAddress.at) : "", letGo);
@@ -2063,8 +2068,9 @@ type Carrier = {
    */
   hinted?: string;
   /**
-   * Read from the page's own address: an inline address the opener minted and
-   * marked with its hint, never a link a person shares (`FRAGMENT_KEYS.opener`).
+   * Read from the page's own address: this tab's history entry, marked by the
+   * opener as that document's (`markOwnAddress`), never an address a person
+   * copies or shares, which carries no mark (D303).
    */
   fromOwnAddress?: boolean;
 };
@@ -2834,7 +2840,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       if (
         platform() === "ios" &&
         !relaunchedAlready(identity.uuid) &&
-        !sameLaunch(location.href, launchAddress(identity))
+        !sameLaunch(pageAddress(), launchAddress(identity))
       ) {
         /*
          * The colour under the clock, learned before the load that counts.
@@ -5806,7 +5812,7 @@ async function planSuccession(
  * address to expire, nothing to fetch. It is also the only carrier that works
  * with the network switched off.
  */
-async function openFromLink(carried: string, consentedFor?: string): Promise<void> {
+async function openFromLink(carried: string, consentedFor?: string, ownMark?: string): Promise<void> {
   forgetArrival();
   markStep("reading the document from the link");
   slot.classList.add("busy");
@@ -5855,8 +5861,8 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
     from: "From the link you followed. Nothing is uploaded — it runs on this device.",
     consentedFor,
     hinted: consentedFor,
-    // Only the opener writes its hint into an address (`FRAGMENT_KEYS.opener`).
-    fromOwnAddress: consentedFor !== undefined,
+    // The page's own address is marked in the tab's history state, never in the address (D303).
+    fromOwnAddress: ownMark !== undefined && ownMark === consentedFor,
   });
 }
 
@@ -6434,7 +6440,9 @@ async function start(): Promise<void> {
    * an unverified string does not get to decide which bytes are mounted while
    * verified bytes are sitting in the same address.
    */
-  const wanted = hintedUuid(location.hash, location.search);
+  // The address's hint, or this tab's own mark when the hint was taken off the address bar (D303).
+  const ownMark = ownAddressMark();
+  const wanted = hintedUuid(location.hash, location.search) ?? ownMark;
   /*
    * An icon made before the hint moved into the fragment.
    *
@@ -6527,7 +6535,7 @@ async function start(): Promise<void> {
 
   const carried = inlineFrom(location.hash);
   if (carried) {
-    await openFromLink(carried, wanted ?? undefined);
+    await openFromLink(carried, wanted ?? undefined, ownMark);
     return;
   }
 
