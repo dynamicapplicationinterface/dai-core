@@ -3940,6 +3940,9 @@ function keepBeyondThisBrowser(): void {
     if ("refused" in result) {
       console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
       tellOverDocument(NOT_ENROLLED[result.refused]);
+    } else {
+      // What enrolling adopted, kept now: its next status is "Kept" with no further change (Build 2b-2d item 5).
+      void writtenHere().then((documents) => keepHeldRevisions(documents));
     }
     void showKeepBeyond();
   });
@@ -3995,6 +3998,15 @@ document.getElementById("keep-existing")?.addEventListener("click", () => {
     void showKeepBeyond();
   });
 });
+/*
+ * As the opener loads: what the owner signed in here holds and the store has
+ * not acknowledged, asked again. Safari reloads the page for the keychain form
+ * right after enrolling, which can cut off the keep asked then (Build 2b-2d
+ * item 5); nothing else would ask before the next change.
+ */
+void writtenHere()
+  .then((documents) => keepHeldRevisions(documents))
+  .catch(() => undefined);
 /** The documents written in this browser: what keeping beyond it keeps. One only opened here is claimed by nobody. */
 async function writtenHere(): Promise<string[]> {
   return (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid);

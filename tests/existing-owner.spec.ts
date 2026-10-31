@@ -83,11 +83,12 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
 
       // The way for a person who has kept documents before.
       await keepWithThePasskeyIHave(page);
-      await expect.poll(() => owner(page), { timeout: 30_000 }).toBe(enrolled);
-      // Kept with no further change: the adopted revision is appended under that owner.
-      await expect.poll(async () => (await keptRecord(page, second))?.owner ?? null, { timeout: 45_000 }).toBe(enrolled);
-      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
+      // Kept with no further change: the adopted revision is appended, and the store still lists the one owner.
+      await expect.poll(async () => (await keptRecord(page, second)) !== null, { timeout: 45_000 }).toBe(true);
       expect(ownersAt(store), "the store lists one owner").toEqual([enrolled]);
+      expect(await owner(page)).toBe(enrolled);
+      expect((await keptRecord(page, second))!.owner).toBe(enrolled);
+      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
       expect((await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id })).credentials.length, "no passkey made").toBe(passkeys);
       await expect(page.locator("#doc-note")).toBeHidden();
 

@@ -184,7 +184,7 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     await context.close();
   });
 
-  test("enrolling afterwards wraps the data key the document already has, under an owner key both secrets open, and rewrites and uploads nothing", async ({ browser, browserName }) => {
+  test("enrolling afterwards wraps the data key the document already has, under an owner key both secrets open, rewrites nothing, and sends only what the owner's store is owed", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", VIRTUAL_PASSKEY);
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
@@ -219,7 +219,10 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
 
     expect(await passkeysHeld(provider)).toBe(1);
     expect({ digest: await storedDigest(page, uuid), revision: await revisionOf(page, uuid), saves: await savesWritten(page) }).toEqual(before);
-    expect(requests).toEqual([]);
+    // Since Build 2b-2d item 5, what enrolling adopted is kept at once: the owner registered, the wrapped key, the sealed revision, each to the owner's store and nowhere else.
+    await expect.poll(() => requests.length, { timeout: 30_000 }).toBe(3);
+    const path = (request: string): string => request.replace(store.base, "").replace(/[A-Za-z0-9_-]{22}/, "<owner>").replace(uuid, "<document>");
+    expect(requests.map(path)).toEqual(["POST /o/<owner>/enroll", "PUT /d/<owner>/<document>/key", "POST /d/<owner>/<document>/append?as=head"]);
 
     const keychain = await page.evaluate(() => (window as Any).__keychain as string[]);
     expect(keychain).toHaveLength(1);
