@@ -12018,6 +12018,30 @@ whether this was the tab's own memory or storage left behind is
 undetermined (device reading of 30 October); to re-read with the tab closed
 first.
 
+**Added 31 October.** The opener's tab stayed open in Safari while the data
+was cleared; returning to it and opening the preview link again showed the
+chore chart at an earlier state (before the offline save), not an empty
+chooser. "Remove from this device" then cleared it, and Recover restored the
+latest kept state.
+
+**Investigated, Build 2b-2d** (`docs/handoff-2026-10-26.md`, "D303,
+investigated"). Ruled out on a desktop page, Chromium and WebKit: with every
+database, OPFS file, cache and the worker cleared under the live page,
+nothing was written back, and a reload showed the empty chooser. Found on
+WebKit with an iPhone's user agent: on iOS a document is on screen only at
+its own launch address, which for a document that did not arrive by a link
+is an inline link minted from the container, records included, and kept as
+the document's `link` (`relaunchAtOwnAddress`, `identityOf`,
+`launchLinkForDocument` in `apps/runner/src/main.ts`). With everything
+cleared under the live page, a reload of that address brought the document
+back from the address, wrote it into the library again and showed it, at the
+state the address was minted in, with nothing said. A tab left open across
+the wipe therefore keeps an earlier state of the document in its own
+address. Not fixed: the same address is how a Home Screen icon carries its
+document into a context with nothing, so what it should carry is a ruling
+(the options are in that section's Open). Still to re-read on the device
+with the tab closed first.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
