@@ -143,7 +143,12 @@ export async function getEnvelope(
   const response = await call(base, author, "GET", `/d/${owner}/${document}/e/${digest}`);
   if ("unavailable" in response) return response;
   if (!response.ok) return { refused: `HTTP ${response.status}` };
-  return { bytes: new Uint8Array(await response.arrayBuffer()), at: response.headers.get("x-dai-at") ?? "" };
+  // The body arrives after the headers: a connection that drops while it downloads is no answer, as one that drops before it.
+  try {
+    return { bytes: new Uint8Array(await response.arrayBuffer()), at: response.headers.get("x-dai-at") ?? "" };
+  } catch (error) {
+    return { unavailable: `the envelope broke off as it downloaded (${error instanceof Error ? `${error.name}: ${error.message}` : String(error)})` };
+  }
 }
 
 export const isUnavailable = (value: unknown): value is Unavailable => !!value && typeof value === "object" && "unavailable" in value;

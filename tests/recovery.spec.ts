@@ -527,6 +527,131 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
     }
   });
 
+  /*
+   * 2b2fr-M3 (Build 2b-2fr2 item 4; R-Z sentence 5, "If recovery is
+   * temporarily unavailable, it says so"). A connection that drops while an
+   * envelope downloads, its headers already in, is a store that stopped
+   * answering: what came back is named, and the way to the rest is said,
+   * from the chooser and from the recovery sheet.
+   */
+  test("a connection that drops while the second document's envelope downloads is said: the first is named, and Recover, then Finish recovering, brings the rest", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, provider } = await openerWithStore(context, store.base);
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      const { ids, owner, first, second } = await twoKept(page);
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      // Every envelope of the second document: its headers and the first half of its body, then the connection gone.
+      store.cutBody((path) => (path.includes(`/${ids[second]}/e/`) ? 512 : null));
+      await page.locator("#recover").click();
+      await expect(page.locator("#report"), "what came back, and the way to the rest").toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 30_000 },
+      );
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      const recoveringMark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+      expect(await recoveringMark(), "the mark set").toBe(true);
+      expect(errors, "nothing thrown past the opener").toEqual([]);
+
+      // The first opened: it says which revision came back. Then the recovery sheet's passkey, the connection dropping again: said over the document.
+      await page.locator(`#recovered button[data-document="${ids[first]}"]`).click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
+      await expect(page.locator("#doc-note")).toHaveText(new RegExp(`^Restored the copy kept at .+\\. ${SENTENCE_TAIL.replace(/\./g, "\\.")}$`), { timeout: 10_000 });
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await page.locator("#finish-passkey").click();
+      await expect(page.locator("#doc-note")).toHaveText(
+        "The rest could not be reached: the store stopped answering. Finish recovering again when you are online.",
+        { timeout: 30_000 },
+      );
+      await expect(page.locator("#finish-sheet")).toBeHidden();
+      expect(await recoveringMark()).toBe(true);
+
+      // The connection holding: the rest comes back.
+      store.cutBody(null);
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await page.locator("#finish-passkey").click();
+      await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`, { timeout: 30_000 });
+      expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
+      await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * 2b2fr-M3, the rest of its class: any throw inside a recovery is answered,
+   * never silent. Here a store's Heads answer with no heads in it, from the
+   * chooser's Recover and from the recovery sheet's saved password.
+   */
+  test("a recovery that throws partway is said, from the chooser and from the recovery sheet's saved password, and the mark stays", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const handed = await watchKeychain(context);
+      const { page, provider } = await openerWithStore(context, store.base);
+      const { ids, owner, first, second } = await twoKept(page);
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      // The second document's Heads answered with its key and no heads.
+      store.rewrite(async (path, answer) => {
+        if (!path.endsWith(`/${ids[second]}/heads`) || !answer.ok) return answer;
+        const { key } = (await answer.json()) as { key: string | null };
+        return new Response(JSON.stringify({ key }), { status: 200, headers: answer.headers });
+      });
+      await page.locator("#recover").click();
+      // What this browser holds under the owner now is what came back before the throw: named, and listed to open.
+      await expect(page.locator("#report"), "said, not silent").toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 30_000 },
+      );
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      const recoveringMark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+      expect(await recoveringMark(), "the mark set: the first was restored before the throw").toBe(true);
+      expect(((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid)).toEqual([ids[first]]);
+
+      // The first opened; the recovery sheet's saved password meets the same answer: said over the document.
+      await page.locator(`#recovered button[data-document="${ids[first]}"]`).click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await page.locator("#finish-owner").fill(handed[0]!.owner);
+      await page.locator("#finish-secret").fill(handed[0]!.secret);
+      await page.locator("#finish-with-password").click();
+      await expect(page.locator("#doc-note")).toHaveText(
+        "The rest could not be reached: the store stopped answering. Finish recovering again when you are online.",
+        { timeout: 30_000 },
+      );
+      await expect(page.locator("#finish-sheet")).toBeHidden();
+      expect(await recoveringMark()).toBe(true);
+
+      // The store answering whole: the rest comes back.
+      store.rewrite(null);
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await page.locator("#finish-passkey").click();
+      await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`, { timeout: 30_000 });
+      await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
   test("a document kept many times is recovered from its head, the head's parent and its container's envelope, not every revision kept", async ({
     browser,
     browserName,

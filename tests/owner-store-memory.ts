@@ -33,6 +33,13 @@ export interface ServedStore {
   setMode: (mode: "up" | "unavailable") => void;
   /** Answers a route its own way: given the path, the store's own answer and the request's body, return the answer to send. */
   rewrite: (fn: ((path: string, answer: Response, body: Buffer) => Promise<Response> | Response) | null) => void;
+  /**
+   * Breaks an answer off mid-body, as a connection that drops while a phone
+   * downloads: given the path, the number of the body's bytes to send after
+   * the status and headers (its whole length declared) before the connection
+   * is cut, or null to answer whole.
+   */
+  cutBody: (fn: ((path: string) => number | null) | null) => void;
   /** The names of the objects that exist. */
   objects: () => string[];
   /** Every value every object holds, by object and key: what a Durable Object's storage is asked to keep. */
@@ -57,6 +64,7 @@ export function deployedStore(base: string): ServedStore {
     received: unreadable("what it received"),
     setMode: unreadable("its mode"),
     rewrite: unreadable("its answers"),
+    cutBody: unreadable("its connections"),
     objects: unreadable("its objects"),
     values: unreadable("its values"),
     bucket: unreadable("its bucket"),
@@ -110,6 +118,7 @@ export async function serveOwnerStore(): Promise<ServedStore> {
   const received: Received[] = [];
   let mode: "up" | "unavailable" = "up";
   let rewriting: ((path: string, answer: Response, body: Buffer) => Promise<Response> | Response) | null = null;
+  let cutting: ((path: string) => number | null) | null = null;
 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -133,8 +142,16 @@ export async function serveOwnerStore(): Promise<ServedStore> {
         if (rewriting && req.method !== "OPTIONS") answer = await rewriting(url.pathname, answer, body);
         // A rewritten answer carries the original's headers: its length is the new body's.
         const sentHeaders = Object.fromEntries([...answer.headers].filter(([k]) => k !== "content-length"));
+        const bytes = Buffer.from(await answer.arrayBuffer());
+        const cutAt = cutting && req.method !== "OPTIONS" ? cutting(url.pathname) : null;
+        if (cutAt !== null) {
+          // The whole length declared, part of it sent, then the connection gone.
+          res.writeHead(answer.status, { ...sentHeaders, "content-length": String(bytes.length) });
+          res.write(bytes.subarray(0, Math.min(cutAt, bytes.length - 1)), () => res.destroy());
+          return;
+        }
         res.writeHead(answer.status, sentHeaders);
-        res.end(Buffer.from(await answer.arrayBuffer()));
+        res.end(bytes);
       })().catch((error: unknown) => {
         res.writeHead(500, { "access-control-allow-origin": "*" });
         res.end(String(error));
@@ -169,6 +186,9 @@ export async function serveOwnerStore(): Promise<ServedStore> {
     },
     rewrite: (fn) => {
       rewriting = fn;
+    },
+    cutBody: (fn) => {
+      cutting = fn;
     },
     objects: () => [...objects.keys()],
     close: async () => {

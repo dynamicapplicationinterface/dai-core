@@ -90,7 +90,7 @@ import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
-import { recover, recoverWithKeychain, type Here, type Install, type Recovered } from "./recover.js";
+import { recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -4139,10 +4139,32 @@ function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): 
   closeFinishSheet();
   showRecovered(outcome, path, "menu");
 }
+/**
+ * A recovery, answered whatever happens inside it (R-Z sentence 5, "If
+ * recovery is temporarily unavailable, it says so"). One that throws partway,
+ * on an answer from the store this opener could not use, is answered as one
+ * the store cut short, never left silent: what it restored before the throw is
+ * what this browser now holds under the owner signed in, each held here
+ * already, and with nobody signed in nothing was restored.
+ */
+function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOVERY_WORDS): Promise<Recovered> {
+  return recovering.catch(async (error: unknown): Promise<Recovered> => {
+    const why = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.warn(`dai: recovery (${path}) broke off: ${why}`);
+    const owner = await currentOwner().catch(() => null);
+    if (owner === null) return { unavailable: why };
+    const restored: Restored[] = [];
+    for (const item of await listCartridgesFromLibrary().catch(() => [])) {
+      const kept = await keptOf(item.documentUuid).catch(() => null);
+      if (kept?.owner === owner) restored.push({ documentUuid: item.documentUuid, title: item.appName, at: kept.at, alreadyHere: true });
+    }
+    return { restored, refused: [], unreached: why };
+  });
+}
 /** Recover with the passkey, from the chooser or the recovery sheet: one recovery, whichever asked for it. */
 function recoverWithPasskey(from: AskedFrom): void {
   // The ceremony first, inside the tap.
-  const recovering = recover(storeBase(), recoveryHere);
+  const recovering = answeredAlways(recover(storeBase(), recoveryHere), "passkey");
   if (from === "menu") {
     // What the note row says stays until the answer replaces it: a ceremony not used changes nothing on screen.
     finishRunning(true);
@@ -4165,7 +4187,7 @@ finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
  * the tap.
  */
 function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
-  const recovering = recoverWithKeychain(storeBase(), owner, secret, recoveryHere);
+  const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain");
   if (from === "menu") {
     finishRunning(true);
     void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
