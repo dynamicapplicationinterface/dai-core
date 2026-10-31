@@ -12099,6 +12099,11 @@ when it was never saved into a container; no field is added to the address.
   mark set when a document arrives from its own address and cleared by the
   first save that carries the person's change. A copy changed since it
   arrived is kept as its own line, and the rule above says what is shown.
+- Any document that arrives by an inline carrier (#a=) into a context that
+  does not hold it is a snapshot until the first save that carries the
+  person's change, whether it came from the page's own address or from a
+  link someone followed. The snapshot mark is set at arrival and decides what
+  Recover does; the own-address mark decides only what is said.
 - A document held here under another owner is passed over by Recover: not
   restored, not re-keyed, not touched, and the note row says it was left as
   it is.
