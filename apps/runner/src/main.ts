@@ -91,7 +91,7 @@ import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
 import { recover, recoverWithKeychain, type Here, type Install, type Recovered } from "./recover.js";
-import { OWNER_LET_GO, keepAgain, keepingLog, keepRevision, keptOf, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
+import { keepAgain, keepingLog, keepRevision, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -657,7 +657,12 @@ async function refreshKept(): Promise<void> {
  * status alone reads as offline does. Kept again, the sentence goes.
  */
 const STORE_REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
-/* An owner the store could never register, let go here (D302): what to do is to set keeping up again, which the menu offers once more. */
+/*
+ * An owner the store could never register, let go as the document mounts
+ * (D302; letGoIfUnregistrable): what to do is to set keeping up again, which
+ * the menu offers once more. Said with the document's first frame, so it is on
+ * screen before the person types and nothing moves under them (R-Z).
+ */
 const OWNER_LET_GO_SAID =
   'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again.';
 let refusalSaid: string | null = null;
@@ -667,11 +672,10 @@ onKept((documentUuid) => {
   const refused = storeRefused(documentUuid);
   if (refused !== undefined && refusalSaid !== documentUuid) {
     refusalSaid = documentUuid;
-    tellOverDocument(refused === OWNER_LET_GO ? OWNER_LET_GO_SAID : STORE_REFUSED, true);
+    tellOverDocument(STORE_REFUSED, true);
   } else if (refused === undefined && refusalSaid === documentUuid) {
     refusalSaid = null;
-    const said = document.getElementById("doc-note")?.textContent;
-    if (said === STORE_REFUSED || said === OWNER_LET_GO_SAID) tellOverDocument("");
+    if (document.getElementById("doc-note")?.textContent === STORE_REFUSED) tellOverDocument("");
   }
 });
 function showStorage(): void {
@@ -1635,7 +1639,19 @@ async function mount(cartridge: Cartridge): Promise<void> {
    * would run here with this origin, this library and these pinned keys in
    * reach. See hostShell.
    */
-  const shell = await hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME });
+  /*
+   * The owner checked as the document mounts, beside the shell: one the store
+   * can never register is let go now (D302), so its sentence is on screen with
+   * the document's first frame, before the person can type, and never arrives
+   * at a save to move the document under them (R-Z, the host's fixed presence).
+   */
+  const [shell, letGo] = await Promise.all([
+    hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME }),
+    letGoIfUnregistrable().catch((error: unknown) => {
+      console.warn(`dai: the owner was not checked at mount: ${String(error)}`);
+      return false;
+    }),
+  ]);
   const blob = new Blob([shell], { type: "text/html" });
   mountedUrl = URL.createObjectURL(blob);
   // A new mount, from before the frame leaves the last one: until this shell
@@ -1645,7 +1661,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
   mountNow = null;
   mountedNonce = null;
   // A sentence over a document was about that document: the next starts clear (D169).
-  tellOverDocument("");
+  tellOverDocument(letGo ? OWNER_LET_GO_SAID : "", letGo);
   cartridgeFrame.src = mountedUrl;
 
   // The launch screen holds — the document's icon and name on a still
@@ -3484,11 +3500,13 @@ window.addEventListener("message", (event) => {
      */
     el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
     showStorage();
-    // What "Finish recovering" said goes at the open document's next save.
-    if (state === "saved" && finishSaid !== null) {
-      if (document.getElementById("doc-note")?.textContent === finishSaid) tellOverDocument("");
-      finishSaid = null;
-    }
+    /*
+     * No sentence over the document goes at a save (R-Z, "nothing the host
+     * shows ever ... moves the document"): the note row is in the document's
+     * flow, so a sentence taken away under the person's typing moves the
+     * document under their next tap. One goes when dismissed, or at the next
+     * mount.
+     */
     if (state === "failed" && wonElsewhere(data.error)) {
       tellOverDocument(elsewhereSentence(data.error), true);
     } else if (state === "failed" && data.error === SAVE_REFUSED) {
@@ -4105,8 +4123,6 @@ const RECOVERY_WORDS = {
 } as const;
 /** Where a recovery was asked from: the chooser's Recover, or the menu's "Finish recovering". */
 type AskedFrom = "chooser" | "menu";
-/** What a recovery asked from the menu said over the open document: it goes at that document's next save, or when dismissed. */
-let finishSaid: string | null = null;
 /**
  * A recovery the sheet asked for has answered. Not used (no passkey answered,
  * or no saved password filled in): the person stays on the sheet, both ways
@@ -4241,7 +4257,6 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
           ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.`
           : `${recovered}${unverified > 0 ? notVerified : "Your library is complete."}`;
       sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
-      finishSaid = sentence;
     } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
       sayWhereAsked(

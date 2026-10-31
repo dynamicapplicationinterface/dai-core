@@ -8,7 +8,7 @@ import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, pointAtStore, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
-import { putInKeyStore } from "./keeping.js";
+import { putInKeyStore, savesSettled, watchDocumentTop } from "./keeping.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -299,6 +299,48 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await closeMenu();
     expect(await openMenu(), "the row back, from the next opening").toEqual(withRow);
     await closeMenu();
+  });
+
+  /*
+   * 2b2fr-L1 (Build 2b-2fr2 item 3): no save takes a note-row sentence away.
+   * The completion sentence of "Finish recovering" was cleared at the next
+   * save, behind a guard no test held; the clearing is gone, and this holds
+   * that any other sentence over the document stays through a save too, and
+   * the document with it (R-Z, "the host's presence over the document is
+   * fixed").
+   */
+  test("a sentence over the document stays through the next save, and the document does not move", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "a passkey ceremony is Chromium's virtual authenticator");
+    const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-offer-")), "Notes");
+    const context = await browser.newContext();
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      // The person cancels the passkey sheet "Keep beyond this browser" opens: the browser answers NotAllowedError.
+      await page.addInitScript(() => {
+        navigator.credentials.create = () => Promise.reject(new DOMException("The operation either timed out or was not allowed.", "NotAllowedError"));
+      });
+      await page.goto(RUNNER_URL);
+      await addPasskeyProvider(context, page);
+      const app = await openFile(page, file);
+      const uuid = await uuidOf(page);
+      await typeNote(app, "one");
+      await decidedForEverySave(page);
+      await page.locator("#more").click();
+      await page.locator("#keep-beyond").click();
+      const said = "No passkey was made. Your work is still saved in this browser.";
+      await expect(page.locator("#doc-note")).toHaveText(said, { timeout: 30_000 });
+
+      const top = await watchDocumentTop(page);
+      await typeNote(app, " two");
+      await expect.poll(() => storedHolds(page, uuid, "one two"), { timeout: 30_000 }).toBe(true);
+      await savesSettled(page);
+      const moved = await top();
+      expect(moved, "the document's top, from before the typing to after its save").toEqual({ from: moved.from, min: moved.from, max: moved.from });
+      await expect(page.locator("#doc-note"), "the sentence, through the save").toHaveText(said);
+    } finally {
+      await context.close();
+    }
   });
 
   test("after Not now, a second document in the same browser context shows no invitation, and the offer stays in the menu", async ({ browser }) => {

@@ -34,6 +34,51 @@ export const libraryRevision = (page: Page, uuid: string): Promise<number> =>
 
 export const pillText = (page: Page): Promise<string> => page.locator("#save-state").evaluate((el) => (el as HTMLElement).innerText.trim());
 
+/**
+ * Watches the document's top (the frame's `getBoundingClientRect().top`) at
+ * every animation frame from now until it is read: whether anything the host
+ * showed or took away moved the document (R-Z, "the host's presence over the
+ * document is fixed"). The read gives where it was at the start, and the
+ * lowest and highest it was since.
+ */
+export async function watchDocumentTop(page: Page): Promise<() => Promise<{ from: number; min: number; max: number }>> {
+  await page.evaluate(() => {
+    const frame = document.getElementById("cartridge");
+    if (!frame) throw new Error("no document frame");
+    const top = (): number => frame.getBoundingClientRect().top;
+    const watch = { from: top(), min: top(), max: top(), on: true };
+    (window as Any).__topWatch = watch;
+    const step = (): void => {
+      if (!watch.on) return;
+      const now = top();
+      watch.min = Math.min(watch.min, now);
+      watch.max = Math.max(watch.max, now);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+  return () =>
+    page.evaluate(() => {
+      const watch = (window as Any).__topWatch;
+      watch.on = false;
+      const now = (document.getElementById("cartridge") as HTMLElement).getBoundingClientRect().top;
+      return { from: watch.from as number, min: Math.min(watch.min, now), max: Math.max(watch.max, now) };
+    });
+}
+
+/**
+ * Every save asked is written, and then a window of `ms` with nothing more
+ * asked: long enough for whatever the host does after a save (its state
+ * message, a keep, a sentence it would add or take away) to have happened.
+ */
+export async function savesSettled(page: Page, ms = 2_500): Promise<void> {
+  await page.evaluate(() => (window as Any).__runner.flush());
+  await expect
+    .poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 })
+    .toBe(true);
+  await page.waitForTimeout(ms);
+}
+
 /** Opens the opener pointed at `base`, with a passkey provider, ready for a document. */
 export async function openerWithStore(context: BrowserContext, base: string): Promise<{ page: Page; provider: Awaited<ReturnType<typeof addPasskeyProvider>> }> {
   const page = await context.newPage();

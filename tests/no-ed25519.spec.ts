@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { appIn, buildNotes, keepFromMenu, openFile, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { appIn, buildNotes, keepFromMenu, openFile, pointAtStore, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
 import { watchKeychain, wipe } from "./keychain.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
-import { enrollHere, keptRecord, openerWithStore, waitSettledKept } from "./keeping.js";
+import { enrollHere, keptRecord, openerWithStore, savesSettled, waitSettledKept, watchDocumentTop } from "./keeping.js";
 
 /**
  * An engine whose WebCrypto has no Ed25519 (D302, ruled 30 October; Build
@@ -45,6 +45,9 @@ async function withoutEd25519(context: BrowserContext, also: { sha512?: boolean 
     }
   }, also);
 }
+
+const LET_GO_SAID =
+  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again.';
 
 const ownerRecordOf = (page: Page, owner: string): Promise<{ verifier: string | null; registration: boolean; atStore: boolean } | null> =>
   withKeyStore(page, "const r = await get(arg); return r ? { verifier: r.verifier ?? null, registration: !!r.registration, atStore: r.atStore === true } : null;", `dai:owner:${owner}`);
@@ -157,15 +160,24 @@ test.describe("an engine whose WebCrypto has no Ed25519 (D302, Build 2b-2fr item
     }
   });
 
-  test("an owner record kept with no verifier, as an earlier opener kept one here, is not a dead end: at the first save it is let go, said, and Keep beyond this browser keeps the document", async ({
+  /*
+   * Build 2b-2fr2 item 3 (2b2fr-M2): the let-go runs as the document mounts,
+   * before the person can type, and never inside a save. Its sentence is on
+   * screen when the document appears; typing and saving move nothing (R-Z,
+   * "the host's presence over the document is fixed"), and no save takes it
+   * away.
+   */
+  test("an owner record kept with no verifier, as an earlier opener kept one here, is not a dead end: as the document mounts it is let go and said, typing moves nothing, and Keep beyond this browser keeps the document", async ({
     browser,
   }) => {
     const store = await serveOwnerStore();
     const context = await browser.newContext();
     try {
       const { page } = await openerWithStore(context, store.base);
-      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-no-ed25519-")), "Notes"));
+      const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-no-ed25519-")), "Notes");
+      await openFile(page, file);
       const uuid = await uuidOf(page);
+      let app = appIn(page);
       await typeNote(app, "one");
       await expect.poll(() => storedHolds(page, uuid, "one"), { timeout: 30_000 }).toBe(true);
       // The store away while the owner is enrolled, so nothing registers; then the record as D302 left it: no verifier.
@@ -195,14 +207,23 @@ test.describe("an engine whose WebCrypto has no Ed25519 (D302, Build 2b-2fr item
       expect((await ownerRecordOf(page, owner))?.verifier).toBeNull();
       store.setMode("up");
 
-      // The next save: the store can never register this owner, so it is let go, and the person is told what to do.
+      // The person comes back to the opener, which names its store as a deploy does: the document reopens, and its owner is checked as it mounts.
+      await pointAtStore(context, store.base);
+      await page.reload();
+      app = await waitMounted(page, file);
+      // The store can never register this owner: let go, and said, on screen as the document appears, before a key is pressed.
+      const shownAtMount = (await page.locator("#doc-note").isVisible()) ? await page.locator("#doc-note").innerText() : "nothing";
+      expect.soft(shownAtMount, "the let-go sentence, on screen as the document appears").toBe(LET_GO_SAID);
+      // Typing and its save move nothing, and take nothing away.
+      const top = await watchDocumentTop(page);
       await typeNote(app, "-two");
-      await expect(page.locator("#doc-note")).toHaveText(
-        'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again.',
-        { timeout: 30_000 },
-      );
+      await expect.poll(() => storedHolds(page, uuid, "one-two"), { timeout: 30_000 }).toBe(true);
+      await savesSettled(page);
+      const moved = await top();
+      expect(moved, "the document's top, from before the typing to after its save").toEqual({ from: moved.from, min: moved.from, max: moved.from });
+      await expect(page.locator("#doc-note"), "the sentence, through the save").toHaveText(LET_GO_SAID);
       expect(store.objects(), "the store never heard of the owner").not.toContain(`o:${owner}`);
-      await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current()), { timeout: 10_000 }).toBeNull();
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBeNull();
       expect(await ownerRecordOf(page, owner), "the record let go").toBeNull();
       expect(await storedHolds(page, uuid, "one-two"), "the document, still here").toBe(true);
 

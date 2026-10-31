@@ -99,9 +99,23 @@ export const keepingLog: { sent: number; kept: number; refusedReceipts: number; 
  * "Failure"). An unavailable store is not a refusal, and says nothing.
  */
 const refusals = new Map<string, string>();
-/** Why a document was not kept when its owner held nothing the store's Enroll needs, and was let go here (D302). */
-export const OWNER_LET_GO = "the owner held no keychain verifier or passkey key for the store, and was let go here";
 export const storeRefused = (documentUuid: string): string | undefined => refusals.get(documentUuid);
+
+/**
+ * Lets go of the signed-in owner when the store can never register it (D302):
+ * a record not yet at the store with no keychain verifier or no passkey public
+ * key, as an opener before D302's ruling kept one on an engine with no
+ * Ed25519. Asked as a document mounts, before the person can type, so what is
+ * said about it is on screen when the document appears (R-Z, the host's fixed
+ * presence). True when it let one go.
+ */
+export async function letGoIfUnregistrable(): Promise<boolean> {
+  const signedIn = await keptInKeyStore<string>(KEYS.OWNER);
+  const owner = signedIn ? await keptInKeyStore<OwnerRecord>(ownerRecordKey(signedIn)) : undefined;
+  if (!owner || owner.atStore || (owner.registration && owner.verifier)) return false;
+  await letGoOfOwner(owner.owner);
+  return true;
+}
 
 const listeners = new Set<(documentUuid: string) => void>();
 /** Called when a document's kept record, or whether the store is reached, changes. */
@@ -204,10 +218,16 @@ async function appendOne(revision: Revision): Promise<"kept" | "not ours" | "una
 
   // The owner, once, before anything of theirs: tried before each save until the store has them.
   if (!owner.atStore) {
-    // A record the store can never register is let go, and said: never a signed-in owner whose every save is refused (D302).
+    /*
+     * A record the store can never register is let go as a document mounts
+     * (letGoIfUnregistrable), never here inside a save: its sentence is on
+     * screen when the document appears, not under the person's typing (R-Z,
+     * the host's fixed presence). Met here only if it changed after the mount:
+     * nothing is sent, and the next mount lets it go.
+     */
     if (!owner.registration || !owner.verifier) {
-      await letGoOfOwner(owner.owner);
-      return refused(OWNER_LET_GO);
+      console.warn(`dai: owner ${owner.owner} cannot be registered; nothing kept until the next mount lets it go`);
+      return "not ours";
     }
     const enrolled = await enrollOwner(at, author, {
       owner: owner.owner,

@@ -6,7 +6,7 @@ import { test } from "./fixtures.js";
 import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
 import { watchKeychain } from "./keychain.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
-import { enrollHere, keptRecord, openerWithStore, waitSettledKept } from "./keeping.js";
+import { enrollHere, keptRecord, openerWithStore, savesSettled, waitSettledKept, watchDocumentTop } from "./keeping.js";
 
 /**
  * Recovery, Build 2b-2 item 5 (R-Z sentence 5 and its first red test; R-E).
@@ -302,10 +302,21 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       expect(await page.locator("#report").textContent(), "the chooser's line, unchanged").toBe(chooserLine);
       await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
       expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null)).toBe(ids[first]);
-      // The sentence goes at the open document's next save.
+      /*
+       * 2b2fr-M2 (Build 2b-2fr2 item 3; R-Z, "nothing the host shows ever ...
+       * moves the document"). The sentence stays through the open document's
+       * next save, and the document with it: it goes when dismissed, or at the
+       * next mount, like every other.
+       */
+      const top = await watchDocumentTop(page);
       await typeNote(appIn(page), "-more");
       await expect.poll(() => storedHolds(page, ids[first]!, `${first}-text-more`), { timeout: 30_000 }).toBe(true);
-      await expect(page.locator("#doc-note")).toBeHidden({ timeout: 10_000 });
+      await savesSettled(page);
+      const moved = await top();
+      expect(moved, "the document's top, from before the typing to after its save").toEqual({ from: moved.from, min: moved.from, max: moved.from });
+      await expect(page.locator("#doc-note"), "the sentence, through the save").toHaveText(`Recovered ${second}. Your library is complete.`);
+      await page.locator("#doc-note").click();
+      await expect(page.locator("#doc-note")).toBeHidden();
 
       // From the menu's next opening, the row is gone.
       await page.locator("#more").click();
