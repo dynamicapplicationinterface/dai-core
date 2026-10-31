@@ -3918,7 +3918,7 @@ async function showKeepBeyond(): Promise<void> {
  * With no worker controlling the page the form would reach the network, so it
  * is not submitted at all.
  */
-async function offerKeychainByForm(owner: string, secret: string, offered: () => Promise<void>): Promise<boolean> {
+async function offerKeychainByForm(account: string, secret: string, offered: () => Promise<void>): Promise<boolean> {
   const form = document.getElementById("keychain-offer") as HTMLFormElement | null;
   const username = form?.querySelector<HTMLInputElement>('input[name="username"]');
   const password = form?.querySelector<HTMLInputElement>('input[name="password"]');
@@ -3926,7 +3926,7 @@ async function offerKeychainByForm(owner: string, secret: string, offered: () =>
   if (loaded && !(await flushDocument())) console.warn("dai: the open document did not confirm its writes before the keychain form");
   // Every save asked, written: the navigation must not cut one off.
   for (let waited = 0; hostSavesWritten < hostSaves && waited < 10_000; waited += 50) await new Promise((settle) => window.setTimeout(settle, 50));
-  username.value = owner;
+  username.value = account;
   password.value = secret;
   await offered();
   console.info("dai: keychain secret offered by a form, answered by this opener's worker");

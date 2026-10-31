@@ -10,9 +10,14 @@ import { RUNNER_URL } from "./owner.js";
 type Any = any;
 
 export interface Handed {
+  /** The owner id the account names: its last " · " part (Build 2b-2d item 4), or the whole of a bare one. */
   owner: string;
+  /** The account as handed over, as a password manager fills it back. */
+  account: string;
   secret: string;
   by: "credential management" | "form";
+  /** The credential's name, where the Credential Management API carries one. */
+  name?: string;
 }
 
 /**
@@ -23,8 +28,8 @@ export interface Handed {
  */
 export async function watchKeychain(context: BrowserContext, how: { asSafari?: boolean; refuse?: boolean } = {}): Promise<Handed[]> {
   const handed: Handed[] = [];
-  await context.exposeBinding("__keychainHanded", (_source, entry: Handed) => {
-    handed.push(entry);
+  await context.exposeBinding("__keychainHanded", (_source, entry: Omit<Handed, "owner">) => {
+    handed.push({ ...entry, owner: entry.account.split(" · ").pop() ?? "" });
   });
   await context.addInitScript((options: { asSafari?: boolean; refuse?: boolean }) => {
     const report = (entry: unknown): void => void (window as Any).__keychainHanded?.(entry);
@@ -33,7 +38,7 @@ export async function watchKeychain(context: BrowserContext, how: { asSafari?: b
     if (store) {
       navigator.credentials.store = (credential: Any) => {
         if (options.refuse) return Promise.reject(new DOMException("refused", "NotAllowedError"));
-        if (credential && typeof credential.password === "string") report({ owner: credential.id, secret: credential.password, by: "credential management" });
+        if (credential && typeof credential.password === "string") report({ account: credential.id, secret: credential.password, by: "credential management", name: credential.name });
         return store(credential);
       };
     }
@@ -41,7 +46,7 @@ export async function watchKeychain(context: BrowserContext, how: { asSafari?: b
     HTMLFormElement.prototype.submit = function (this: HTMLFormElement) {
       const password = this.querySelector<HTMLInputElement>('input[type="password"]');
       const username = this.querySelector<HTMLInputElement>('input[autocomplete="username"]');
-      if (password?.value && !options.refuse) report({ owner: username?.value ?? "", secret: password.value, by: "form" });
+      if (password?.value && !options.refuse) report({ account: username?.value ?? "", secret: password.value, by: "form" });
       return submit.call(this);
     };
   }, how);

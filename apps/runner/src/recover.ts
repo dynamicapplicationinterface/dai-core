@@ -45,7 +45,7 @@ import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { keychainKey } from "./keychain-key.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
-import { adoptUnder, announceOwnerChange, currentOwner, type DataKeyRecord, type OwnerRecord, type StoreDataKey } from "./owner.js";
+import { adoptUnder, announceOwnerChange, currentOwner, ownerOfAccount, type DataKeyRecord, type OwnerRecord, type StoreDataKey } from "./owner.js";
 import type { KeptRecord } from "./keeping.js";
 
 const PRF_INPUT = utf8("dai owner prf v1");
@@ -153,7 +153,9 @@ export function recover(base: string | undefined, here: Here): Promise<Recovered
  * that opens the owner key's keychain wrap. A secret that is not the owner's
  * is refused by the store, and opens nothing here either.
  */
-export async function recoverWithKeychain(base: string | undefined, owner: string, secret: string, here: Here): Promise<Recovered> {
+export async function recoverWithKeychain(base: string | undefined, account: string, secret: string, here: Here): Promise<Recovered> {
+  // The account as the password manager fills it: "Your documents · <hostname> · <owner id>", or a bare owner id saved before (Build 2b-2d item 4).
+  const owner = ownerOfAccount(account);
   if (!owner || !secret) return { cancelled: "no saved password filled in" };
   if (!base) return { unavailable: "no store is configured here" };
   const bytes = utf8(secret);

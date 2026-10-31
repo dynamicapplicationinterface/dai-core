@@ -355,7 +355,7 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       // The passkey gone: the saved password is the one way back.
       await provider.cdp.send("WebAuthn.clearCredentials", { authenticatorId: provider.id });
       await cutAtHeadsOf(context, store.base, ids[second]!);
-      await page.locator("#recover-owner").fill(handed[0]!.owner);
+      await page.locator("#recover-owner").fill(handed[0]!.account);
       await page.locator("#recover-secret").fill(handed[0]!.secret);
       await page.locator("#recover-with-password").click();
       await expect(page.locator("#report")).toHaveText(
@@ -382,7 +382,7 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       expect(await recoveringMark(), "nothing recovered yet").toBe(true);
 
       // Filled as a password manager fills it, and submitted: the rest comes back, the mark goes, the document stays open.
-      await page.locator("#finish-owner").fill(handed[0]!.owner);
+      await page.locator("#finish-owner").fill(handed[0]!.account);
       await page.locator("#finish-secret").fill(handed[0]!.secret);
       await page.locator("#finish-with-password").click();
       await expect(page.locator("#finish-sheet")).toBeHidden({ timeout: 30_000 });
@@ -630,7 +630,7 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
       await page.locator("#more").click();
       await page.locator("#finish-recovering").click();
-      await page.locator("#finish-owner").fill(handed[0]!.owner);
+      await page.locator("#finish-owner").fill(handed[0]!.account);
       await page.locator("#finish-secret").fill(handed[0]!.secret);
       await page.locator("#finish-with-password").click();
       await expect(page.locator("#doc-note")).toHaveText(

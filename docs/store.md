@@ -65,7 +65,7 @@ The store is trusted for liveness, never for content (R-B).
 
 | Name | What it is | Who mints it |
 | --- | --- | --- |
-| Owner id | A random 16-byte identifier, base64url, made at enrollment. It is the passkey's user handle and the keychain credential's user name. | the host, at enrollment |
+| Owner id | A random 16-byte identifier, base64url, made at enrollment. It is the passkey's user handle, and the keychain credential's user name ends with it: "Your documents · <hostname> · <owner id>" (Build 2b-2d item 4; an entry saved before then is the bare owner id, and is read as one). | the host, at enrollment |
 | Working document id | The document a working copy belongs to (R-K). | the host |
 | Author id | The fingerprint of an author's public key ([identity.md](identity.md), "Definitions"). | the host, per context |
 | Envelope digest | SHA-256 of an envelope's bytes as stored. The name the store and the host use for a revision. | the host |
@@ -101,9 +101,15 @@ The derivations, so another host derives the same keys:
 
 How the keychain secret reaches a keychain (D298):
 
+- Its name, wherever it is saved, is the account "Your documents ·
+  <hostname> · <owner id>": the site and that it is the one for all the
+  person's documents, as the passkey's own name says ("Your documents ·
+  <hostname>"), with the owner id last, so each owner's secret is its own
+  entry (Build 2b-2d item 4).
 - Where the browser has the Credential Management API, the host stores it as
-  a password credential whose id is the owner id.
-- Where it has none (Safari), the host fills a form, the owner id as the
+  a password credential whose id is that account and whose name is "Your
+  documents · <hostname>".
+- Where it has none (Safari), the host fills a form, that account as the
   user name and the secret as a new password, and submits it: a password
   manager offers to save a secret only as a form submits. The submission
   navigates, so the enrollment is kept before it; the host's own service
@@ -114,7 +120,8 @@ How the keychain secret reaches a keychain (D298):
   offered it: the keychain wrap is made whenever an owner enrolls, and the
   keychain path is proven by a device reading (R-Z).
 - At recovery the person fills the user name and the password from the
-  keychain; the host signs the keychain proof with the secret and opens the
+  keychain; the host reads the owner id from the end of the user name (a
+  bare owner id, as saved before Build 2b-2d, is read as it is), signs the keychain proof with the secret and opens the
   owner key's keychain wrap, with no passkey.
 
 This is R-D as amended 26 October: the owner key is wrapped twice, and each

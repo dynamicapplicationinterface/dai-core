@@ -90,9 +90,9 @@ async function holdsA(page: Page, uuid: string, owner: string, at: string): Prom
 }
 
 /** Fills the recovery form as a password manager fills it, and submits it. */
-async function recoverWithPassword(page: Page, filled: { owner: string; secret: string }): Promise<void> {
+async function recoverWithPassword(page: Page, filled: { account: string; secret: string }): Promise<void> {
   await expect(page.locator("#recover-keychain")).toBeVisible();
-  await page.locator("#recover-owner").fill(filled.owner);
+  await page.locator("#recover-owner").fill(filled.account);
   await page.locator("#recover-secret").fill(filled.secret);
   await page.locator("#recover-with-password").click();
 }
@@ -199,7 +199,7 @@ test.describe("the keychain path, the opener's side (R-D, D298; Build 2b-2b item
       expect(credentials).toHaveLength(0);
 
       // A wrong password opens nothing, and says so.
-      await recoverWithPassword(page, { owner, secret: "not-the-saved-password" });
+      await recoverWithPassword(page, { account: owner, secret: "not-the-saved-password" });
       await expect(page.locator("#report")).toHaveText("This password did not recover any documents. Nothing was restored.", { timeout: 30_000 });
       expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBeNull();
       expect(await page.evaluate(() => (window as Any).__runner.listLibrary())).toEqual([]);

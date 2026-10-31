@@ -94,7 +94,7 @@ test.describe("an engine whose WebCrypto has no Ed25519 (D302, Build 2b-2fr item
       await wipe(page, provider.cdp);
       await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
       expect(handed, "the saved password, handed to the password manager once").toHaveLength(1);
-      await page.locator("#recover-owner").fill(handed[0]!.owner);
+      await page.locator("#recover-owner").fill(handed[0]!.account);
       await page.locator("#recover-secret").fill(handed[0]!.secret);
       await page.locator("#recover-with-password").click();
       const row = page.locator(`#recovered button[data-document="${uuid}"]`);

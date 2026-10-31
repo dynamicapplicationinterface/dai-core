@@ -68,6 +68,22 @@ export interface DataKeyRecord {
   atStore?: boolean;
 }
 
+/**
+ * The name the passkey and the saved password carry (Build 2b-2d item 4): the
+ * site, and that it is the one for all the person's documents. Two passkeys
+ * both named "Your documents" left a person unable to tell which a prompt
+ * wanted (the device reading of 30 October). Passkeys made before keep the
+ * name they were made with.
+ */
+export const passkeyName = (): string => `Your documents · ${location.hostname}`;
+/**
+ * The saved password's account: the same name, and the owner id last, so each
+ * owner's secret is its own entry and recovery reads the owner from it.
+ */
+export const keychainAccount = (owner: string): string => `${passkeyName()} · ${owner}`;
+/** The owner id an account names: its last part, or the whole of a bare owner id, as saved before Build 2b-2d. */
+export const ownerOfAccount = (account: string): string => (account.split(" · ").pop() ?? "").trim();
+
 /** What the PRF extension is asked to evaluate. Fixed, so every context of one passkey derives one secret. */
 const PRF_INPUT = new TextEncoder().encode("dai owner prf v1");
 /** The HKDF salt for both wrapping keys (docs/store.md, "Keys"). */
@@ -276,7 +292,7 @@ export function enroll(
   const made = navigator.credentials.create({
     publicKey: {
       rp: { name: rpName },
-      user: { id: ownerBytes, name: "Your documents", displayName: "Your documents" },
+      user: { id: ownerBytes, name: passkeyName(), displayName: passkeyName() },
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
@@ -370,20 +386,20 @@ async function keep(
 
 /**
  * How the opener hands the keychain secret to a password manager by a form
- * submission: it fills the form with the owner id and the secret, calls
+ * submission: it fills the form with the account (`keychainAccount`) and the secret, calls
  * `offered` once nothing can stop the submission, and submits. Answers false,
  * having called nothing, when it cannot submit without the secret leaving the
  * browser. A submission reloads the page, so a true answer is seldom seen.
  */
-export type OfferByForm = (owner: string, secret: string, offered: () => Promise<void>) => Promise<boolean>;
+export type OfferByForm = (account: string, secret: string, offered: () => Promise<void>) => Promise<boolean>;
 
 /**
  * Hands the keychain secret to the browser's password manager, and says
  * whether it was handed over: through the Credential Management API where the
  * browser has it (Chromium), and where it has none (Safari), through a form
  * submission the password manager offers to save, which reloads the page
- * ("Owner/author spike", probe fault 2; D298). The owner id is the entry's
- * name, so each owner's secret is its own entry.
+ * ("Owner/author spike", probe fault 2; D298). The account names the site
+ * and ends with the owner id, so each owner's secret is its own entry.
  *
  * Whether the keychain kept it is not knowable here: `store()` settles when
  * the browser offers to save, before the person answers, a form submission
@@ -395,14 +411,14 @@ async function offerToKeychain(owner: string, secret: string, offered: () => Pro
   const Password = (window as unknown as { PasswordCredential?: new (data: { id: string; password: string; name: string }) => Credential }).PasswordCredential;
   if (Password && navigator.credentials?.store) {
     try {
-      await navigator.credentials.store(new Password({ id: owner, password: secret, name: "Your documents" }));
+      await navigator.credentials.store(new Password({ id: keychainAccount(owner), password: secret, name: passkeyName() }));
     } catch {
       return "not offered";
     }
     await offered();
     return "offered";
   }
-  return byForm && (await byForm(owner, secret, offered)) ? "offered" : "not offered";
+  return byForm && (await byForm(keychainAccount(owner), secret, offered)) ? "offered" : "not offered";
 }
 
 /**
