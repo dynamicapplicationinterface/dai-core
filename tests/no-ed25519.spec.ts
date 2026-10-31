@@ -47,7 +47,7 @@ async function withoutEd25519(context: BrowserContext, also: { sha512?: boolean 
 }
 
 const LET_GO_SAID =
-  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again.';
+  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again. The passkey and saved password made the first time open nothing, and you can delete them.';
 
 const ownerRecordOf = (page: Page, owner: string): Promise<{ verifier: string | null; registration: boolean; atStore: boolean } | null> =>
   withKeyStore(page, "const r = await get(arg); return r ? { verifier: r.verifier ?? null, registration: !!r.registration, atStore: r.atStore === true } : null;", `dai:owner:${owner}`);

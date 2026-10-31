@@ -664,7 +664,7 @@ const STORE_REFUSED = 'The store would not keep this document beyond this browse
  * screen before the person types and nothing moves under them (R-Z).
  */
 const OWNER_LET_GO_SAID =
-  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again.';
+  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again. The passkey and saved password made the first time open nothing, and you can delete them.';
 let refusalSaid: string | null = null;
 onKept((documentUuid) => {
   if (documentUuid !== loaded?.manifest.documentUuid) return;
