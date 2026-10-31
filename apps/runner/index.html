@@ -512,6 +512,7 @@
       .keep-way:disabled { opacity: 0.6; }
       .keep-way-name { font-size: 16px; font-weight: 600; color: var(--accent); }
       .keep-way-for { font-size: 13px; line-height: 1.35; color: var(--muted); }
+      #keep-ways-backup { margin: 0; width: 100%; max-width: 24rem; font-size: 13px; line-height: 1.35; color: var(--muted); }
       #keep-ways-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
       #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
       #recover-with-password:disabled { opacity: 0.45; cursor: default; }
@@ -1488,6 +1489,12 @@
           <span class="keep-way-name">Make a new passkey</span>
           <span class="keep-way-for">I have never kept documents beyond a browser.</span>
         </button>
+        <!--
+          Said before the ceremony, beside the way that makes it: a new passkey
+          comes with a saved password, and the browser's offer to save it
+          arrives unexplained otherwise (the device reading of 30 October).
+        -->
+        <p id="keep-ways-backup">Your browser will also offer to save a backup password. Keep it: it opens your documents if the passkey is ever lost.</p>
         <button id="keep-existing" type="button" class="keep-way">
           <span class="keep-way-name">Use the passkey I already have</span>
           <span class="keep-way-for">I have kept documents before, here or in another browser.</span>

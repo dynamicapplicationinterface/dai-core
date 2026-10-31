@@ -104,6 +104,43 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
     }
   });
 
+  /*
+   * The device reading of 30 October: the browser offered to save a password
+   * no one had mentioned, and later the person could not tell the passkey
+   * from the password. The sheet says, before any ceremony, that the backup
+   * password is coming and what it is for.
+   */
+  test("before any ceremony, the sheet says a backup password will be offered for saving, and why to keep it", async ({ browser }) => {
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.addInitScript(() => {
+        (window as Any).__ceremonies = 0;
+        for (const name of ["create", "get"] as const) {
+          const real = navigator.credentials?.[name]?.bind(navigator.credentials);
+          if (real) (navigator.credentials as Any)[name] = (options: Any) => ((window as Any).__ceremonies += 1, real(options));
+        }
+      });
+      await page.goto(RUNNER_URL);
+      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-existing-")), "Notes"));
+      await typeNote(app, "worth keeping");
+      await expect(offer(page)).toBeVisible({ timeout: 30_000 });
+      await offer(page).click();
+      await page.locator("#keep-beyond").click();
+      await expect(page.locator("#keep-ways")).toBeVisible();
+      await expect(page.locator("#keep-ways-backup")).toBeVisible();
+      await expect(page.locator("#keep-ways-backup")).toHaveText(
+        "Your browser will also offer to save a backup password. Keep it: it opens your documents if the passkey is ever lost.",
+      );
+      expect(await page.evaluate(() => (window as Any).__ceremonies), "no ceremony yet").toBe(0);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
   test("the same document in both contexts: the second context's copy is kept under the one owner, beside the first's, with no refusal", async ({
     browser,
     browserName,
