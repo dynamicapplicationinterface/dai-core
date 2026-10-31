@@ -231,4 +231,67 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       await store.close();
     }
   });
+
+  /*
+   * The review of Build 2b-2dr (2b2dr-L2): a document held here under the
+   * owner signed in, its data key never put at the store, while the store
+   * holds another key for it from another context. Recover met it and passed
+   * it to the adoption, which skipped a document an owner already holds, and
+   * its next keep was refused "the document has another key". It takes the
+   * store's key, as the join does, and is kept.
+   */
+  test("Recover meets a document held here under the same owner whose key never reached the store: it takes the store's key and is kept", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const provider = await addPasskeyProvider(context, page);
+      const scratch = mkdtempSync(join(tmpdir(), "dai-existing-"));
+      const shared = await buildNotes(scratch, "Notes");
+      const other = await buildNotes(scratch, "Other");
+
+      // One context: the owner keeps the document; its key is at the store.
+      let app = await openFile(page, shared);
+      const uuid = await uuidOf(page);
+      await typeNote(app, "kept-first");
+      const enrolled = await enrollHere(page);
+      await waitSettledKept(page, uuid);
+
+      // Another: it joins the owner by another document, then the first is opened and changed while its key cannot reach the store.
+      await wipe(page, provider.cdp);
+      app = await openFile(page, other);
+      await typeNote(app, "other");
+      await keepWithThePasskeyIHave(page);
+      await expect.poll(() => owner(page), { timeout: 30_000 }).toBe(enrolled);
+      store.rewrite((path, answer) =>
+        path.endsWith(`/${uuid}/key`) ? new Response(JSON.stringify({ unavailable: "held back by the test" }), { status: 503, headers: answer.headers }) : answer,
+      );
+      app = await openFile(page, shared);
+      await typeNote(app, "here");
+      await expect.poll(() => storedHolds(page, uuid, "here"), { timeout: 30_000 }).toBe(true);
+      const dataKey = (): Promise<{ owner: string | null; atStore: boolean }> =>
+        withKeyStore(page, 'const held = await get("dai:data-key:" + arg); return { owner: held?.owner ?? null, atStore: held?.atStore === true };', uuid);
+      await expect.poll(dataKey, { timeout: 30_000 }).toEqual({ owner: enrolled, atStore: false });
+      store.rewrite(null);
+
+      // Signed out and the page loaded again: the owner's documents are not opened with nobody signed in, so Recover is the chooser's.
+      await page.evaluate(() => (window as Any).__runner.owner.leave());
+      await expect.poll(() => owner(page)).toBeNull();
+      await page.reload();
+      await expect(page.locator("#recover")).toBeVisible({ timeout: 30_000 });
+      await page.locator("#recover").click();
+      await expect.poll(() => owner(page), { timeout: 30_000 }).toBe(enrolled);
+      await expect.poll(async () => (await keptRecord(page, uuid))?.owner ?? null, { timeout: 45_000 }).toBe(enrolled);
+      expect((await dataKey()).atStore, "the store's key, held here").toBe(true);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
 });

@@ -209,7 +209,14 @@ async function adoptAll(owner: OwnerRecord, documents: readonly string[], atStor
       if (await wrapUnder(documentUuid, owner)) adopted.push(documentUuid);
       continue;
     }
-    if ((await dataKeyOf(documentUuid))?.owner) continue;
+    /*
+     * Held under another owner: theirs, left alone. Held under this owner with
+     * a key the store never took: that key sealed nothing kept, and the store
+     * would refuse it as another key, so it takes the store's as an unowned
+     * one does (2b2dr-L2). Held under this owner with the store's: as it is.
+     */
+    const held = await dataKeyOf(documentUuid);
+    if (held?.owner && (held.owner !== owner.owner || held.atStore === true)) continue;
     await keepInKeyStore(dataKeyKey(documentUuid), { key: there.key, owner: owner.owner, wrapped: there.wrapped, atStore: true } satisfies DataKeyRecord);
     adopted.push(documentUuid);
   }
