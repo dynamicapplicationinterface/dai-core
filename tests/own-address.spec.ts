@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -6,7 +5,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
-import { signedBytes, signedViewOf } from "../src/core.js";
 import { inlineLink } from "../src/link.js";
 import { publish } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
@@ -15,6 +13,8 @@ import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtSto
 import { watchKeychain, wipe } from "./keychain.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 import { enrollHere, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
+import { serveRelay } from "./relay-memory.js";
+import { play } from "./chess-play.js";
 
 /**
  * A document that arrives from the page's own address (D303, ruled 31 October).
@@ -791,9 +791,8 @@ test.describe("a snapshot that takes in another copy's changes (D303)", () => {
       const file = join(scratch, "chess.dai.html");
       writeFileSync(file, built.html, "utf8");
       const uuid = built.manifest.documentUuid;
-      const view = createHash("sha256").update(signedBytes(signedViewOf(built.manifest))).digest("hex");
 
-      const context = await browser.newContext({ viewport: PHONE });
+      const context = await browser.newContext({ viewport: PHONE, acceptDownloads: true });
       await pointAtStore(context, store.base);
       const page = await context.newPage();
       await page.goto(RUNNER_URL);
@@ -812,7 +811,14 @@ test.describe("a snapshot that takes in another copy's changes (D303)", () => {
       await expect.poll(() => page.evaluate(() => (window as Any).__runner.savesWritten as number), { timeout: 30_000 }).toBeGreaterThan(0);
       const owner = await enrollHere(page);
       await waitSettledKept(page, uuid);
-      const other = (await page.evaluate(async (id) => [...((await (window as Any).__runner.loadStored(id)) as Uint8Array)], uuid)) as number[];
+      // That copy saved out to a file, as a person sends their copy (Save a copy).
+      await page.evaluate(() => {
+        delete (window as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+      });
+      const downloading = page.waitForEvent("download", { timeout: 60_000 });
+      await page.evaluate(() => (window as Any).__runner.exportContainer());
+      const otherCopy = join(scratch, "other-copy.dai.html");
+      writeFileSync(otherCopy, readFileSync(await (await downloading).path()));
       const heads = (): string[] => {
         const found = store.values().find((value) => value.object === `d:${owner}:${uuid}` && value.key === "heads");
         return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
@@ -848,12 +854,11 @@ test.describe("a snapshot that takes in another copy's changes (D303)", () => {
         });
         db.close();
       }, uuid);
-      const report = (await page.evaluate(([bytes, digest]) => (window as Any).__runner.mergeInFrame(bytes, digest), [other, view] as const)) as {
-        applied: number;
-        refused?: string;
-      };
-      expect(report.refused).toBeUndefined();
-      expect(report.applied, "changes came across").toBeGreaterThan(0);
+      // The other copy opened here as a person opens one: the card, "Open in my copy", and the changes come across.
+      await page.setInputFiles("#file", otherCopy);
+      await expect(page.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+      await page.locator("#card-open").click();
+      await expect(page.locator("#doc-note")).toContainText(/came across/, { timeout: 60_000 });
       await page.evaluate(() => (window as Any).__runner.flush());
       await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
 
@@ -865,6 +870,105 @@ test.describe("a snapshot that takes in another copy's changes (D303)", () => {
       await expect.poll(() => heads().length, { timeout: 30_000 }).toBe(2);
     } finally {
       await store.close();
+    }
+  });
+});
+
+/*
+ * D303 as amended (the review of Build 2b-2dr3, 2b2dr3-L4): a mailbox pull
+ * that brings another copy's move is a write here and ends the snapshot. Two
+ * copies of chess over a relay this test stands up, with one key injected in
+ * both (the mechanism, as mailbox-mechanism.spec.ts; the key path is proven
+ * elsewhere).
+ */
+test.describe("a snapshot that a mailbox pull writes into (D303)", () => {
+  test.slow();
+  test("a move pulled from the mailbox ends the snapshot", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the mechanism once; the mark is the library's, the same on every engine");
+    const relay = await serveRelay();
+    try {
+      const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const built = await compileDirectory({ policyLayer: true, sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
+      const scratch = mkdtempSync(join(tmpdir(), "dai-snapshot-mailbox-"));
+      const container = join(scratch, "chess.dai.html");
+      writeFileSync(container, built.html, "utf8");
+      const uuid = built.manifest.documentUuid;
+      const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+      const board = (page: Page): FrameLocator => appIn(page);
+      const openWith = async (page: Page, file: string): Promise<FrameLocator> => {
+        await page.goto(RUNNER_URL);
+        await page.setInputFiles("#file", file);
+        await page.locator("#card-open").click({ timeout: 60_000 });
+        await expect(board(page).locator("#app")).toBeVisible({ timeout: 60_000 });
+        return board(page);
+      };
+      const settled = async (page: Page): Promise<void> => {
+        await page.evaluate(() => (window as Any).__runner.flush());
+        await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
+      };
+      const deliver = async (reader: Page, move: string): Promise<void> => {
+        await expect(async () => {
+          await reader.evaluate(() => (window as Any).__runner.pullMailbox());
+          await expect(board(reader).locator("#move-history")).toContainText(move, { timeout: 2_000 });
+        }).toPass({ timeout: 30_000 });
+      };
+
+      const pageA = await (await browser.newContext({ acceptDownloads: true })).newPage();
+      const pageB = await (await browser.newContext({ acceptDownloads: true })).newPage();
+      const appA = await openWith(pageA, container);
+      await appA.locator("[data-new-game]:visible").first().click();
+      await appA.locator("#setup-you").fill("Ada");
+      await appA.locator("#setup-them").fill("Bo");
+      await appA.locator('input[name="color"][value="w"]').check();
+      await appA.locator("#new-game-form button[type=submit]").click();
+      await play(appA, "e2", "e4");
+      await pageA.evaluate(([base, k]) => (window as Any).__runner.useRelay(base, k), [relay.base, key] as const);
+      await pageA.evaluate(() => {
+        delete (window as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+      });
+      const downloading = pageA.waitForEvent("download", { timeout: 60_000 });
+      await pageA.evaluate(() => (window as Any).__runner.exportContainer());
+      const seed = join(scratch, "seed.dai.html");
+      writeFileSync(seed, readFileSync(await (await downloading).path()));
+
+      // The other copy, from the file, its own move made, then put back to a snapshot with its writes settled.
+      const appB = await openWith(pageB, seed);
+      await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+      await pageB.evaluate(([base, k]) => (window as Any).__runner.useRelay(base, k), [relay.base, key] as const);
+      await play(appB, "e7", "e5");
+      await deliver(pageA, "e5");
+      await settled(pageB);
+      await pageB.evaluate(async (id) => {
+        const db: IDBDatabase = await new Promise((done, fail) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => done(open.result);
+          open.onerror = () => fail(open.error);
+        });
+        const store = db.transaction("cartridges", "readwrite").objectStore("cartridges");
+        const held = await new Promise<Any>((done) => {
+          const get = store.get(id);
+          get.onsuccess = () => done(get.result);
+        });
+        await new Promise<void>((done) => {
+          const put = store.put({ ...held, arrivedSnapshot: true });
+          put.onsuccess = () => done();
+        });
+        db.close();
+      }, uuid);
+      const markOfB = (): Promise<unknown> =>
+        pageB.evaluate(async (id) => {
+          const item = ((await (window as Any).__runner.listLibrary()) as Any[]).find((x) => x.documentUuid === id);
+          return item?.arrivedSnapshot ?? null;
+        }, uuid);
+      expect(await markOfB()).toBe(true);
+
+      // The first copy's next move reaches this one by the mailbox: a write here, and the snapshot ends.
+      await play(appA, "g1", "f3");
+      await deliver(pageB, "Nf3");
+      await settled(pageB);
+      await expect.poll(markOfB, { timeout: 15_000 }).toBeNull();
+    } finally {
+      await relay.close();
     }
   });
 });

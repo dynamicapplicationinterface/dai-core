@@ -3809,6 +3809,7 @@
       "scripts/generate-key.mjs",
       "scripts/retain-host.mjs",
       "src/",
+      "tests/chess-play.ts",
       "tests/fixture/",
       "tests/fixtures.ts",
       "tests/keeping.ts",
