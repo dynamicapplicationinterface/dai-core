@@ -1324,6 +1324,28 @@ own text, and puts D195 in Build 2b. The store's contract is
 - **D195 is in Build 2b.** One author per context (R-A, R-E) needs a key
   that cannot leave its context. Author keys are minted non-extractable, and
   a context holding an extractable key re-keys as D195 says.
+- **Amended 31 October (a context meets an existing owner).** A person is
+  one owner across their browser contexts: Safari, the Home Screen app,
+  another browser. The offer "Keep beyond this browser" in a context with no
+  owner signed in offers two ways: a new passkey, which enrolls; and the
+  passkey the person already has, which runs the recovery ceremony, signs the
+  existing owner in, admits this context under them (Admit), adopts the
+  documents saved in this context under that owner, and keeps them. The
+  second way is named so a person who has kept documents before recognizes
+  it; the first is named so a person who never has does. Neither way is a
+  default. Red test: an owner enrolled in one context and a document saved
+  in a second; in the second, "Keep beyond this browser" → the
+  existing-passkey way → the store lists one owner, that document is kept
+  under it, and after Recover in a third context both documents are listed.
+  Weakened so the second way enrolls: red (two owners at the store).
+  When the store already holds the document under that owner, the join still
+  adopts and keeps this context's copy; it becomes a second kept line of the
+  document. Recover opens the newest line and says when a document has more
+  than one kept line. Reconciling the lines is D301's work (Build 2b-3).
+  *Amended 31 October (D303, on the review of Build 2b-2dr):* until 2b-3,
+  Recover opens the line the store took last, names how many kept lines the
+  document has and that the line kept last is shown, and makes no claim
+  about which change is newest.
 
 **Red tests**
 
@@ -11762,7 +11784,8 @@ repeats most of what CI then runs on the same commit.
 3. **One push per build.** The code and its handoff go up together, and CI
    runs the matrix once on that push. The handoff's CI table is the next
    session's first commit, which changes only prose, so it costs no matrix
-   run.
+   run. Every build branch opens a draft PR at its first push, since CI
+   runs only on a PR and the next session needs a run to read.
 
 `scripts/ci-install-times.mjs <run> [attempt]` reads each browser job's
 install time and whether its cache hit (D292's measure, by hand until now).
@@ -11800,8 +11823,8 @@ until the person types (the test removed from `keep-offer.spec.ts` in Build
 
 #### D298 — On Safari the keychain secret is never offered to the keychain
 
-*Status: open, owed with the iPhone reading. Filed 26 October, from Build
-2b-1, item 1.*
+*Status: changed 28 October, Build 2b-2b item 6 (below); open until the
+device readings. Filed 26 October, from Build 2b-1, item 1.*
 
 Enrollment makes the keychain wrap whatever happens to the secret, because
 no page can know whether a keychain kept it (`offerToKeychain`,
@@ -11815,6 +11838,19 @@ form path, with the enrollment's state kept across the reload. **Acceptance:**
 on an iPhone, in Safari and a Home Screen app, the keychain wrap alone
 recovers the owner key after a website-data wipe (R-Z, "Each recovery path,
 where it can run").
+
+**Changed, 28 October (Build 2b-2b item 6).** Where the browser has no
+Credential Management API, enrollment fills a form with the owner id and
+the secret and submits it, once the enrollment is kept and the open
+document's saves are written; the opener's service worker answers the
+post with the page it came from, so the secret never leaves the browser,
+and with no worker controlling the page the form is not submitted. On a
+browser with nothing, "Recover with the saved password" recovers by the
+keychain proof and the keychain wrap, with no passkey
+(`tests/keychain.spec.ts`, on Chromium with the API taken away). **Owed:**
+the acceptance above, in Safari and a Home Screen app: whether the save
+prompt appears for a submission made after the passkey ceremony and
+answered by the worker, and keychain recovery after a wipe.
 
 ### Build 2b-1r (filed 27 October)
 
@@ -11855,8 +11891,24 @@ and WebKit launching, its parts and its mailbox job green.
 
 #### D300 — The pill's reserved width is today's widest words, not 2b-2's
 
-*Status: open, to be settled in 2b-2. Filed 27 October, from the code review
+*Status: fixed, Build 2b-2 item 3. Filed 27 October, from the code review
 of Build 2b-1r (observations).*
+
+**Settled: shorter words, and words that cannot grow the box.** A second
+line inside the box was measured out: the pill is one line of 11.5 px in a
+box 21.25 px tall, so two lines need type near 8 px. Measured on Chromium,
+Firefox and WebKit, against the offer's 174 px: R-Z's sentence, "Saved in
+this browser. Last kept at 10:42 AM.", is 1.48 of it; "Saved here · last
+kept 10:42 AM" 1.07; "Saved here · kept 10:42 AM" 0.94. So the pill says
+"Saved here · kept 10:42 AM", and R-Z's sentence is its accessible name and
+its title (`storageSentence`, `apps/runner/src/status.ts`). And the words sit
+in a span with no width of its own, stretched to the measured box: a font on
+which words are wider than the offer cuts them with an ellipsis inside the
+box and never grows it. `tests/kept.spec.ts` records the pill's box at every
+change from the page's load, through the offer, saving, saved, Kept and kept
+earlier at 12:59 PM, at 390 and 1280 wide on three engines: one box, and in
+every state the words whole. Red against the measure narrowed (words cut)
+and against R-Z's whole sentence as the pill's words.
 
 The status pill keeps one box whatever it says, so nothing the host shows
 grows or moves over the document (R-Z, the host's fixed presence): it is
@@ -11873,6 +11925,231 @@ inside the pill's own box. Which is 2b-2's to decide, with the words.
 pill's box measures no larger than with "Saved in this browser · Keep?", at
 phone and desktop width, on three engines (the measurement in
 `keep-offer.spec.ts`'s pill tests).
+
+#### D301 — After one branch, no append is ever the head again
+
+*Status: open, for Build 2b-3 (branch reconciliation, R-F as R-Z amends
+it). Filed 29 October, from the code review of PR #15 (2b2-M2).*
+
+An append as the head must name every current head as a parent
+(`apps/owner-store/src/store-do.ts`, `append`). Once one context's append is
+refused `stale` and kept as a branch, the document has two heads, and no host
+names both: the context that held the head is refused `stale` on its next
+append and appends it as a branch, and the branched line stays a branch
+(`keeping.ts` keeps a line branched until the host reconciles it). From then
+on every append of both is a branch, the heads only grow, and each append of
+the context that held the head costs two requests. Recovery restores the
+newest head by the store's time (`recover.ts`), so a revision one context was
+told is "Kept" is not what Recover brings back once another line is newer.
+
+**Its first named instance: Safari and the Home Screen app** (R-Z as
+amended 31 October), R-Z's own two contexts, each keeping the same document.
+The second context's join adopts and keeps its copy of a document the store
+already holds under that owner, and its first append names no parent, so the
+document has two kept lines with no shared ancestor (2b2d-M1). Recover opens
+the newest line and says when a document has more than one kept line;
+reconciling the lines is this item's work. Until then Recover opens the line
+the store took last and says so (D303, ruled on the review of Build 2b-2dr).
+
+**Note (31 October).** Envelopes carry no save time, so no host can tell
+which line holds the newest change. Adding one is this item's to rule: an
+optional saved time in the sealed part, read only by the opener.
+
+Nothing accepted is dropped (R-B), and each "Kept" is still the store's
+acknowledgment of that revision; what is missing is the merge. The lost
+answer, which made a context branch against itself, is fixed apart from this
+(Build 2b-2r item 3): only two contexts appending at once branch now.
+
+**Change, in 2b-3:** the host that holds the heads opens them, merges their
+change logs, and appends the merged state as the head with every head as a
+parent (docs/store.md, "Branches reconcile at the host"). **Acceptance:** two
+contexts of one owner, each keeping one change after the other's last
+acknowledged one; after reconciliation one head holds both changes, the next
+append of either is a head, and Recover restores both changes.
+
+#### D302 — An engine with PRF and no Ed25519 enrolls an owner the store never registers
+
+*Status: ruled 30 October and built, Build 2b-2fr item 6 (`823b0612`).
+Filed 30 October (Build 2b-2f item 4), from Build 2b-2b's open list.*
+
+Enrollment derives the keychain path's verifier with Ed25519
+(`keychainVerifier`, `apps/owner-store/src/envelope.ts`; docs/store.md, "The
+wire", Admit). `enroll` in `apps/runner/src/owner.ts` takes a derivation that
+throws for an engine with no Ed25519 and goes on without a verifier: the
+passkey is made, the owner record is kept here with both wraps and no
+`verifier`, the documents are adopted, and the person is signed in. The
+store's registration happens later, before the first save is kept
+(`keeping.ts`, "The owner, once"), and that step refuses an owner record
+with no verifier: "this owner was enrolled before the store's registration
+was kept". So the owner is never enrolled at the store, every save of
+theirs is refused by the host before any request reaches the store (the
+store never hears of the owner), nothing is ever kept, and the keychain
+secret was offered to a password manager for an owner no store holds. Since Build
+2b-2r item 4 (2b2-M3) the opener says it, over the document: "The store
+would not keep this document beyond this browser. It is still saved here;
+to keep a copy elsewhere, use "Save a copy…"." The sentence is right and
+names no way out: the owner is signed in, so "Keep beyond this browser" is
+not offered again, and nothing enrolls them.
+
+**Seen** on Playwright's Windows WebKit, which has `PublicKeyCredential` and
+no Ed25519 in WebCrypto (real Safari 17 and later have it). **I.** Not
+tested: a Chromium release with PRF from before Ed25519 shipped in its
+WebCrypto would enroll the same way.
+
+**Owed: a ruling,** one of two. (a) Refuse enrollment there, as `no-prf` is
+refused ("This device's passkeys cannot keep work beyond this browser yet.
+Your work is still saved in this browser."), with a sentence of its own:
+nothing made, the offer kept. (b) Enroll without the keychain path: register the owner with
+the passkey alone, the keychain wrap and the password-manager offer left
+out, so the passkey is the one recovery path (R-D as amended wraps the
+owner key twice; this would make the second wrap optional at the store).
+Neither is built.
+
+**Acceptance, as a red test:** on an engine whose WebCrypto has no Ed25519
+(Ed25519 removed from `crypto.subtle` before the opener loads), "Keep beyond
+this browser" either refuses with that sentence and makes no passkey and no
+owner record, or enrolls an owner the store lists and whose next save is
+"Kept"; in neither case is a signed-in owner left whose every save is
+refused.
+
+**Ruled 30 October.** The opener carries an Ed25519 implementation for an
+engine whose WebCrypto lacks it, and uses it only then. The verifier is
+derived from the same seed and the same challenge is signed, so the wire,
+docs/store.md and the Python reader are unchanged: no new protocol surface
+(R-P), and both recovery paths stay (R-D as amended). Enrollment never
+leaves a signed-in owner the store cannot register: if the verifier cannot
+be derived at all, enrollment refuses before the passkey is made, with a
+sentence of the no-prf family, and the offer stays. An owner record kept
+without the store's registration is not a dead end: registration is retried
+before the first save and said if it fails. "Recover with the saved
+password" uses the same implementation. Red test: on Chromium with Ed25519
+removed from crypto.subtle before the opener loads, "Keep beyond this
+browser" enrolls an owner the store lists, the next save is "Kept", and
+after a wipe "Recover with the saved password" restores the document.
+
+### Build 2b-2d (filed 31 October)
+
+#### D303 — Clear History and Website Data, with the opener's tab open, did not appear to wipe
+
+*Status: ruled 31 October (below) and built, Build 2b-2dr item 2
+(`af2d49aa`); open until the device re-read. Filed 31 October, from the
+device reading of 30 October.*
+
+Clear History and Website Data on iOS, with the opener's tab still open,
+showed the document at an earlier state rather than an empty chooser;
+whether this was the tab's own memory or storage left behind is
+undetermined (device reading of 30 October); to re-read with the tab closed
+first.
+
+**Added 31 October.** The opener's tab stayed open in Safari while the data
+was cleared; returning to it and opening the preview link again showed the
+chore chart at an earlier state (before the offline save), not an empty
+chooser. "Remove from this device" then cleared it, and Recover restored the
+latest kept state.
+
+**Investigated, Build 2b-2d** (`docs/handoff-2026-10-26.md`, "D303,
+investigated"). Ruled out on a desktop page, Chromium and WebKit: with every
+database, OPFS file, cache and the worker cleared under the live page,
+nothing was written back, and a reload showed the empty chooser. Found on
+WebKit with an iPhone's user agent: on iOS a document is on screen only at
+its own launch address, which for a document that did not arrive by a link
+is an inline link minted from the container, records included, and kept as
+the document's `link` (`relaunchAtOwnAddress`, `identityOf`,
+`launchLinkForDocument` in `apps/runner/src/main.ts`). With everything
+cleared under the live page, a reload of that address brought the document
+back from the address, wrote it into the library again and showed it, at the
+state the address was minted in, with nothing said. A tab left open across
+the wipe therefore keeps an earlier state of the document in its own
+address. Not fixed: the same address is how a Home Screen icon carries its
+document into a context with nothing, so what it should carry is a ruling
+(the options are in that section's Open). Still to re-read on the device
+with the tab closed first.
+
+**Ruled 31 October.** The launch address stays as the Home Screen carrier.
+When a document arrives from the page's own address, not a link someone
+followed, the note row says it was opened as the page's address held it on
+<date>, and, when a store is stamped, that a kept copy may be newer and
+Recover brings it. The arrival is not kept and not signed in. Still owed: a
+device re-read with every Safari tab closed before the wipe.
+
+**Ruled 31 October, Recover over a document.** Recover appears in the ⋯ menu
+when nobody is signed in and a store is stamped, opening the same recovery
+sheet the chooser offers, both ways. When Recover brings a document this
+context already holds unkept (the arrival from the page's own address, with
+or without changes made since), that copy is not thrown away and not
+silently replaced: it takes the path R-Z's amendment of 31 October built for
+a context meeting an existing owner, adopted under the owner and kept as a
+line, and the newest line is shown with the sentence that the document has
+more than one kept line. Nothing of the person's is lost, and what is shown
+is said. D304 is the signed-in half of the same want. The date in the arrival
+sentence is the state's own: the container's `savedAt`, or its `createdAt`
+when it was never saved into a container; no field is added to the address.
+
+**Ruled 31 October, on the code review of Build 2b-2dr.**
+
+- Which line Recover opens. Until Build 2b-3 reconciles lines (D301),
+  Recover opens the line the store took last and says so: it names how many
+  kept lines the document has and that the line kept last is shown. It makes
+  no claim about which change is newest; envelopes carry no save time, and
+  adding one is D301's to rule (an optional saved time in the sealed part,
+  read only by the opener).
+- An arrival from the page's own address that is unchanged since it arrived
+  is the address's snapshot, not the person's work: Recover restores the
+  store's head over it and keeps no line for it. "Unchanged" is a library
+  mark set when a document arrives from its own address and cleared by the
+  first save that carries the person's change. A copy changed since it
+  arrived is kept as its own line, and the rule above says what is shown.
+- Any document that arrives by an inline carrier (#a=) into a context that
+  does not hold it is a snapshot until the first save that carries the
+  person's change, whether it came from the page's own address or from a
+  link someone followed. The snapshot mark is set at arrival and decides what
+  Recover does; the own-address mark decides only what is said.
+  *Amended 31 October, on the code review of Build 2b-2dr2:* Every arrival
+  into a context that does not hold the document is a snapshot until the
+  document changes here, whatever carried it: an inline link, a file, the
+  share target, a link to a file on another host, a store link or a mailbox
+  link. Any write to the document's database here other than the restore
+  itself ends the snapshot, whether the person made it or it came across
+  from another copy. Recover restores the store's head over a snapshot and
+  keeps no line for it; a file restored over still holds its own state. The
+  own-address mark decides only what is said.
+- A document held here under another owner is passed over by Recover: not
+  restored, not re-keyed, not touched, and the note row says it was left as
+  it is.
+- The own-address mark lives in the tab's history state, not in the
+  address. The address bar never carries the hint, so a copied or shared
+  address is a link someone followed; the tab's own reload, with its history
+  state, is the page's own address.
+
+### Build 2b-2dr (filed 31 October)
+
+#### D304 — Recover while an owner is signed in
+
+*Status: open, after Build 2b-3. Filed 31 October, from the code review of
+Build 2b-2d (2b2d-M1).*
+
+The chooser's Recover is hidden once an owner is signed in, so a context
+that joined an owner cannot bring that owner's other documents here, and
+cannot bring the newest line of a document it holds. Wanted after 2b-3:
+Recover in the ⋯ menu while signed in, for documents the store holds that
+this context does not, and for a document whose newest kept line is not the
+one shown here.
+
+The half with nobody signed in is D303's ruling of 31 October: Recover in the
+⋯ menu, a document held here unkept adopted and kept as a line.
+
+### Build 2b-2dr3 (filed 31 October)
+
+#### D305 — Apps that write as they open end their snapshot at once
+
+*Status: open, with D301 (Build 2b-3). Filed 31 October, from Build 2b-2dr3
+item 3.*
+
+Apps that write as they open end their snapshot at once, so a stale copy of
+such a document is kept as a line when Recover meets it, and Recover shows
+the line kept last. Nothing is lost and the lines are said, but the kept
+copy is not what is shown. Wanted with D301: a saved time in the sealed
+part, or a signal that the person touched the document before the save.
 
 ### Branch review residue (filed 8 October)
 

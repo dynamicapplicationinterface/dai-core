@@ -6,7 +6,7 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { cutTheNetwork } from "./offline.js";
 import { RUNNER_URL, buildNotes, openFile, savesWritten, storedHolds, typeNote, uuidOf, waitMounted } from "./owner.js";
-import { storageWords } from "../apps/runner/src/status.js";
+import { storageSentence, storageWords } from "../apps/runner/src/status.js";
 
 /**
  * The status words, Build 2b-1 (R-Z sentences 2 and 4; ruling 6 as amended).
@@ -16,9 +16,10 @@ import { storageWords } from "../apps/runner/src/status.js";
  * acknowledged; there is no store in this build (2b-2), so it is never shown.
  * Reconnecting alone changes nothing: only an acknowledgment would.
  *
- * The words appear once a change of the person's has landed, and while the
- * offer to keep beyond this browser stands they carry it: "Saved in this
- * browser · Keep?", in the same pill.
+ * The words appear once a change of the person's has landed. These tests run
+ * with no store, so no offer to keep beyond this browser is made: an opener
+ * offers it only when it has a store (keep-offer.spec.ts), and the pill says
+ * where the document is, alone.
  */
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,12 +28,19 @@ const status = (page: Page) => page.locator("#save-state");
 /** The host's own text, the application's frames left out. */
 const hostText = (page: Page): Promise<string> => page.evaluate(() => document.body.innerText);
 
-/** Types a first change, and answers the offer "Not now", as a person who goes on would. */
+/** Types a first change, and waits until the offer is decided for every save written: with no store, none is made. */
 async function firstChange(page: Page, app: Awaited<ReturnType<typeof openFile>>, text: string): Promise<void> {
   await typeNote(app, text);
-  await expect(page.locator("#save-state[data-offer]")).toHaveText(`${SAVED} · Keep?`, { timeout: 30_000 });
-  await status(page).click();
-  await page.locator("#keep-not-now").click();
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const runner = (window as { __runner?: { savesWritten: number; keepOfferDecided: number } }).__runner;
+          return Boolean(runner && runner.savesWritten > 0 && runner.keepOfferDecided >= runner.savesWritten);
+        }),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   await expect(page.locator("#save-state[data-offer]")).toHaveCount(0);
 }
 
@@ -42,7 +50,10 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
   test("the words, from the host's evidence only", () => {
     expect(storageWords({ state: "saved", kept: null })).toBe(SAVED);
     expect(storageWords({ state: "saved", kept: { revision: "current", at: "10:42" } })).toBe("Kept");
-    expect(storageWords({ state: "saved", kept: { revision: "earlier", at: "10:42" } })).toBe("Saved in this browser. Last kept at 10:42.");
+    // Both facts in the pill's own box (D300), and R-Z sentence 4's words as its name.
+    expect(storageWords({ state: "saved", kept: { revision: "earlier", at: "10:42 AM" } })).toBe("Saved here · kept 10:42 AM");
+    expect(storageSentence({ state: "saved", kept: { revision: "earlier", at: "10:42 AM" } })).toBe("Saved in this browser. Last kept at 10:42 AM.");
+    expect(storageSentence({ state: "saved", kept: null })).toBe(SAVED);
     expect(storageWords({ state: "saving", kept: null })).toBe("Saving…");
     expect(storageWords({ state: "failed", kept: { revision: "current", at: "10:42" } })).toBe("Not saved");
   });
@@ -86,7 +97,7 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
     expect(await savesWritten(page), "said from what this browser holds, not from a new save").toBe(0);
   });
 
-  test("the built opener says Kept nowhere but the status's own word, which nothing feeds in this build", () => {
+  test("the built opener says Kept nowhere but the status's own word, which only a held receipt feeds", () => {
     // What the opener's page can show: its markup, comments aside, and its bundled scripts. The worker draws nothing.
     const dist = join(repo, "apps", "runner", "dist");
     const files = ["index.html", ...readdirSync(join(dist, "assets")).filter((name) => name.endsWith(".js")).map((name) => join("assets", name))];

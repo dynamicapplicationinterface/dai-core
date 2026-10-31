@@ -21,7 +21,8 @@
  * before the ceremony is made synchronously.
  */
 import { KEYS, dataKeyKey, ownerRecordKey } from "../../../src/keys.js";
-import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore } from "./opfs.js";
+import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore, listCartridgesFromLibrary } from "./opfs.js";
+import { keychainKey, keychainKeyDerivable } from "./keychain-key.js";
 
 /** One owner, as this browser context holds it. */
 export interface OwnerRecord {
@@ -35,13 +36,27 @@ export interface OwnerRecord {
   wraps: { prf: Uint8Array; keychain: Uint8Array };
   /**
    * How the keychain secret was handed to a password manager: through the
-   * Credential Management API, or not at all, where the browser has none or
-   * refused it. Never whether the keychain kept it: `store()` settles when the
-   * browser offers to save, before the person answers, so no page can know.
+   * Credential Management API, or a form submission where the browser has no
+   * such API, or not at all, where it refused it or the form could not be
+   * answered in the browser. Never whether the keychain kept it: no page can
+   * know that.
    */
   keychain: "offered" | "not offered";
   /** When this context enrolled, ISO 8601. */
   enrolled: string;
+  /**
+   * What the store's Enroll needs from the ceremony (docs/store.md, "The
+   * wire"): the passkey's public key, SPKI, its algorithm, and the
+   * registration's client data. Absent for an owner recovered here, which the
+   * store holds already.
+   */
+  registration?: { publicKey: string; algorithm: number; clientDataJSON: string };
+  /** The keychain path's verifier: the Ed25519 public key the keychain secret derives. */
+  verifier?: string;
+  /** Whether the store has this owner: enrolled there, or recovered from it. */
+  atStore?: boolean;
+  /** A recovery the store cut short: some of the owner's documents were not reached, and Recover stays offered. */
+  recovering?: boolean;
 }
 
 /** A document's data key, and the owner it is wrapped under once it is. */
@@ -49,7 +64,25 @@ export interface DataKeyRecord {
   key: CryptoKey;
   owner?: string;
   wrapped?: Uint8Array;
+  /** Whether the store has this wrap (Put). */
+  atStore?: boolean;
 }
+
+/**
+ * The name the passkey and the saved password carry (Build 2b-2d item 4): the
+ * site, and that it is the one for all the person's documents. Two passkeys
+ * both named "Your documents" left a person unable to tell which a prompt
+ * wanted (the device reading of 30 October). Passkeys made before keep the
+ * name they were made with.
+ */
+export const passkeyName = (): string => `Your documents · ${location.hostname}`;
+/**
+ * The saved password's account: the same name, and the owner id last, so each
+ * owner's secret is its own entry and recovery reads the owner from it.
+ */
+export const keychainAccount = (owner: string): string => `${passkeyName()} · ${owner}`;
+/** The owner id an account names: its last part, or the whole of a bare owner id, as saved before Build 2b-2d. */
+export const ownerOfAccount = (account: string): string => (account.split(" · ").pop() ?? "").trim();
 
 /** What the PRF extension is asked to evaluate. Fixed, so every context of one passkey derives one secret. */
 const PRF_INPUT = new TextEncoder().encode("dai owner prf v1");
@@ -108,7 +141,7 @@ const ownerChannel = typeof BroadcastChannel === "function" ? new BroadcastChann
 ownerChannel?.addEventListener("message", () => {
   for (const listener of ownerChanged) listener();
 });
-function announceOwnerChange(): void {
+export function announceOwnerChange(): void {
   for (const listener of ownerChanged) listener();
   ownerChannel?.postMessage("changed");
 }
@@ -146,26 +179,88 @@ async function heldDataKey(documentUuid: string): Promise<DataKeyRecord> {
 }
 
 /** Wraps a document's data key under an owner, unless it is wrapped already. Never rewrites the document. */
-async function wrapUnder(documentUuid: string, owner: OwnerRecord): Promise<void> {
+async function wrapUnder(documentUuid: string, owner: OwnerRecord): Promise<boolean> {
   const held = await heldDataKey(documentUuid);
-  if (held.owner) return;
+  if (held.owner) return false;
   const wrapped = new Uint8Array(await crypto.subtle.wrapKey("raw", held.key, owner.key, "AES-KW"));
   await keepInKeyStore(dataKeyKey(documentUuid), { key: held.key, owner: owner.owner, wrapped } satisfies DataKeyRecord);
+  return true;
+}
+
+/** A document's data key as the store holds it under an owner: opened, and as wrapped there. */
+export interface StoreDataKey {
+  key: CryptoKey;
+  wrapped: Uint8Array;
+}
+
+/*
+ * The adoption: each document named that no owner holds yet comes under
+ * `owner`. One the store already holds under that owner, from another of the
+ * person's browser contexts, takes the store's data key in place of this
+ * browser's, so every envelope of it opens under the one key the store hands a
+ * recovery: the key here sealed nothing yet, since no owner held the document
+ * here and nothing of it was kept. Answers the documents adopted.
+ */
+async function adoptAll(owner: OwnerRecord, documents: readonly string[], atStore: ReadonlyMap<string, StoreDataKey>): Promise<string[]> {
+  const adopted: string[] = [];
+  for (const documentUuid of documents) {
+    const there = atStore.get(documentUuid);
+    if (!there) {
+      if (await wrapUnder(documentUuid, owner)) adopted.push(documentUuid);
+      continue;
+    }
+    /*
+     * Held under another owner: theirs, left alone. Held under this owner with
+     * a key the store never took: that key sealed nothing kept, and the store
+     * would refuse it as another key, so it takes the store's as an unowned
+     * one does (2b2dr-L2). Held under this owner with the store's: as it is.
+     */
+    const held = await dataKeyOf(documentUuid);
+    if (held?.owner && (held.owner !== owner.owner || held.atStore === true)) continue;
+    await keepInKeyStore(dataKeyKey(documentUuid), { key: there.key, owner: owner.owner, wrapped: there.wrapped, atStore: true } satisfies DataKeyRecord);
+    adopted.push(documentUuid);
+  }
+  return adopted;
+}
+
+/**
+ * Adopts, under an owner signed in here by the passkey the person already has
+ * (R-Z, amended 31 October), the documents saved in this browser that no owner
+ * holds: the adoption `enroll` makes, with the store's data key for each
+ * document the store already holds under that owner.
+ */
+export function adoptUnder(owner: OwnerRecord, documents: readonly string[], atStore: ReadonlyMap<string, StoreDataKey>): Promise<string[]> {
+  return serially(() => adoptAll(owner, documents, atStore));
 }
 
 /**
  * After a save of a document landed in this browser: its data key exists, and
- * is wrapped under the owner this context is signed in as, if any. Off the
- * save's path: nothing here holds a save up, and a failure here loses nothing
- * the save wrote.
+ * when the save carried a change of the person's, it is wrapped under the
+ * owner this context is signed in as, if no owner holds it yet. A document no
+ * owner holds is claimed by the owner who first changes it, never by a sign-in
+ * or an open alone: the seed, an echo, a merge and the runtime's bookkeeping
+ * claim nothing (R-Z sentence 5; 2b-1's L2). Off the save's path: nothing here
+ * holds a save up, and a failure here loses nothing the save wrote.
  */
-export function afterSaveWritten(documentUuid: string): Promise<void> {
+export function afterSaveWritten(documentUuid: string, personsChange: boolean): Promise<void> {
   return serially(async () => {
     const signedIn = await currentOwner();
-    const owner = signedIn ? await ownerRecord(signedIn) : null;
+    const owner = signedIn && personsChange ? await ownerRecord(signedIn) : null;
     if (owner) await wrapUnder(documentUuid, owner);
     else await heldDataKey(documentUuid);
   });
+}
+
+/**
+ * Whether a document opens in this browser context (R-B, R-Z sentence 5): when
+ * no owner holds it, or the owner signed in does. A document wrapped under
+ * another owner is that owner's, listed and opened only under their sign-in,
+ * whichever way it is reached: the library, a resume, an icon or a link.
+ */
+export async function mayOpenHere(documentUuid: string): Promise<boolean> {
+  const held = await dataKeyOf(documentUuid);
+  if (!held?.owner) return true;
+  return held.owner === (await currentOwner());
 }
 
 /** Why an enrollment did not finish. Nothing was kept in any of them. */
@@ -175,7 +270,13 @@ export type NotEnrolled =
   /** A passkey was made, but its provider gave no PRF output, so nothing could be wrapped under it. */
   | "no-prf"
   /** This browser has no passkeys at all. */
-  | "unsupported";
+  | "unsupported"
+  /**
+   * The store could never register this owner: no keychain verifier can be
+   * derived here (refused before the passkey is made), or the passkey's public
+   * key was not given (D302). Nothing is kept, and nobody is signed in.
+   */
+  | "unregistrable";
 
 /**
  * Enrolls this browser context as a new owner, and adopts every document
@@ -185,17 +286,20 @@ export type NotEnrolled =
 export function enroll(
   rpName: string,
   documents: () => Promise<readonly string[]>,
+  byForm?: OfferByForm,
 ): Promise<{ enrolled: string } | { refused: NotEnrolled; why: string }> {
   if (!window.PublicKeyCredential || !navigator.credentials?.create) {
     return Promise.resolve({ refused: "unsupported", why: "no WebAuthn" });
   }
+  // Known before the tap: an engine that can derive no keychain verifier gets no passkey made for an owner the store could never hold (D302).
+  if (keychainKeyDerivable() === false) return Promise.resolve({ refused: "unregistrable", why: "no keychain verifier can be derived here" });
   const ownerBytes = crypto.getRandomValues(new Uint8Array(16));
   const owner = b64u(ownerBytes);
   // Reached before any await: the ceremony runs inside the tap.
   const made = navigator.credentials.create({
     publicKey: {
       rp: { name: rpName },
-      user: { id: ownerBytes, name: "Your documents", displayName: "Your documents" },
+      user: { id: ownerBytes, name: passkeyName(), displayName: passkeyName() },
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
@@ -222,17 +326,40 @@ export function enroll(
         secret = asserted ? prfOf(asserted) : null;
       }
       if (!secret) return { refused: "no-prf", why: "the passkey's provider gave no PRF output" };
+      const attestation = credential.response as AuthenticatorAttestationResponse;
+      const spki = attestation.getPublicKey?.() ?? null;
+      const registration = spki
+        ? {
+            publicKey: b64u(bytesOf(spki)),
+            algorithm: attestation.getPublicKeyAlgorithm?.() ?? 0,
+            clientDataJSON: b64u(bytesOf(attestation.clientDataJSON)),
+          }
+        : undefined;
+      if (!registration) return { refused: "unregistrable" as const, why: "the passkey's public key was not given, so the store could not register it" };
       const adopt = await documents();
-      return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt));
+      return serially(() => keep(owner, b64u(bytesOf(credential.rawId)), secret, adopt, registration, byForm));
     },
     (error: unknown) => ({ refused: "cancelled" as const, why: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
   );
 }
 
 /** Makes and keeps the owner key, its two wraps, the record, and the documents' wraps. */
-async function keep(owner: string, credential: string, prf: Uint8Array<ArrayBuffer>, documents: readonly string[]): Promise<{ enrolled: string }> {
+async function keep(
+  owner: string,
+  credential: string,
+  prf: Uint8Array<ArrayBuffer>,
+  documents: readonly string[],
+  registration: NonNullable<OwnerRecord["registration"]>,
+  byForm?: OfferByForm,
+): Promise<{ enrolled: string } | { refused: "unregistrable"; why: string }> {
   const keychainSecret = b64u(crypto.getRandomValues(new Uint8Array(32)));
-  const keychain = (await offerToKeychain(owner, keychainSecret)) ? "offered" : "not offered";
+  // WebCrypto's Ed25519, or the opener's own where WebCrypto has none (D302): never a record the store cannot register.
+  let verifier: string;
+  try {
+    verifier = (await keychainKey(new TextEncoder().encode(keychainSecret))).pub;
+  } catch (error: unknown) {
+    return { refused: "unregistrable", why: `no keychain verifier: ${error instanceof Error ? error.message : String(error)}` };
+  }
   const made = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
   const prfKey = await wrappingKey(prf, "prf");
   const wraps = {
@@ -241,36 +368,64 @@ async function keep(owner: string, credential: string, prf: Uint8Array<ArrayBuff
   };
   // The key kept is the one the PRF wrap opens, so a wrap that does not open fails here, before anything is kept.
   const key = await crypto.subtle.unwrapKey("raw", wraps.prf, prfKey, "AES-KW", { name: "AES-KW", length: 256 }, false, ["wrapKey", "unwrapKey"]);
-  const record: OwnerRecord = { owner, credential, key, wraps, keychain, enrolled: new Date().toISOString() };
+  const record: OwnerRecord = {
+    owner,
+    credential,
+    key,
+    wraps,
+    keychain: "not offered",
+    enrolled: new Date().toISOString(),
+    registration,
+    verifier,
+  };
   await keepInKeyStore(ownerRecordKey(owner), record);
   await keepInKeyStore(KEYS.OWNER, owner);
   announceOwnerChange();
-  for (const documentUuid of documents) await wrapUnder(documentUuid, record);
-  console.info(`dai: enrolled as owner ${owner}; keychain secret ${keychain}; ${documents.length} document(s) adopted`);
+  await adoptAll(record, documents, new Map());
+  console.info(`dai: enrolled as owner ${owner}; ${documents.length} document(s) adopted`);
+  // Last, once everything is kept: the form path reloads the page, and an enrollment must not depend on what follows it.
+  const offered = async (): Promise<void> =>
+    keepInKeyStore(ownerRecordKey(owner), { ...((await ownerRecord(owner)) ?? record), keychain: "offered" } satisfies OwnerRecord);
+  const keychain = await offerToKeychain(owner, keychainSecret, offered, byForm);
+  console.info(`dai: keychain secret ${keychain}`);
   return { enrolled: owner };
 }
 
 /**
- * Hands the keychain secret to the browser's password manager, where it has
- * the Credential Management API for it, and says whether it was handed over.
+ * How the opener hands the keychain secret to a password manager by a form
+ * submission: it fills the form with the account (`keychainAccount`) and the secret, calls
+ * `offered` once nothing can stop the submission, and submits. Answers false,
+ * having called nothing, when it cannot submit without the secret leaving the
+ * browser. A submission reloads the page, so a true answer is seldom seen.
+ */
+export type OfferByForm = (account: string, secret: string, offered: () => Promise<void>) => Promise<boolean>;
+
+/**
+ * Hands the keychain secret to the browser's password manager, and says
+ * whether it was handed over: through the Credential Management API where the
+ * browser has it (Chromium), and where it has none (Safari), through a form
+ * submission the password manager offers to save, which reloads the page
+ * ("Owner/author spike", probe fault 2; D298). The account names the site
+ * and ends with the owner id, so each owner's secret is its own entry.
  *
- * Whether the keychain kept it is not knowable here: Chromium's `store()`
- * settles when it offers to save, before the person answers, and nothing reads
- * it back. Safari has no such API: its keychain is reached through a form
- * submission it offers to save, which reloads the page ("Owner/author spike",
- * probe fault 2), and is owed with the iPhone reading. So the keychain wrap is
- * made whatever this answers, and that the secret is in a keychain is a device
+ * Whether the keychain kept it is not knowable here: `store()` settles when
+ * the browser offers to save, before the person answers, a form submission
+ * says nothing at all, and nothing reads it back. So the keychain wrap is made
+ * whatever this answers, and that the secret is in a keychain is a device
  * reading, never a claim the page makes.
  */
-async function offerToKeychain(owner: string, secret: string): Promise<boolean> {
+async function offerToKeychain(owner: string, secret: string, offered: () => Promise<void>, byForm?: OfferByForm): Promise<OwnerRecord["keychain"]> {
   const Password = (window as unknown as { PasswordCredential?: new (data: { id: string; password: string; name: string }) => Credential }).PasswordCredential;
-  if (!Password || !navigator.credentials?.store) return false;
-  try {
-    await navigator.credentials.store(new Password({ id: owner, password: secret, name: "Your documents" }));
-    return true;
-  } catch {
-    return false;
+  if (Password && navigator.credentials?.store) {
+    try {
+      await navigator.credentials.store(new Password({ id: keychainAccount(owner), password: secret, name: passkeyName() }));
+    } catch {
+      return "not offered";
+    }
+    await offered();
+    return "offered";
   }
+  return byForm && (await byForm(keychainAccount(owner), secret, offered)) ? "offered" : "not offered";
 }
 
 /**
@@ -309,6 +464,30 @@ export async function signIn(ownerId?: string): Promise<"opened" | "refused" | "
   await keepInKeyStore(KEYS.OWNER, record.owner);
   announceOwnerChange();
   return "opened";
+}
+
+/**
+ * Lets go of an owner the store can never register: a record kept here with
+ * no keychain verifier or no passkey public key, as an opener before D302's
+ * ruling kept one on an engine with no Ed25519. Nothing of it is at the store,
+ * and nothing here can make what its Enroll needs (the keychain secret went to
+ * a password manager, and the owner key cannot be wrapped again), so it is not
+ * left signed in with every save refused. Each document wrapped under it goes
+ * back to this browser's, its data key unchanged, so nothing is lost and
+ * "Keep beyond this browser" adopts it again; the record goes, and the owner
+ * is signed out.
+ */
+export function letGoOfOwner(ownerId: string): Promise<void> {
+  return serially(async () => {
+    for (const { documentUuid } of await listCartridgesFromLibrary()) {
+      const held = await dataKeyOf(documentUuid);
+      if (held?.owner === ownerId) await keepInKeyStore(dataKeyKey(documentUuid), { key: held.key } satisfies DataKeyRecord);
+    }
+    if ((await currentOwner()) === ownerId) await dropFromKeyStore(KEYS.OWNER);
+    await dropFromKeyStore(ownerRecordKey(ownerId));
+    console.info(`dai: owner ${ownerId} let go: the store could never register it`);
+    announceOwnerChange();
+  });
 }
 
 /** Signs this browser context out of its owner. The owner's record and every wrap stay. */

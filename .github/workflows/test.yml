@@ -423,6 +423,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The owner's store suite once more, against the deployed dai-store-dev
+      # (Build 2b-2b item 7), with test owners the suite makes: the wire, the
+      # Worker and the objects as they run on the platform, envelopes in R2.
+      # Last, after every upload above, because its run clears test-results.
+      # Production (dai-store) is deployed by hand and no job names it.
+      - if: ${{ success() && matrix.browser == 'node' && env.TESTS == 'true' }}
+        env:
+          DAI_STORE_DEV: https://dai-store-dev.opendai.workers.dev
+        run: npx playwright test tests/owner-store.spec.ts --project=node
+        timeout-minutes: 10
+
   # Firefox, the reading (D32): the browser job's steps, its own job, under
   # the name it always had, so scripts/ci-verdict.mjs still prints it apart.
   reading:

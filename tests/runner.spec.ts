@@ -1152,7 +1152,13 @@ test.describe("keeping it, per device", () => {
     await expect(page.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
       timeout: 30_000,
     });
-    expect(page.url()).toMatch(new RegExp(`[#&]${HINT_KEY}=`));
+    // At the document's own address: its hint in the address, or, once the hint is off the address bar, the tab's mark (D303).
+    expect(
+      await page.evaluate(
+        (key) => new RegExp(`[#&]${key}=`).test(location.hash) || typeof (history.state as { daiOwnAddress?: unknown } | null)?.daiOwnAddress === "string",
+        HINT_KEY,
+      ),
+    ).toBe(true);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
     await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);

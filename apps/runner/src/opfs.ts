@@ -189,6 +189,16 @@ export interface LibraryItem {
    */
   wrote?: boolean;
   /**
+   * Arrived into a context that did not hold it, whatever carried it (an
+   * inline link, a file, the share target, a link to a file on another host,
+   * a store or mailbox link), and not changed here since: a snapshot, not the
+   * person's work (D303, as amended on the review of Build 2b-2dr2). Set at
+   * that arrival, cleared by any write here other than the restore: the
+   * person's change, or changes that came across from another copy. Recover
+   * restores the store's head over such a copy and keeps no line for it.
+   */
+  arrivedSnapshot?: true;
+  /**
    * Which build of the application this copy is running: a digest over the
    * container's app bytes, with the database left out (`buildDigest`).
    *

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, addPasskeyProvider, buildNotes, currentOwner, keepFromMenu, openFile, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, buildNotes, currentOwner, keepFromMenu, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 
 /**
  * The library by owner, in this browser, Build 2b-1 (R-Z sentence 5's first
@@ -45,6 +46,14 @@ async function used(page: Page, file: string, text: string, owner: string | null
 }
 
 test.describe("the library by owner, in this browser (R-Z, R-B)", () => {
+  // An opener offers to keep beyond this browser only with a store to keep in: these tests have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
   test.slow();
 
   test("two owners in one browser each see only their own documents, and a document no owner holds is this browser's", async ({ browser, browserName }) => {
@@ -52,6 +61,7 @@ test.describe("the library by owner, in this browser (R-Z, R-B)", () => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-library-"));
     const [alpha, beta, gamma, delta] = await Promise.all(["Alpha", "Beta", "Gamma", "Delta"].map((name) => buildNotes(scratch, name)));
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     await addPasskeyProvider(context, page);

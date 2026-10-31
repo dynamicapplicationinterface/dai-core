@@ -136,6 +136,11 @@
     -->
     <meta name="dai-relay" content="" />
     <!--
+      The owner's store (docs/store.md), from DAI_STORE_BASE at build. Empty is
+      no store: documents are saved in this browser, and none is called kept.
+    -->
+    <meta name="dai-store" content="" />
+    <!--
       The relay's public push key (VAPID), from DAI_PUSH_PUBLIC_KEY at build.
       Empty is push switched off: moves still arrive by the poll and on
       foreground, and nobody is asked about notifications.
@@ -422,6 +427,97 @@
         overflow: hidden;
         visibility: hidden;
       }
+      /*
+       * And no words grow it (D300): what the pill says sits in a span with
+       * no width of its own, stretched to the measured box. Words wider than
+       * the offer on some font end in an ellipsis inside the box.
+       */
+      #save-state > .words {
+        display: block;
+        width: 0;
+        min-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: center;
+      }
+      #save-state[data-shown] { align-items: stretch; }
+      #recover[hidden], #recovered[hidden] { display: none; }
+      #recover { margin-top: 10px; background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+      #recovered { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+      #recovered button { width: 100%; text-align: left; font: inherit; padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; cursor: pointer; }
+      #recover-keychain[hidden] { display: none; }
+      #recover-keychain { margin-top: 8px; display: grid; gap: 6px; max-width: 320px; margin-inline: auto; }
+      #recover-keychain input { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; }
+      /* The recovery sheet: the menu row's one answer, both ways in it (Build 2b-2fr2). */
+      #finish-sheet[hidden] { display: none; }
+      #finish-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: var(--scrim);
+      }
+      #finish-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+      #finish-sub { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      #finish-passkey {
+        margin-top: 8px;
+        width: 100%;
+        max-width: 24rem;
+        padding: 13px 20px;
+        font-size: 16px;
+        font-weight: 600;
+        border: 0;
+        border-radius: 12px;
+        background: var(--accent);
+        color: var(--on-accent);
+        cursor: pointer;
+      }
+      #finish-passkey:hover { background: var(--accent-press); }
+      #finish-passkey:disabled, #finish-with-password:disabled { opacity: 0.6; }
+      #finish-keychain { display: grid; gap: 6px; width: 100%; max-width: 24rem; margin-top: 4px; }
+      #finish-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; padding: 8px 0; cursor: pointer; }
+      #finish-keychain input { font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; }
+      #finish-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
+      /* Keeping beyond this browser, its two ways: one look for both, so neither is the default (R-Z, amended 31 October). */
+      #keep-ways[hidden] { display: none; }
+      #keep-ways {
+        position: fixed;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: var(--scrim);
+      }
+      #keep-ways-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+      #keep-ways-sub { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      .keep-way {
+        display: grid;
+        gap: 2px;
+        width: 100%;
+        max-width: 24rem;
+        margin-top: 4px;
+        padding: 12px 16px;
+        text-align: left;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      .keep-way:disabled { opacity: 0.6; }
+      .keep-way-name { font-size: 16px; font-weight: 600; color: var(--accent); }
+      .keep-way-for { font-size: 13px; line-height: 1.35; color: var(--muted); }
+      #keep-ways-backup { margin-top: 4px; }
+      #keep-ways-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
+      #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+      #recover-hint { margin: 0; font-size: 13px; line-height: 1.35; color: var(--muted); }
+      /* Out of sight and out of the tab order, but a real form a password manager reads (D298). */
+      #keychain-offer { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
       #save-state[data-offer] { cursor: pointer; }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
@@ -1347,6 +1443,66 @@
       here rather than in the bar, because "signed a3cab3dd" is a sentence for
       somebody who already knows what it means.
     -->
+    <!--
+      Finishing a recovery the store cut short (R-Z sentence 5).
+
+      Opened by the menu's "Finish recovering" row and by nothing else: the
+      host's presence over the document is fixed (R-Z), so no sheet opens
+      unasked. It carries both ways a recovery is made, each alone (R-D as
+      amended): the passkey, and the saved password the chooser offers, for an
+      owner who recovered with it and has no passkey here. A passkey not used
+      leaves the sheet as it was; "Not now" closes it and changes nothing.
+    -->
+    <div id="finish-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="finish-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <h2 id="finish-title">Finish recovering</h2>
+        <p id="finish-sub">The rest of your library is still kept beyond this browser. Use your passkey, or the saved password your password manager kept.</p>
+        <button id="finish-passkey" type="button">Use your passkey</button>
+        <form id="finish-keychain">
+          <input id="finish-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
+          <input id="finish-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
+          <button id="finish-with-password" type="submit">Recover with the saved password</button>
+        </form>
+        <button id="finish-cancel" type="button">Not now</button>
+      </div>
+    </div>
+
+    <!--
+      Keeping beyond this browser, its two ways (R-Z, amended 31 October).
+
+      A person is one owner across their browser contexts: Safari, the Home
+      Screen app, another browser. So the menu's "Keep beyond this browser"
+      opens this, and the passkey ceremony starts from one of its two ways and
+      nowhere else: a new passkey, which enrolls, and the passkey the person
+      already has, which signs that owner in here and keeps this browser's
+      documents under them. Each is named so the person it is for recognizes
+      it, and neither is a default: same look, nothing focused first.
+    -->
+    <div id="keep-ways" hidden role="dialog" aria-modal="true" aria-labelledby="keep-ways-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <h2 id="keep-ways-title">Keep beyond this browser</h2>
+        <p id="keep-ways-sub">One passkey keeps all your documents, wherever you open them: Safari, the Home Screen app, another browser.</p>
+        <!--
+          The backup line is said before the ceremony, inside the way that makes
+          it: a new passkey comes with a saved password, and the browser's offer
+          to save it arrives unexplained otherwise (the device reading of 30
+          October). Not beside the other way, which hands nothing to a keychain.
+        -->
+        <button id="keep-new" type="button" class="keep-way">
+          <span class="keep-way-name">Make a new passkey</span>
+          <span class="keep-way-for">I have never kept documents beyond a browser.</span>
+          <span id="keep-ways-backup" class="keep-way-for">Your browser will also offer to save a backup password. Keep it: it opens your documents if the passkey is ever lost.</span>
+        </button>
+        <button id="keep-existing" type="button" class="keep-way">
+          <span class="keep-way-name">Use the passkey I already have</span>
+          <span class="keep-way-for">I have kept documents before, here or in another browser.</span>
+        </button>
+        <button id="keep-ways-cancel" type="button">Not now</button>
+      </div>
+    </div>
+
     <div id="sheet" hidden role="dialog" aria-modal="true" aria-label="Document">
       <div class="sheet-panel">
         <div class="sheet-grip"></div>
@@ -1407,6 +1563,22 @@
           bookkeeping. "Not now" is kept for the context; the row above stays.
         -->
         <button id="keep-not-now" type="button" hidden>Not now</button>
+        <!--
+          A recovery the store cut short, finished from here (R-Z sentence 5).
+          Recover lives in the chooser, which a document on screen hides; this
+          opens the recovery sheet, which runs the same recovery, passing over
+          what is here already. Shown while the signed-in owner's record is
+          marked recovering, and from the menu's next opening once it is not.
+        -->
+        <button id="finish-recovering" type="button" hidden>Finish recovering</button>
+        <!--
+          Recover over a document (D303, ruled 31 October): the chooser's
+          Recover is under the open document, so the menu offers it while a
+          store is stamped and nobody is signed in here. It opens the recovery
+          sheet, both ways. A document held here and kept nowhere is not
+          replaced by what comes back: it is adopted and kept as a line.
+        -->
+        <button id="menu-recover" type="button" hidden>Recover documents kept beyond this browser</button>
         <button id="export" type="button">Save a copy…</button>
         <!--
           Modify this app (backlog 4.2).
@@ -1494,6 +1666,27 @@
           runs here, on this device.
         </p>
         <button id="open" type="button">Open a file</button>
+        <!--
+          Recovery (R-Z sentence 5): on a browser with nothing, the person's
+          documents come back from the owner's store with their passkey. Shown
+          when a store is set and no owner is signed in here.
+        -->
+        <button id="recover" type="button" hidden>Recover documents kept beyond this browser</button>
+        <!--
+          The same, with no passkey (R-D, D298): the password the password
+          manager saved when keeping began. Tapping the field fills both from
+          the saved passwords; the account names the site and ends with the owner's id. The line under
+          the form says how they fill (Build 2b-2d item 3: on a phone, a tap that did nothing visible).
+          The button is never disabled: a disabled default button blocks the keyboard's Go too, and an
+          autofill can show values the page has not been handed yet (Build 2b-2dr item 3).
+        -->
+        <form id="recover-keychain" hidden>
+          <input id="recover-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
+          <input id="recover-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
+          <button id="recover-with-password" type="submit">Recover with the saved password</button>
+          <p id="recover-hint">Tap the field and choose the saved password; both fields fill in.</p>
+        </form>
+        <ul id="recovered" hidden></ul>
         <p class="hint">
           Not sure what you have?
           <a href="https://www.dynamicapplicationinterface.io/open">What is a .dai file?</a>
@@ -1632,6 +1825,17 @@
 
     <!-- The badge count, shared with the service worker (backlog D34). -->
     <script src="/badge.js"></script>
+    <!--
+      The keychain secret's form (D298). Where the browser has no Credential
+      Management API, enrollment fills it and submits it, and the password
+      manager offers to save the secret under the owner's id. This opener's
+      worker answers the submission with the page it came from, so the secret
+      never leaves the browser.
+    -->
+    <form id="keychain-offer" method="post" action="./keychain" aria-hidden="true">
+      <input name="username" autocomplete="username" tabindex="-1" />
+      <input name="password" type="password" autocomplete="new-password" tabindex="-1" />
+    </form>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

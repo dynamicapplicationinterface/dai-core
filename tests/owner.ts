@@ -194,10 +194,23 @@ export async function passkeysHeld(provider: { cdp: CDPSession; id: string }): P
   return credentials.length;
 }
 
-/** Opens the menu and taps "Keep beyond this browser". */
+/**
+ * Points every page of `context` at the owner's store at `base`, before the
+ * opener loads (`window.__daiOwnerStore`), so the address holds across the
+ * reloads a test drives, as a deploy's does. An opener offers to keep beyond
+ * this browser only when it has a store.
+ */
+export async function pointAtStore(context: BrowserContext, base: string): Promise<void> {
+  await context.addInitScript((address) => {
+    (window as Any).__daiOwnerStore = address;
+  }, base);
+}
+
+/** Opens the menu, taps "Keep beyond this browser", and takes the way that makes a new passkey (R-Z, amended 31 October). */
 export async function keepFromMenu(page: Page): Promise<void> {
   await page.locator("#more").click();
   await page.locator("#keep-beyond").click();
+  await page.locator("#keep-new").click();
 }
 
 /** The owner current in this browser context, as the opener kept it, or null. */

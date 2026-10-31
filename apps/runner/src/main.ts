@@ -45,6 +45,9 @@ import {
   keepGround,
   knownGround,
   launchAddress,
+  markOwnAddress,
+  ownAddressMark,
+  pageAddress,
   RELAUNCHED,
   sameLaunch,
   watchForInstall,
@@ -54,7 +57,7 @@ import {
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { installShareStorage, installStorageIsRead, platform, standalone } from "./platform.js";
 import { askForSuccessor, checkIsDue, type Successor } from "./version-check.js";
-import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
+import { closeSheet as slideClose, hideSheet, openSheet as slideOpen, whileClosed } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
@@ -88,8 +91,10 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, onOwnerChange, signIn, type NotEnrolled } from "./owner.js";
-import { storageWords, type KeptReading } from "./status.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, dataKeyOf, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
+import { storageSentence, storageWords, type KeptReading } from "./status.js";
+import { joinOwner, recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored } from "./recover.js";
+import { keepAgain, keepingLog, keepRevision, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -409,6 +414,13 @@ function refuseArrival(message: string): void {
   say(message, true);
 }
 
+/** The refusal for a document another owner holds in this browser (R-Z sentence 5): it is theirs, opened under their sign-in. */
+/** The route a resume names, so a refusal of it can say nothing. */
+const RESUMED = "the document open last time, resumed";
+
+const ANOTHER_OWNERS =
+  "This document belongs to another owner in this browser, so it was not opened. Recover with that owner's passkey to open it.";
+
 /** The refusal for a held document's id arriving under another publisher (D126). */
 function strangersCopy(appName: string | undefined): string {
   return (
@@ -622,14 +634,85 @@ let keepOffering = false;
  */
 let heldAtOpen: string | undefined;
 let heldShown = false;
-const keptReading: KeptReading | null = null;
+/**
+ * What the owner's store last acknowledged for the document on screen, under
+ * the owner signed in: the one source of "Kept" (R-Z sentence 2). "Kept" when
+ * it is the revision on screen; otherwise the time of the last one.
+ */
+let keptShown: KeptRecord | null = null;
+function keptReading(): KeptReading | null {
+  const shown = loaded?.manifest.documentUuid;
+  if (!keptShown || !shown) return null;
+  return {
+    revision: keptShown.revision === knownRevision.get(shown) ? "current" : "earlier",
+    at: new Date(keptShown.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+  };
+}
+async function refreshKept(): Promise<void> {
+  const shown = loaded?.manifest.documentUuid;
+  const [record, owner] = shown ? await Promise.all([keptOf(shown), currentOwner()]) : [null, null];
+  keptShown = record && shown === loaded?.manifest.documentUuid && record.owner === owner ? record : null;
+  showStorage();
+}
+/*
+ * A store that refuses to keep the document on screen is said once, over the
+ * document, with what to do instead (docs/store.md, "Failure"; P3); the
+ * status alone reads as offline does. Kept again, it is no longer true, and
+ * the store's acknowledgment lands behind a save, while the person may be
+ * typing: so it is replaced in place, in a row of the same height, by
+ * STORE_KEEPS_AGAIN, which goes when dismissed or at the next mount like every
+ * other sentence there (2b2fr2-M1; R-Z, nothing the host shows moves the
+ * document). Once the refusal is dismissed, being kept again brings no row back.
+ */
+const STORE_REFUSED = 'The store would not keep this document beyond this browser. It is still saved here; to keep a copy elsewhere, use "Save a copy…".';
+const STORE_KEEPS_AGAIN = "The store keeps this document beyond this browser again.";
+/*
+ * An owner the store could never register, let go as the document mounts
+ * (D302; letGoIfUnregistrable): what to do is to set keeping up again, which
+ * the menu offers once more. Said with the document's first frame, so it is on
+ * screen before the person types and nothing moves under them (R-Z).
+ */
+const OWNER_LET_GO_SAID =
+  'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again. The passkey and saved password made the first time open nothing, and you can delete them.';
+let refusalSaid: string | null = null;
+onKept((documentUuid) => {
+  if (documentUuid !== loaded?.manifest.documentUuid) return;
+  void refreshKept();
+  const refused = storeRefused(documentUuid);
+  if (refused !== undefined && refusalSaid !== documentUuid) {
+    refusalSaid = documentUuid;
+    tellOverDocument(STORE_REFUSED, true);
+  } else if (refused === undefined && refusalSaid === documentUuid) {
+    refusalSaid = null;
+    const note = document.getElementById("doc-note");
+    if (note && !note.hidden && note.textContent === STORE_REFUSED) tellOverDocument(STORE_KEEPS_AGAIN, false, true);
+  }
+});
 function showStorage(): void {
   const el = document.getElementById("save-state");
   if (!el) return;
   const state = el.dataset.state;
-  const words = state === "saving" || state === "saved" || state === "failed" ? storageWords({ state, kept: keptReading }) : "";
+  const status = state === "saving" || state === "saved" || state === "failed" ? { state, kept: keptReading() } : null;
+  const words = status ? storageWords(status) : "";
   const offering = keepOffering && words !== "" && state !== "failed";
-  el.textContent = offering ? `${words} · Keep?` : words;
+  /*
+   * The words sit in a span that adds nothing to the pill's width (D300): the
+   * box is the measured offer's, whatever is said in it, and words wider than
+   * it on some font are cut with an ellipsis, never let to grow it. The whole
+   * sentence is the pill's name.
+   */
+  const span = document.createElement("span");
+  span.className = "words";
+  span.textContent = offering ? `${words} · Keep?` : words;
+  el.replaceChildren(span);
+  const sentence = status ? storageSentence(status) : "";
+  if (sentence !== words && state === "saved") {
+    el.setAttribute("aria-label", sentence);
+    el.title = sentence;
+  } else {
+    el.removeAttribute("aria-label");
+    if (state === "saved" || state === "saving") el.title = "";
+  }
   if (offering) el.dataset.offer = "";
   else delete el.dataset.offer;
   if (state === "failed" || ((personsChangeLanded || heldShown) && words !== "")) el.dataset.shown = "";
@@ -723,6 +806,21 @@ function withLibraryLock<T>(documentUuid: string, work: () => Promise<T>): Promi
  * `change` receives the record as it is at that moment and returns what to
  * write. A document this device does not hold is left alone.
  */
+/**
+ * A write to a document here other than the restore ends its snapshot (D303,
+ * as amended on the review of Build 2b-2dr2): changes that came across from
+ * another copy, as the person's own change does at its save.
+ */
+async function endSnapshot(documentUuid: string): Promise<void> {
+  // Nothing to write for a copy that is not one.
+  if ((await getCartridgeFromLibrary(documentUuid).catch(() => null))?.arrivedSnapshot !== true) return;
+  await amendLibraryRecord(documentUuid, (held) => {
+    if (held.arrivedSnapshot !== true) return held;
+    const { arrivedSnapshot: _ended, ...rest } = held;
+    void _ended;
+    return rest;
+  });
+}
 async function amendLibraryRecord(
   documentUuid: string,
   change: (held: LibraryItem) => LibraryItem,
@@ -1090,7 +1188,7 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   }
   describedIdentity = identity;
   const target = launchAddress(identity);
-  if (sameLaunch(location.href, target)) {
+  if (sameLaunch(pageAddress(), target)) {
     if (!reloadedAlready) reloadGate = "not needed: already at the document's address";
     return false;
   }
@@ -1243,7 +1341,7 @@ function eject(): void {
   keeper?.clear();
   hideCard();
   describeSelf();
-  sheet.hidden = true;
+  hideSheet(sheet);
   title.textContent = "";
   say("");
   fileInput.value = "";
@@ -1279,6 +1377,14 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     const verdict = await checkTrust(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
       refuseArrival(verdict.message);
+      return;
+    }
+
+    // Another owner's document is neither shown nor opened here, by any route
+    // (R-Z sentence 5). A resume of it says nothing: the person did not ask.
+    if (!(await mayOpenHere(cartridge.manifest.documentUuid))) {
+      console.info(`dai: ${cartridge.manifest.documentUuid} not opened (${entry}): another owner holds it here`);
+      refuseArrival(entry === RESUMED ? "" : ANOTHER_OWNERS);
       return;
     }
 
@@ -1373,7 +1479,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       pendingMerge &&
       platform() === "ios" &&
       !relaunchedAlready(identity.uuid) &&
-      !sameLaunch(location.href, launchAddress(identity))
+      !sameLaunch(pageAddress(), launchAddress(identity))
     ) {
       // Rehearsed, like a first open: see finishMerge.
       entryPoint = entry;
@@ -1558,7 +1664,19 @@ async function mount(cartridge: Cartridge): Promise<void> {
    * would run here with this origin, this library and these pinned keys in
    * reach. See hostShell.
    */
-  const shell = await hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME });
+  /*
+   * The owner checked as the document mounts, beside the shell: one the store
+   * can never register is let go now (D302), so its sentence is on screen with
+   * the document's first frame, before the person can type, and never arrives
+   * at a save to move the document under them (R-Z, the host's fixed presence).
+   */
+  const [shell, letGo] = await Promise.all([
+    hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME }),
+    letGoIfUnregistrable().catch((error: unknown) => {
+      console.warn(`dai: the owner was not checked at mount: ${String(error)}`);
+      return false;
+    }),
+  ]);
   const blob = new Blob([shell], { type: "text/html" });
   mountedUrl = URL.createObjectURL(blob);
   // A new mount, from before the frame leaves the last one: until this shell
@@ -1568,7 +1686,11 @@ async function mount(cartridge: Cartridge): Promise<void> {
   mountNow = null;
   mountedNonce = null;
   // A sentence over a document was about that document: the next starts clear (D169).
-  tellOverDocument("");
+  // At an address that names it, the hint leaves the address bar and the mark goes into the tab's history state (D303).
+  markOwnAddress(cartridge.manifest.documentUuid);
+  const fromAddress = ownAddressArrival?.documentUuid === cartridge.manifest.documentUuid ? ownAddressArrival : undefined;
+  ownAddressArrival = undefined;
+  tellOverDocument(letGo ? OWNER_LET_GO_SAID : fromAddress ? ownAddressSentence(fromAddress.at) : "", letGo);
   cartridgeFrame.src = mountedUrl;
 
   // The launch screen holds — the document's icon and name on a still
@@ -1960,7 +2082,31 @@ type Carrier = {
    * as though the address had introduced it.
    */
   hinted?: string;
+  /**
+   * Read from the page's own address: this tab's history entry, marked by the
+   * opener as that document's (`markOwnAddress`), never an address a person
+   * copies or shares, which carries no mark (D303).
+   */
+  fromOwnAddress?: boolean;
 };
+
+/*
+ * A document opened from the page's own address with nothing held here (D303,
+ * ruled 31 October): a tab left open across a wipe, or a Home Screen icon's
+ * first launch. The address is the Home Screen carrier and stays; what it holds
+ * is the document as it was when the address was made, so the note row says
+ * so, with the date of that state, and, with a store stamped, that a kept copy
+ * may be newer and Recover brings it. Said with the document's first frame, so
+ * nothing moves under the person (R-Z), and only for the mount it was set for.
+ * The arrival is neither kept nor signed in by this.
+ */
+let ownAddressArrival: { documentUuid: string; at: string | undefined } | undefined;
+function ownAddressSentence(at: string | undefined): string {
+  const date = at !== undefined && !Number.isNaN(Date.parse(at))
+    ? ` on ${new Date(at).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" })}`
+    : "";
+  return `Opened as this page's address held it${date}.${storeBase() ? " A kept copy may be newer; Recover brings it." : ""}`;
+}
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   markStep("reading the document");
@@ -2125,6 +2271,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const heldHere = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
     );
+    // Another owner's document is not shown here, not even as a card, and not opened (R-Z sentence 5).
+    if (heldHere && !(await mayOpenHere(cartridge.manifest.documentUuid))) {
+      console.info(`dai: arriving ${cartridge.manifest.documentUuid} not opened: another owner holds it here`);
+      refuseArrival(ANOTHER_OWNERS);
+      return;
+    }
     /*
      * The game's key is filed here, the moment the document it opens is known.
      *
@@ -2308,6 +2460,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       carrier.consentedFor !== undefined &&
       carrier.consentedFor === cartridge.manifest.documentUuid &&
       who.state !== "conflict";
+    // The page's own address, and nothing held here to open in its place (D303).
+    const fromOwnAddress = carrier.fromOwnAddress === true && consented && !heldHere;
     /*
      * The address named a different document than it carried.
      *
@@ -2661,6 +2815,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // The address this copy came by, when it is short enough to be an
         // address rather than the document (a store link). See identityOf.
         link: shortArrivalLink() ?? heldItem?.link,
+        // A snapshot until it changes here: any arrival into a context that did not hold it, whatever carried it (D303).
+        ...(!heldHere ? { arrivedSnapshot: true as const } : {}),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(
@@ -2701,7 +2857,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       if (
         platform() === "ios" &&
         !relaunchedAlready(identity.uuid) &&
-        !sameLaunch(location.href, launchAddress(identity))
+        !sameLaunch(pageAddress(), launchAddress(identity))
       ) {
         /*
          * The colour under the clock, learned before the load that counts.
@@ -2725,6 +2881,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
 
     void showArrival();
     hostMark("prepared");
+    ownAddressArrival = fromOwnAddress
+      ? { documentUuid: loaded.manifest.documentUuid, at: savedAtOf(loaded) ?? loaded.manifest.createdAt }
+      : undefined;
     await mount(loaded);
     hostMark("mounted");
   } catch (error) {
@@ -3087,7 +3246,17 @@ window.addEventListener("message", (event) => {
       saveState.hidden = false;
       saveState.title = "";
     }
+    keptShown = null;
     showStorage();
+    void refreshKept();
+    // A copy just recovered says which revision it is, once (R-Z, "The restored revision, in words").
+    const restoredAt = shown ? restoredNotes.get(shown.manifest.documentUuid) : undefined;
+    if (shown && restoredAt) {
+      restoredNotes.delete(shown.manifest.documentUuid);
+      const before = recoveredSaid?.documentUuid === shown.manifest.documentUuid ? recoveredSaid.sentence : "";
+      recoveredSaid = undefined;
+      tellOverDocument(`${before ? `${before} ` : ""}${restoredSentence(restoredAt)}`);
+    }
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -3393,6 +3562,13 @@ window.addEventListener("message", (event) => {
      */
     el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
     showStorage();
+    /*
+     * No sentence over the document goes at a save (R-Z, "nothing the host
+     * shows ever ... moves the document"): the note row is in the document's
+     * flow, so a sentence taken away under the person's typing moves the
+     * document under their next tap. One goes when dismissed, or at the next
+     * mount.
+     */
     if (state === "failed" && wonElsewhere(data.error)) {
       tellOverDocument(elsewhereSentence(data.error), true);
     } else if (state === "failed" && data.error === SAVE_REFUSED) {
@@ -3611,13 +3787,14 @@ window.addEventListener("message", (event) => {
         else await raiseSeqFloor(documentUuid, seq);
         await saveDatabaseToOpfs(documentUuid, bytes);
         const next = current + 1;
+        let landed: Revision;
         {
           // The mount's own document, resealed; shown only if it is still the
           // one open (D167). Written to the library either way: that is the
           // save's job, whatever the person opened since.
           const resealed = await resealCartridge(asking.cartridge, bytes);
           settleInto(asking, resealed);
-          await saveCartridgeToLibrary({
+          const record: Parameters<typeof saveCartridgeToLibrary>[0] = {
             /*
              * What this write does not own, it keeps.
              *
@@ -3653,7 +3830,19 @@ window.addEventListener("message", (event) => {
             // Which build this copy is running, so an arriving copy can be told
             // apart by its application rather than by its data (D85).
             ...(buildOf(resealed.manifest) ? { build: buildOf(resealed.manifest) } : {}),
-          });
+          };
+          // A change of the person's: no longer a snapshot (D303).
+          if (data.payload?.authored === true) delete record.arrivedSnapshot;
+          await saveCartridgeToLibrary(record);
+          // What the owner's store is asked to keep, once this save has landed.
+          landed = {
+            documentUuid,
+            revision: next,
+            database: bytes,
+            html: resealed.html,
+            title: resealed.manifest.appName ?? "container",
+            build: buildOf(resealed.manifest),
+          };
         }
         knownRevision.set(documentUuid, next);
         // Landed: the headers these bytes hold may leave from here on, so the
@@ -3662,8 +3851,9 @@ window.addEventListener("message", (event) => {
         // before this line leaves them uncounted until the next mount reads
         // the stored copy.
         if (egress) await leaveWith(documentUuid, egress, "record");
+        return landed;
       })
-        .then(async () => {
+        .then(async (landed) => {
           console.info(`dai: save ${saveNumber} written`);
           writtenThisPage.add(documentUuid);
           hostSavesWritten += 1;
@@ -3680,9 +3870,13 @@ window.addEventListener("message", (event) => {
           // The document's data key, made at its first landed save and wrapped
           // under the owner signed in here, if any (R-D as amended). Off the
           // save's path: the save is answered whatever this does.
-          void afterSaveWritten(documentUuid).catch((error: unknown) => {
-            console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
-          });
+          // Then, for a document under the owner signed in, the revision is
+          // appended to the owner's store (R-C, R-Z sentence 2); behind the save.
+          void afterSaveWritten(documentUuid, data.payload?.authored === true)
+            .then(() => keepRevision(landed))
+            .catch((error: unknown) => {
+              console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
+            });
           /*
            * A change of the person's has landed here: the moment to offer to keep
            * it beyond (R-Z sentence 3). The runtime's flag alone says so (R-X): it
@@ -3708,22 +3902,23 @@ const closeSheet = (): void => {
 };
 
 openButton.addEventListener("click", () => fileInput.click());
-function openMenu(): void {
-  void showKeepBeyond();
+// Its rows settled first: nothing is added to an open menu (sheet.ts).
+async function openMenu(): Promise<void> {
+  await Promise.all([showKeepBeyond(), showRecover()]);
   slideOpen(sheet);
   // Checked here, on menu open, and never at load: the offline-open guarantee is
   // that a held document asks the network for nothing (T1 note in showVersion).
   void checkForUpdate();
 }
-moreButton.addEventListener("click", openMenu);
+moreButton.addEventListener("click", () => void openMenu());
 document.getElementById("doc-note")?.addEventListener("click", (event) => {
   (event.currentTarget as HTMLElement).hidden = true;
 });
 document.getElementById("save-state")?.addEventListener("click", (event) => {
   const el = event.currentTarget as HTMLElement;
-  if (el.dataset.state === "failed") slideOpen(sheet);
+  if (el.dataset.state === "failed") void openMenu();
   // The offer's first tap: the menu, whose first rows answer it. Nothing starts here.
-  else if (el.dataset.offer !== undefined) openMenu();
+  else if (el.dataset.offer !== undefined) void openMenu();
 });
 // Anywhere off the panel dismisses it, which is what a sheet does everywhere
 // else on a phone.
@@ -3747,39 +3942,176 @@ document.getElementById("keep-cta")?.addEventListener("click", () => closeSheet(
 /**
  * "Keep beyond this browser": owner enrollment, chosen (R-Z sentence 3).
  *
- * The ceremony starts in this tap and nowhere else, and `enroll` reaches it
- * before anything is awaited: a passkey sheet is allowed only inside the tap.
- * Every document this browser holds that no owner holds yet comes under the
- * new owner; nothing is rewritten and nothing is uploaded. In the menu while
- * this browser context has no owner.
+ * The row opens the two ways, and the ceremony starts in the tap on one of
+ * them and nowhere else; `enroll` reaches it before anything is awaited: a
+ * passkey sheet is allowed only inside the tap. Every document written in
+ * this browser that no owner holds yet comes under the new owner. Nothing is
+ * rewritten, and each is asked to be kept at once (Build 2b-2d item 5): the
+ * owner, its wrapped key and the sealed revision go to the owner's store. In
+ * the menu while this browser context has no owner.
  */
 const keepBeyond = document.getElementById("keep-beyond") as HTMLButtonElement | null;
 const NOT_ENROLLED: Record<NotEnrolled, string> = {
   cancelled: "No passkey was made. Your work is still saved in this browser.",
   "no-prf": "This device's passkeys cannot keep work beyond this browser yet. Your work is still saved in this browser.",
   unsupported: "This browser cannot make a passkey. Your work is still saved in this browser.",
+  unregistrable: "This browser cannot keep work beyond itself yet. Your work is still saved in this browser.",
 };
+/*
+ * Offered only by an opener with a store to keep in. With none, enrolling
+ * would make a passkey and hand a password manager a secret for an owner no
+ * store can hold, and nothing would ever be kept: the row is not shown, as
+ * Recover is not.
+ */
 async function showKeepBeyond(): Promise<void> {
-  if (keepBeyond) keepBeyond.hidden = (await currentOwner().catch(() => null)) !== null;
+  const hidden = !storeBase() || (await currentOwner().catch(() => null)) !== null;
+  whileClosed(sheet, "keep-beyond", () => {
+    if (keepBeyond) keepBeyond.hidden = hidden;
+  });
+}
+/**
+ * The keychain secret, offered by a form submission (D298): where the browser
+ * has no Credential Management API, a password manager offers to save a
+ * secret only as a form submits. The submission navigates, so the open
+ * document's writes are saved first, and it is answered by this opener's
+ * worker with the page it came from, so the secret never leaves the browser.
+ * With no worker controlling the page the form would reach the network, so it
+ * is not submitted at all.
+ */
+async function offerKeychainByForm(account: string, secret: string, offered: () => Promise<void>): Promise<boolean> {
+  const form = document.getElementById("keychain-offer") as HTMLFormElement | null;
+  const username = form?.querySelector<HTMLInputElement>('input[name="username"]');
+  const password = form?.querySelector<HTMLInputElement>('input[name="password"]');
+  if (!form || !username || !password || !navigator.serviceWorker?.controller) return false;
+  if (loaded && !(await flushDocument())) console.warn("dai: the open document did not confirm its writes before the keychain form");
+  // Every save asked, written: the navigation must not cut one off.
+  for (let waited = 0; hostSavesWritten < hostSaves && waited < 10_000; waited += 50) await new Promise((settle) => window.setTimeout(settle, 50));
+  username.value = account;
+  password.value = secret;
+  await offered();
+  console.info("dai: keychain secret offered by a form, answered by this opener's worker");
+  form.submit();
+  return true;
 }
 function keepBeyondThisBrowser(): void {
-  const enrolling = enroll(location.hostname, async () => (await listCartridgesFromLibrary()).map((item) => item.documentUuid));
+  // The documents written in this browser are what keeping beyond it keeps; one only opened here is claimed by nobody.
+  const enrolling = enroll(location.hostname, writtenHere, offerKeychainByForm);
   void enrolling.then((result) => {
     if ("refused" in result) {
       console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
       tellOverDocument(NOT_ENROLLED[result.refused]);
+    } else {
+      // What enrolling adopted, kept now: its next status is "Kept" with no further change (Build 2b-2d item 5).
+      void writtenHere().then((documents) => keepHeldRevisions(documents));
     }
     void showKeepBeyond();
   });
 }
+/*
+ * The two ways (R-Z, amended 31 October): a person is one owner across their
+ * browser contexts. The menu's row opens the sheet that offers them, and the
+ * ceremony starts in the tap on one of them: a new passkey enrolls; the
+ * passkey the person already has signs that owner in here, admits this
+ * context, adopts the documents saved here and keeps them. "Not now", the
+ * scrim or Escape closes it and changes nothing.
+ */
+const keepWays = document.getElementById("keep-ways") as HTMLElement | null;
+/*
+ * Opened from the offer while it stood: what the person does here answers it
+ * (R-Z sentence 3). A way chosen answers "keep"; closing the sheet is a
+ * dismissal and is kept as "not now", so the offer stays in the menu and does
+ * not reappear (2b2d-L5).
+ */
+let keepWaysAnswerTheOffer = false;
+function closeKeepWays(chosen?: "keep"): void {
+  if (keepWaysAnswerTheOffer) {
+    keepWaysAnswerTheOffer = false;
+    void answerKeepOffer(chosen ?? "not now");
+  }
+  if (keepWays) slideClose(keepWays);
+}
+keepWays?.addEventListener("click", (event) => {
+  if (event.target === keepWays) closeKeepWays();
+});
+document.getElementById("keep-ways-cancel")?.addEventListener("click", () => closeKeepWays());
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeKeepWays();
+});
 keepBeyond?.addEventListener("click", () => {
   closeSheet();
-  const answering = keepOffering;
+  keepWaysAnswerTheOffer = keepOffering;
   setKeepOffering(false);
-  // The ceremony first, inside the tap; the offer's answer, when it stood, is kept after.
-  keepBeyondThisBrowser();
-  if (answering) void answerKeepOffer("keep");
+  if (keepWays) slideOpen(keepWays);
 });
+document.getElementById("keep-new")?.addEventListener("click", () => {
+  closeKeepWays("keep");
+  // The ceremony first, inside the tap.
+  keepBeyondThisBrowser();
+});
+/** What the passkey the person already has says when it did not sign an owner in here. */
+const NOT_JOINED = {
+  cancelled: "No passkey was used. Your work is still saved in this browser.",
+  refused: "This passkey did not open documents kept beyond this browser. Your work is still saved in this browser.",
+  unavailable: "The store did not answer, so nothing was kept beyond this browser yet. Your work is still saved in this browser; try again when you are online.",
+} as const;
+document.getElementById("keep-existing")?.addEventListener("click", () => {
+  closeKeepWays("keep");
+  // The ceremony first, inside the tap: recovery's, for the owner the passkey names.
+  const joining = joinOwner(storeBase(), writtenHere);
+  void joining.then((result) => {
+    if ("joined" in result) void keepHeldRevisions(result.adopted);
+    else {
+      const [kind, why] = "cancelled" in result ? (["cancelled", result.cancelled] as const) : "unavailable" in result ? (["unavailable", result.unavailable] as const) : (["refused", result.refused] as const);
+      console.info(`dai: not joined (${kind}): ${why}`);
+      tellOverDocument(NOT_JOINED[kind], kind !== "cancelled");
+    }
+    void showKeepBeyond();
+  });
+});
+/*
+ * As the opener loads: what the owner signed in here holds and the store has
+ * not acknowledged, asked again. Safari reloads the page for the keychain form
+ * right after enrolling, which can cut off the keep asked then (Build 2b-2d
+ * item 5); nothing else would ask before the next change.
+ */
+void writtenHere()
+  .then((documents) => keepHeldRevisions(documents))
+  .catch(() => undefined);
+/** The documents written in this browser: what keeping beyond it keeps. One only opened here is claimed by nobody. */
+async function writtenHere(): Promise<string[]> {
+  return (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid);
+}
+/**
+ * Asks the store to keep the revision held here of each document named that
+ * is under the owner signed in and not kept at that revision: what an owner
+ * adopted, kept at once, so its next status is "Kept" with no further change
+ * (R-Z, amended 31 October). A document with a revision already waiting for
+ * the store is left to it: that one is newer.
+ */
+async function keepHeldRevisions(documents: readonly string[]): Promise<void> {
+  try {
+    const owner = await currentOwner();
+    if (!owner || !storeBase()) return;
+    const waiting = new Set(waitingDocuments());
+    for (const item of await listCartridgesFromLibrary()) {
+      if (!documents.includes(item.documentUuid) || waiting.has(item.documentUuid) || !item.html) continue;
+      if ((await dataKeyOf(item.documentUuid))?.owner !== owner) continue;
+      const stored = await readStored(item.documentUuid);
+      const kept = await keptOf(item.documentUuid);
+      if (!stored.db || (kept?.owner === owner && kept.revision >= stored.revision)) continue;
+      /*
+       * Asked again with nothing awaited before the keep: a save that landed
+       * during the reads above queued its own revision, which the read here may
+       * be older than, and the keep would replace it (2b2d-L2).
+       */
+      if (waitingDocuments().includes(item.documentUuid)) continue;
+      console.info(`dai: keeping ${item.documentUuid} r${stored.revision}, adopted under ${owner}`);
+      keepRevision({ documentUuid: item.documentUuid, revision: stored.revision, database: stored.db, html: item.html, title: item.appName, build: item.build });
+    }
+  } catch (error: unknown) {
+    console.warn(`dai: adopted documents not asked to be kept: ${String(error)}`);
+  }
+}
 document.getElementById("keep-not-now")?.addEventListener("click", () => {
   closeSheet();
   setKeepOffering(false);
@@ -3792,8 +4124,9 @@ void showKeepBeyond();
  *
  * Decided after each written save, in the order they land: offered when the
  * save carried a change of the person's (the runtime says so: never the seed,
- * a projection, or its own bookkeeping), the browser context has not answered
- * the offer, and no owner is signed in here. Made once per page at most, and
+ * a projection, or its own bookkeeping), the opener has a store to keep in, the
+ * browser context has not answered the offer, and no owner is signed in here.
+ * Made once per page at most, and
  * withdrawn when an owner signs in while it stands.
  * The pill reads "Saved in this browser · Keep?" in the box it already has, a
  * tap on it opens the menu, and the menu's first two rows answer it; the
@@ -3802,9 +4135,12 @@ void showKeepBeyond();
  */
 function setKeepOffering(on: boolean): void {
   keepOffering = on;
-  document.body.classList.toggle("keep-offer", on);
-  const notNow = document.getElementById("keep-not-now");
-  if (notNow) notNow.hidden = !on;
+  // The pill now; the menu's rows when it is next closed.
+  whileClosed(sheet, "keep-offer", () => {
+    document.body.classList.toggle("keep-offer", on);
+    const notNow = document.getElementById("keep-not-now");
+    if (notNow) notNow.hidden = !on;
+  });
   showStorage();
 }
 let keepOfferDecided = 0;
@@ -3817,6 +4153,10 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
       // From here the status is shown (showStorage).
       personsChangeLanded = true;
       if (keepOfferMade) return;
+      if (!storeBase()) {
+        console.info(`dai: keep offer not made after save ${saveNumber}: this opener has no store`);
+        return;
+      }
       const [answered, owner] = await Promise.all([keepOfferAnswer(), currentOwner()]);
       if (answered !== null || owner !== null) {
         console.info(`dai: keep offer not made after save ${saveNumber}: ${answered !== null ? `answered "${answered}" in this browser` : "an owner is signed in"}`);
@@ -3839,7 +4179,419 @@ function considerKeepOffer(personsChange: boolean, saveNumber: number): Promise<
  * page or another of the browser context: the pill goes back to the status
  * alone. In the order of the decisions, so one still being made lands first.
  */
+/*
+ * A connection that comes back is a reason to try the store again, and never a
+ * reason to say anything: only an acknowledgment changes the status (R-Z
+ * sentence 4).
+ */
+window.addEventListener("online", () => {
+  for (const documentUuid of waitingDocuments()) keepAgain(documentUuid);
+});
+
+/*
+ * Recover (R-Z sentence 5). On a browser with nothing, the passkey brings the
+ * owner's library back at the revisions kept, each verified before it is
+ * restored; the person opens one, and it says which revision it is. When the
+ * store cannot be reached, that is said, and nothing is presented as
+ * recovered. With no surviving evidence of what is missing, nothing is said
+ * about it beyond the one sentence.
+ */
+const recoverButton = document.getElementById("recover") as HTMLButtonElement | null;
+/** A restored document into this browser's library, under the lock every library writer takes (D41). */
+function installRestored(one: Install): Promise<void> {
+  return withLibraryLock(one.documentUuid, async () => {
+    await saveDatabaseToOpfs(one.documentUuid, one.database);
+    // What this write does not own, it keeps: on a wiped browser there is nothing, but a record held here stays whole.
+    const held = await getCartridgeFromLibrary(one.documentUuid).catch(() => null);
+    // Restored over a snapshot, it is the store's copy now (D303).
+    const { arrivedSnapshot: _snapshot, ...kept } = held ?? {};
+    void _snapshot;
+    await saveCartridgeToLibrary({
+      ...kept,
+      documentUuid: one.documentUuid,
+      appName: one.title,
+      lastOpened: new Date().toISOString(),
+      html: one.html,
+      ...(one.publicKeyFingerprint ? { publicKeyFingerprint: one.publicKeyFingerprint } : {}),
+      revision: one.revision,
+      wrote: true,
+    });
+  });
+}
+/** What recovery may write here, and what it finds here already. */
+const recoveryHere: Here = {
+  install: installRestored,
+  held: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.appName ?? null,
+  snapshot: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.arrivedSnapshot === true,
+};
+const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
+/** Documents recovered on this page, not yet opened: the store's time for each. */
+const restoredNotes = new Map<string, string>();
+const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function restoredSentence(at: string): string {
+  return `Restored the copy kept at ${shortTime(at)}. Changes saved only in the cleared browser are not included.`;
+}
+const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
+const recoverOwnerField = document.getElementById("recover-owner") as HTMLInputElement | null;
+const recoverSecretField = document.getElementById("recover-secret") as HTMLInputElement | null;
+/** Why the saved-password form is hidden, as last said in the console; null while it is shown. */
+let recoverFormHiddenFor: string | null | undefined;
+/*
+ * A recovery the store cut short, finished from the menu: Recover lives in the
+ * chooser, which a document on screen hides, so the person who opened what
+ * came back reaches the rest here. A row that is in the menu only while the
+ * signed-in owner's record is marked recovering, and only from the menu's next
+ * opening either way (sheet.ts); its tap opens the recovery sheet.
+ */
+const finishRecovering = document.getElementById("finish-recovering") as HTMLButtonElement | null;
+/*
+ * Recover over a document (D303, ruled 31 October): the chooser's Recover is
+ * under the open document, so with a store stamped and nobody signed in the
+ * menu offers it, and its tap opens the same recovery sheet, named for a
+ * recovery rather than for finishing one. Its answers are the chooser's words,
+ * said over the document. A document held here and kept nowhere is adopted
+ * and kept as a line, never replaced (`restore` in recover.ts).
+ */
+const menuRecover = document.getElementById("menu-recover") as HTMLButtonElement | null;
+/** What the recovery sheet was opened for: finishing a recovery cut short, or Recover from the menu. */
+let finishSheetFor: "finish" | "recover" = "finish";
+const FINISH_WORDS = {
+  finish: {
+    title: "Finish recovering",
+    sub: "The rest of your library is still kept beyond this browser. Use your passkey, or the saved password your password manager kept.",
+  },
+  recover: {
+    title: "Recover documents kept beyond this browser",
+    sub: "Your documents kept beyond this browser come back here. Use your passkey, or the saved password your password manager kept.",
+  },
+} as const;
+function openFinishSheet(purpose: "finish" | "recover"): void {
+  finishSheetFor = purpose;
+  const title = document.getElementById("finish-title");
+  const sub = document.getElementById("finish-sub");
+  if (title) title.textContent = FINISH_WORDS[purpose].title;
+  if (sub) sub.textContent = FINISH_WORDS[purpose].sub;
+  closeSheet();
+  if (finishSheet) slideOpen(finishSheet);
+}
+/*
+ * The recovery sheet (R-Z, "the host's presence over the document is fixed";
+ * R-D as amended). Opened by the row's tap and by nothing else, and carrying
+ * both ways, each recovering alone: the passkey, and the saved-password form
+ * the chooser offers, for an owner who recovered with the saved password and
+ * has no passkey here. A passkey not used leaves the person on the sheet with
+ * both still offered; "Not now" closes it and changes nothing. A recovery
+ * that ran says what it did over the document, with the sheet closed.
+ */
+const finishSheet = document.getElementById("finish-sheet") as HTMLElement | null;
+const finishPasskey = document.getElementById("finish-passkey") as HTMLButtonElement | null;
+const finishKeychain = document.getElementById("finish-keychain") as HTMLFormElement | null;
+const finishWithPassword = document.getElementById("finish-with-password") as HTMLButtonElement | null;
+/** While a recovery the sheet asked for runs, neither way can start a second. */
+function finishRunning(on: boolean): void {
+  if (finishPasskey) finishPasskey.disabled = on;
+  if (finishWithPassword) finishWithPassword.disabled = on;
+}
+function closeFinishSheet(): void {
+  if (finishSheet) slideClose(finishSheet);
+}
+finishSheet?.addEventListener("click", (event) => {
+  if (event.target === finishSheet) closeFinishSheet();
+});
+document.getElementById("finish-cancel")?.addEventListener("click", () => closeFinishSheet());
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeFinishSheet();
+});
+async function showRecover(): Promise<void> {
+  // Offered with nobody signed in, and to an owner whose recovery the store cut short.
+  const owner = await currentOwner().catch(() => null);
+  const unfinished = owner !== null && (await ownerRecord(owner).catch(() => null))?.recovering === true;
+  const hidden = !storeBase() || (owner !== null && !unfinished);
+  if (recoverButton) recoverButton.hidden = hidden;
+  /*
+   * The saved-password form, only where it can work (Build 2b-2d item 3): a
+   * store stamped, and nobody signed in here (or an owner whose recovery the
+   * store cut short, who finishes it here). Not WebAuthn: the saved password
+   * needs none, and an owner enrolled elsewhere may have it synced to this
+   * browser (2b2d-L3). Otherwise hidden, and why is said once in the console.
+   */
+  const formHiddenFor = !storeBase() ? "no store is stamped" : owner !== null && !unfinished ? "an owner is signed in here" : null;
+  if (formHiddenFor !== recoverFormHiddenFor) {
+    recoverFormHiddenFor = formHiddenFor;
+    console.info(formHiddenFor === null ? "dai: recover form shown" : `dai: recover form hidden: ${formHiddenFor === "no store is stamped" ? "no store" : formHiddenFor}`);
+  }
+  if (recoverKeychain) recoverKeychain.hidden = formHiddenFor !== null;
+  const row = !!storeBase() && unfinished;
+  whileClosed(sheet, "finish-recovering", () => {
+    if (finishRecovering) finishRecovering.hidden = !row;
+  });
+  // Recover over a document: a store stamped and nobody signed in here (D303, ruled 31 October).
+  const recoverRow = !!storeBase() && owner === null;
+  whileClosed(sheet, "menu-recover", () => {
+    if (menuRecover) menuRecover.hidden = !recoverRow;
+  });
+}
+/** What each recovery path says when it was not used, or did not open the owner key. */
+const RECOVERY_WORDS = {
+  passkey: { cancelled: "No passkey was used, so nothing was recovered.", refused: "This passkey did not recover any documents. Nothing was restored." },
+  keychain: {
+    cancelled: "The account or the saved password reached this page empty. Tap the field, choose the saved password, and both fields fill in.",
+    refused: "This password did not recover any documents. Nothing was restored.",
+  },
+} as const;
+/** Where a recovery was asked from: the chooser's Recover, or the menu's "Finish recovering". */
+type AskedFrom = "chooser" | "menu";
+/**
+ * A recovery the sheet asked for has answered. Not used (no passkey answered,
+ * or no saved password filled in): the person stays on the sheet, both ways
+ * offered, and nothing is said. Otherwise the sheet closes and the answer is
+ * said over the document.
+ */
+function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
+  finishRunning(false);
+  if ("cancelled" in outcome) {
+    console.info(`dai: finish recovering: no ${path === "passkey" ? "passkey answered" : "saved password filled in"} (${outcome.cancelled}); the recovery sheet stays, both ways offered`);
+    if (path === "keychain") document.querySelector<HTMLInputElement>("#finish-keychain input:placeholder-shown")?.focus();
+    return;
+  }
+  closeFinishSheet();
+  // Recover from the menu is a recovery, said in the chooser's words; finishing one is said as finishing.
+  showRecovered(outcome, path, finishSheetFor === "recover" ? "chooser" : "menu");
+}
+/**
+ * A recovery, answered whatever happens inside it (R-Z sentence 5, "If
+ * recovery is temporarily unavailable, it says so"). One that throws partway,
+ * on an answer from the store this opener could not use, is answered as one
+ * the store cut short, never left silent: what it restored before the throw is
+ * what this browser now holds under the owner signed in, each held here
+ * already, and with nobody signed in nothing was restored.
+ */
+function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOVERY_WORDS): Promise<Recovered> {
+  return recovering.catch(async (error: unknown): Promise<Recovered> => {
+    const why = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.warn(`dai: recovery (${path}) broke off: ${why}`);
+    const owner = await currentOwner().catch(() => null);
+    if (owner === null) return { unavailable: why };
+    const restored: Restored[] = [];
+    for (const item of await listCartridgesFromLibrary().catch(() => [])) {
+      const kept = await keptOf(item.documentUuid).catch(() => null);
+      if (kept?.owner === owner) restored.push({ documentUuid: item.documentUuid, title: item.appName, at: kept.at, alreadyHere: true });
+    }
+    return { restored, refused: [], unreached: why };
+  });
+}
+/** Recover with the passkey, from the chooser or the recovery sheet: one recovery, whichever asked for it. */
+function recoverWithPasskey(from: AskedFrom): void {
+  // The ceremony first, inside the tap.
+  const recovering = answeredAlways(recover(storeBase(), recoveryHere), "passkey");
+  if (from === "menu") {
+    // What the note row says stays until the answer replaces it: a ceremony not used changes nothing on screen.
+    finishRunning(true);
+    void recovering.then((outcome) => finishAnswered(outcome, "passkey"));
+    return;
+  }
+  sayWhereAsked(RECOVERING);
+  void recovering.then((outcome) => showRecovered(outcome, "passkey", from));
+}
+recoverButton?.addEventListener("click", () => recoverWithPasskey("chooser"));
+finishRecovering?.addEventListener("click", () => openFinishSheet("finish"));
+menuRecover?.addEventListener("click", () => openFinishSheet("recover"));
+finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
+/*
+ * The keychain path (R-D, D298): the password the password manager kept at
+ * enrollment, filled into the chooser's form or the recovery sheet's,
+ * recovers with no passkey. No ceremony, so nothing here must start inside
+ * the tap.
+ */
+function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
+  const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain");
+  if (from === "menu") {
+    finishRunning(true);
+    void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
+    return;
+  }
+  sayWhereAsked(RECOVERING);
+  void recovering.then((outcome) => showRecovered(outcome, "keychain", from));
+}
+/*
+ * The chooser's form on a phone (Build 2b-2d item 3). The device reading of
+ * 30 October: a tap on its button did nothing visible; a recording of 31
+ * October: iOS filled both fields from a saved password, visibly, and the
+ * submit read them empty. So the submit reads the fields as they are when it
+ * runs, waiting a few frames for a value the engine commits after the tap
+ * before it calls either field empty, and says so in the report when they
+ * are. The button is never disabled (Build 2b-2dr item 3): a disabled default
+ * button blocks the keyboard's Go too, and no reading of the fields sees an
+ * autofill the engine shows and has not handed the page.
+ */
+/** The next frame, or 50 ms where frames are not drawn (a page out of sight). */
+const nextFrame = (): Promise<void> =>
+  new Promise((settle) => {
+    const timer = window.setTimeout(settle, 50);
+    requestAnimationFrame(() => {
+      window.clearTimeout(timer);
+      settle();
+    });
+  });
+recoverKeychain?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void (async () => {
+    const read = (): { owner: string; secret: string } => ({ owner: recoverOwnerField?.value.trim() ?? "", secret: recoverSecretField?.value ?? "" });
+    let fields = read();
+    for (let frame = 0; frame < 5 && (!fields.owner || !fields.secret); frame += 1) {
+      await nextFrame();
+      fields = read();
+    }
+    // Lengths only: neither value is ever written anywhere.
+    console.info(`dai: recover form submitted: account ${fields.owner.length} characters, password ${fields.secret.length} characters`);
+    recoverWithPassword(fields.owner, fields.secret, "chooser");
+  })();
+});
+finishKeychain?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const owner = (document.getElementById("finish-owner") as HTMLInputElement | null)?.value.trim() ?? "";
+  const field = document.getElementById("finish-secret") as HTMLInputElement | null;
+  const secret = field?.value ?? "";
+  // Nothing left in the field once it is used, whatever the outcome.
+  if (field) field.value = "";
+  recoverWithPassword(owner, secret, "menu");
+});
+/** What the chooser says while a recovery it asked for runs: every step of one is said there (Build 2b-2d item 3). */
+const RECOVERING = "Recovering your documents…";
+/** Titles as a sentence names them: "A", "A and B", "A, B, and C". */
+function namesOf(titles: readonly string[]): string {
+  return titles.length <= 2 ? titles.join(" and ") : `${titles.slice(0, -1).join(", ")}, and ${titles[titles.length - 1]}`;
+}
+/**
+ * For each document this recovery restored with more than one kept line, one
+ * sentence saying so: Recover opens the line the store took last, and says
+ * that, with no claim about which change is newest (envelopes carry no save
+ * time); reconciling the lines is D301's (D303, ruled on the review of Build
+ * 2b-2dr). Empty when every document has one.
+ */
+function moreThanOneLine(restored: readonly Restored[]): string {
+  const counted = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  return restored
+    .filter((one) => !one.alreadyHere && one.lines !== undefined && one.lines > 1)
+    .map((one) => ` ${one.title} has ${counted[one.lines!] ?? String(one.lines)} kept lines; the one kept last is shown.`)
+    .join("");
+}
+/** A recovery's words, where it was asked from: on the chooser, or over the document when it was asked from the menu with one open. */
+function sayWhereAsked(sentence: string, isError = false): void {
+  if (loaded) tellOverDocument(sentence, isError);
+  else {
+    say(sentence, isError);
+    // On a phone the report is under the form, where the keyboard may be: brought on screen (Build 2b-2d item 3).
+    if (sentence) report.scrollIntoView({ block: "nearest" });
+  }
+}
+function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom): void {
+  // A refused password leaves nothing in the field to fill again by mistake.
+  if (path === "keychain" && !("restored" in outcome)) {
+    const secret = document.getElementById("recover-secret") as HTMLInputElement | null;
+    if (secret) secret.value = "";
+  }
+  if (recoveredList) {
+    recoveredList.replaceChildren();
+    recoveredList.hidden = true;
+  }
+  if ("unavailable" in outcome) {
+    console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
+    sayWhereAsked(
+      from === "menu"
+        ? "The rest of your library could not be reached right now: the store did not answer. Finish recovering again when you are online."
+        : "Your documents could not be recovered right now: the store did not answer. Nothing was restored. Try again when you are online.",
+      true,
+    );
+  } else if ("cancelled" in outcome) {
+    console.info(`dai: recovery (${path}) cancelled: ${outcome.cancelled}`);
+    sayWhereAsked(RECOVERY_WORDS[path].cancelled);
+  } else if ("refused" in outcome && typeof outcome.refused === "string") {
+    console.info(`dai: recovery (${path}) refused: ${outcome.refused}`);
+    sayWhereAsked(RECOVERY_WORDS[path].refused, true);
+  } else if ("restored" in outcome) {
+    // A copy held here and kept nowhere, adopted by this recovery: kept now, as its own line (D303, ruled 31 October).
+    const joined = outcome.restored.filter((one) => one.joined).map((one) => one.documentUuid);
+    if (joined.length > 0) void keepHeldRevisions(joined);
+    for (const one of outcome.restored) {
+      // One held here since an earlier recovery may have changed since, or held here and kept as a line: no sentence about where it came from.
+      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, one.at);
+      const row = document.createElement("li");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.dataset.document = one.documentUuid;
+      open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
+      open.addEventListener("click", () => {
+        void (async () => {
+          const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === one.documentUuid);
+          if (item) await launchFromLibrary(item, "a recovered copy");
+        })();
+      });
+      row.append(open);
+      recoveredList?.append(row);
+    }
+    if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
+    const unverified = outcome.refused.length;
+    // Held here under another owner: passed over and said (D303, ruled on the review of Build 2b-2dr).
+    const passed = (outcome.passed ?? []).map((one) => ` ${one.title} was left as it is: this browser holds it for another passkey.`).join("");
+    if (from === "menu") {
+      /*
+       * Over the open document, what this run restored, by name: one held here
+       * since an earlier run is not this run's. Cut short, the way back is the
+       * row it was asked from, since Recover is under the document.
+       */
+      const now = outcome.restored.filter((one) => !one.alreadyHere).map((one) => one.title);
+      const recovered = now.length > 0 ? `Recovered ${namesOf(now)}.${moreThanOneLine(outcome.restored)} ` : "";
+      const notVerified = "A kept copy could not be verified, so it was not restored.";
+      if (outcome.unreached !== undefined) console.info(`dai: finish recovering cut short: ${outcome.unreached}`);
+      const sentence =
+        outcome.unreached !== undefined
+          ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.${passed}`
+          : `${recovered}${unverified > 0 ? notVerified : "Your library is complete."}${passed}`;
+      sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
+    } else if (outcome.unreached !== undefined) {
+      console.info(`dai: recovery cut short: ${outcome.unreached}`);
+      sayWhereAsked(
+        `Restored ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)} ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.${passed}`,
+        true,
+      );
+    } else {
+      const said =
+        outcome.restored.length === 0 && unverified === 0
+          ? passed === ""
+            ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
+            : ""
+          : unverified > 0
+            ? "A kept copy could not be verified, so it was not restored."
+            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)}`;
+      sayWhereAsked(`${said}${passed}`.trim(), unverified > 0);
+    }
+    /*
+     * The document on screen restored over (a snapshot, D303): the
+     * restored copy is opened in its place, and the recovery's words are said
+     * over it with the restored revision's (R-Z, "The restored revision, in
+     * words"), in the one note row.
+     */
+    const open = loaded?.manifest.documentUuid;
+    const reopen = open !== undefined && outcome.restored.some((one) => one.documentUuid === open && !one.alreadyHere && !one.joined);
+    if (reopen) {
+      const note = document.getElementById("doc-note");
+      recoveredSaid = { documentUuid: open, sentence: note && !note.hidden ? (note.textContent ?? "") : "" };
+      void (async () => {
+        const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === open);
+        if (item) await launchFromLibrary(item, "a recovered copy");
+      })();
+    }
+  }
+  void showRecover();
+}
+/** What a recovery said over the document it restored and reopened, said again with the restored revision's words. */
+let recoveredSaid: { documentUuid: string; sentence: string } | undefined;
+void showRecover();
+
 onOwnerChange(() => {
+  void showRecover();
+  void refreshKept();
   void showKeepBeyond();
   keepOfferDeciding = keepOfferDeciding.then(async () => {
     if (!keepOffering || (await currentOwner().catch(() => null)) === null) return;
@@ -4358,9 +5110,17 @@ async function finishMerge(applied: boolean): Promise<void> {
  * `scripts/check-sentences.mjs` fails a `say(...)` anywhere not named the
  * chooser's.
  */
-function tellOverDocument(sentence: string, isError = false): void {
+function tellOverDocument(sentence: string, isError = false, inPlace = false): void {
   const note = document.getElementById("doc-note");
   if (!note) return;
+  /*
+   * Said in place of the sentence showing, the row keeps the height it has, so
+   * the document under it does not move (R-Z, the host's presence is fixed):
+   * the shorter sentence sits in the taller row until it is dismissed or the
+   * next mount. Any other sentence lets the row take its own height again.
+   */
+  const height = inPlace && !note.hidden ? note.getBoundingClientRect().height : 0;
+  note.style.minHeight = height > 0 ? `${height}px` : "";
   note.textContent = sentence;
   note.classList.toggle("error", isError);
   note.hidden = sentence === "";
@@ -4435,6 +5195,9 @@ async function frameMerge(databaseBytes: Uint8Array, level: number, siblingView?
       window.removeEventListener("message", onResult);
       const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;
       const refusedBatches = Array.isArray(data.refusedBatches) ? data.refusedBatches : [];
+      // Changes that came across are a write here: the copy is no longer a snapshot (D303).
+      const into = mountedUuid;
+      if (!why && applied > 0 && into) void endSnapshot(into);
       resolve({ applied, duplicate, rejected, newReplicas, refusedBatches, conflicts, ...(why ? { refused: why } : {}) });
     };
     window.addEventListener("message", onResult);
@@ -5098,7 +5861,7 @@ async function planSuccession(
  * address to expire, nothing to fetch. It is also the only carrier that works
  * with the network switched off.
  */
-async function openFromLink(carried: string, consentedFor?: string): Promise<void> {
+async function openFromLink(carried: string, consentedFor?: string, ownMark?: string): Promise<void> {
   forgetArrival();
   markStep("reading the document from the link");
   slot.classList.add("busy");
@@ -5147,6 +5910,8 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
     from: "From the link you followed. Nothing is uploaded — it runs on this device.",
     consentedFor,
     hinted: consentedFor,
+    // The page's own address is marked in the tab's history state, never in the address (D303).
+    fromOwnAddress: ownMark !== undefined && ownMark === consentedFor,
   });
 }
 
@@ -5547,7 +6312,11 @@ async function startMailboxIfPossible(): Promise<void> {
         if (mountedUuid === uuid) void badge()?.opened(uuid).catch(() => undefined);
       },
       // A pulled move is stored on this device before the cursor passes it.
-      persist: flushDocument,
+      // Batches pulled and merged are a write here: no longer a snapshot (D303); then stored.
+      persist: async () => {
+        await endSnapshot(uuid);
+        return flushDocument();
+      },
       onNote: (message) => tellOverDocument(message),
     });
   }
@@ -5724,7 +6493,9 @@ async function start(): Promise<void> {
    * an unverified string does not get to decide which bytes are mounted while
    * verified bytes are sitting in the same address.
    */
-  const wanted = hintedUuid(location.hash, location.search);
+  // The address's hint, or this tab's own mark when the hint was taken off the address bar (D303).
+  const ownMark = ownAddressMark();
+  const wanted = hintedUuid(location.hash, location.search) ?? ownMark;
   /*
    * An icon made before the hint moved into the fragment.
    *
@@ -5817,7 +6588,7 @@ async function start(): Promise<void> {
 
   const carried = inlineFrom(location.hash);
   if (carried) {
-    await openFromLink(carried, wanted ?? undefined);
+    await openFromLink(carried, wanted ?? undefined, ownMark);
     return;
   }
 
@@ -5935,7 +6706,7 @@ async function start(): Promise<void> {
     return;
   }
 
-  await launchFromLibrary(item, "the document open last time, resumed");
+  await launchFromLibrary(item, RESUMED);
 }
 
 void start();
@@ -6374,6 +7145,24 @@ Object.defineProperty(window, "__runner", {
       signIn,
       leave,
       library: async () => libraryHere(await listCartridgesFromLibrary()),
+    },
+    /*
+     * The owner's store (Build 2b-2). A test points the opener at the local
+     * test store it stands up, as a deploy does with `dai-store`, and reads
+     * what each append came to and what was last kept.
+     */
+    useStore: (base: string | undefined): void => {
+      useStore(base);
+      void showRecover();
+    },
+    // The frame's pending writes saved now, not on the 800 ms debounce: so a
+    // test can know the revision on screen is the last one coming.
+    flush: (): Promise<void> => flushBeforeLeaving(),
+    keeping: {
+      log: keepingLog,
+      kept: keptOf,
+      base: storeBase,
+      waiting: waitingDocuments,
     },
     /** Decisions made about the offer to keep beyond this browser, one per written save. */
     get keepOfferDecided() {

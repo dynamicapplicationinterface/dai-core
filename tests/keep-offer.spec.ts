@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import { expect, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, currentOwner, openFile, pointAtStore, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
+import { putInKeyStore, savesSettled, watchDocumentTop } from "./keeping.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -57,10 +59,51 @@ async function decidedForEverySave(page: Page): Promise<void> {
 
 test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () => {
   test.slow();
+  // An opener offers to keep beyond this browser only with a store to keep in: these tests have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
+
+  test("an opener with no store offers nothing beyond this browser: no invitation after a change, no row, no ceremony; given a store, the row is there", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const file = await buildNotes(scratch, "Nowhere");
+    await countCeremonies(page);
+    await page.goto(RUNNER_URL);
+    expect(await page.evaluate(() => (window as Any).__runner.keeping.base() ?? null), "this opener names no store").toBeNull();
+    const app = await openFile(page, file);
+    await typeNote(app, "kept nowhere else");
+    await decidedForEverySave(page);
+    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
+    await expect(offer(page)).toHaveCount(0);
+
+    await page.locator("#more").click();
+    await expect(page.locator("#sheet")).toBeVisible();
+    await expect(page.locator("#keep-beyond")).toBeHidden();
+    await expect(page.locator("#keep-not-now")).toBeHidden();
+    expect(await ceremonies(page)).toBe(0);
+    expect(await currentOwner(page)).toBeNull();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#sheet")).toBeHidden();
+
+    // The same page, given a store: keeping beyond this browser is something it can do, so the menu offers it.
+    const store = await serveOwnerStore();
+    try {
+      await page.evaluate((base) => (window as Any).__runner.useStore(base), store.base);
+      await page.locator("#more").click();
+      await expect(page.locator("#keep-beyond")).toBeVisible();
+    } finally {
+      await store.close();
+    }
+  });
 
   test("a document opened and not touched, its seed and the runtime's bookkeeping saved, shows no invitation", async ({ page }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Starter", true);
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     await expect(app.locator("#note")).toHaveValue("starter");
@@ -72,6 +115,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     // Not a change (R-X), but a write: the save after it is not the document's setup alone.
     const file = await buildNotes(scratch, "Echo", true, "UPDATE notes SET body = body WHERE id = 1");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     await expect(app.locator("#note")).toHaveValue("starter");
@@ -83,6 +127,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     // After a tap the page is used: what keeps this save from being an offer is that it carries no change (R-X).
     const file = await buildNotes(scratch, "Focus", true, "", "UPDATE notes SET body = body WHERE id = 1");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     await expect(app.locator("#note")).toHaveValue("starter");
@@ -120,6 +165,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
 
     // This device: the same document, opened and not touched, then the copy opened into it.
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
@@ -138,6 +184,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
   test("the offer appears after the first change while typing goes on uninterrupted, and takes nothing from the field", async ({ page }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     const app = await openFile(page, file);
     const uuid = await uuidOf(page);
@@ -159,11 +206,226 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     expect(await offer(page).evaluate((el) => [el.closest("header") !== null, el.closest("[aria-modal='true']")])).toEqual([true, null]);
   });
 
+  test("the offer made while the menu is open adds nothing to it: a row measured, 400 ms, then tapped, is the row the tap lands on", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
+    const file = await buildNotes(scratch, "Notes");
+    await pointAtStore(page.context(), store.base);
+    await page.goto(RUNNER_URL);
+    const app = await openFile(page, file);
+    await expect(offer(page)).toHaveCount(0);
+
+    // The menu open first, its rows measured, as Playwright and a person both do before a tap.
+    await page.locator("#more").click();
+    const send = page.locator("#send");
+    await expect(send).toBeVisible();
+    await expect.poll(() => page.locator("#sheet .sheet-panel").evaluate((el) => el.getAnimations().length)).toBe(0);
+    const box = (await send.boundingBox())!;
+    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+    const rowsBefore = await page.locator("#sheet .sheet-panel > button:visible").evaluateAll((rows) => rows.map((row) => row.id));
+
+    // Then the person's first change lands under the open menu, and the offer is decided.
+    await app.locator("#note").focus();
+    await app.locator("#note").pressSequentially("a change");
+    await decidedForEverySave(page);
+    await expect(offer(page)).toBeVisible();
+    await page.waitForTimeout(400);
+
+    expect(await page.locator("#sheet .sheet-panel > button:visible").evaluateAll((rows) => rows.map((row) => row.id)), "the open menu's rows").toEqual(rowsBefore);
+    expect(await page.evaluate(([px, py]) => document.elementFromPoint(px!, py!)?.closest("button")?.id ?? null, [x, y]), "under the tap").toBe("send");
+    await page.mouse.click(x, y);
+    await expect(page.locator("#send-go")).toBeVisible();
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+
+    // Closed by that tap, the menu takes the offer's rows for its next opening.
+    await expect(page.locator("#sheet")).toBeHidden();
+    await expect(page.locator("#keep-not-now")).not.toHaveAttribute("hidden");
+    await expect(page.locator("#keep-beyond")).not.toHaveAttribute("hidden");
+    await expect(page.locator("body")).toHaveClass(/\bkeep-offer\b/);
+  });
+
+  /*
+   * 2b2f-M3 (Build 2b-2fr item 4): "Finish recovering" goes through
+   * `whileClosed` as the offer's rows do (2b2-H1). The recovering mark changed
+   * under the open menu, in either direction, moves no row; the change lands
+   * from the menu's next opening. No passkey is needed: the owner and the mark
+   * are stood up in the key store as the opener keeps them, and the change is
+   * announced as another page of this browser announces it.
+   */
+  test("the recovering mark changed under the open menu moves no row: Finish recovering comes and goes from the menu's next opening", async ({ page }) => {
+    const rows = (): Promise<string[]> =>
+      page.locator("#sheet .sheet-panel > button:visible").evaluateAll((list) => list.map((row) => `${row.id}@${Math.round(row.getBoundingClientRect().top)}`));
+    const openMenu = async (): Promise<string[]> => {
+      await page.locator("#more").click();
+      await expect(page.locator("#sheet")).toBeVisible();
+      await expect.poll(() => page.locator("#sheet .sheet-panel").evaluate((el) => el.getAnimations().length)).toBe(0);
+      return rows();
+    };
+    const closeMenu = async (): Promise<void> => {
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#sheet")).toBeHidden();
+    };
+    const owner = "rows-owner-0000000000000";
+    const mark = async (recovering: boolean): Promise<void> => {
+      await putInKeyStore(page, `dai:owner:${owner}`, recovering ? { owner, recovering: true } : { owner });
+      await page.evaluate(() => new BroadcastChannel("dai:owner").postMessage("changed"));
+    };
+
+    await pointAtStore(page.context(), store.base);
+    await page.goto(RUNNER_URL);
+    await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-rows-")), "Notes"));
+    await putInKeyStore(page, "dai:owner", owner);
+    await mark(true);
+
+    // The mark on: the row is in the menu.
+    const withRow = await openMenu();
+    expect(withRow.some((row) => row.startsWith("finish-recovering@")), "the row, with the mark").toBe(true);
+    const exportBox = (await page.locator("#export").boundingBox())!;
+    // The mark cleared under the open menu: 400 ms on, every row where it was, and the row below the row's still under its point.
+    await mark(false);
+    await page.waitForTimeout(400);
+    expect(await rows(), "the open menu's rows, the mark cleared under it").toEqual(withRow);
+    expect(
+      await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest("button")?.id ?? null, [exportBox.x + exportBox.width / 2, exportBox.y + exportBox.height / 2]),
+      "under Save a copy's point",
+    ).toBe("export");
+    await closeMenu();
+    // From the next opening, no row.
+    const withoutRow = await openMenu();
+    expect(withoutRow.some((row) => row.startsWith("finish-recovering@")), "no row, from the next opening").toBe(false);
+    // The mark set again under the open menu: nothing moves, and the row is back from the next opening.
+    await mark(true);
+    await page.waitForTimeout(400);
+    expect(await rows(), "the open menu's rows, the mark set under it").toEqual(withoutRow);
+    await closeMenu();
+    expect(await openMenu(), "the row back, from the next opening").toEqual(withRow);
+    await closeMenu();
+  });
+
+  /*
+   * 2b2fr2-L1 (pre-merge item 2): the recovery sheet on every engine. The
+   * passkey path of recovery.spec.ts is Chromium's alone; this stands the
+   * owner and its mark up in the key store as the opener keeps them, so no
+   * passkey is needed. The row's tap opens the sheet and nothing else does
+   * (R-Z, "the host's presence over the document is fixed"; R-D as amended,
+   * both ways offered): a passkey not used leaves the person on it, and "Not
+   * now", Escape and the scrim each close it, the mark kept, with nothing
+   * opening by itself in the 2 s after.
+   */
+  test("the recovery sheet opens from the menu's row alone, offers both ways, and closes three ways with nothing opening by itself", async ({ page }) => {
+    const dialogs = (): Promise<string[]> =>
+      page.evaluate(() => [...document.querySelectorAll<HTMLElement>("[role=dialog]")].filter((d) => !d.hidden && d.getBoundingClientRect().height > 0).map((d) => d.id));
+    /** Every dialog watched for 2 s, every 100 ms: any that opened. */
+    const openedWithin2s = async (): Promise<string[]> => {
+      const seen = new Set<string>();
+      const until = Date.now() + 2_000;
+      while (Date.now() < until) {
+        for (const id of await dialogs()) seen.add(id);
+        await page.waitForTimeout(100);
+      }
+      return [...seen];
+    };
+    const owner = "sheet-owner-000000000000";
+    const mark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+    const openSheet = async (): Promise<void> => {
+      await page.locator("#more").click();
+      await expect(page.locator("#finish-recovering")).toBeVisible();
+      await page.locator("#finish-recovering").click();
+      await expect(page.locator("#finish-sheet")).toBeVisible();
+      await expect.poll(() => page.locator("#finish-sheet .keep-panel").evaluate((el) => el.getAnimations().length)).toBe(0);
+    };
+    // A passkey not used, the same on every engine: the browser answers NotAllowedError (an engine with no passkeys has none to ask).
+    await page.addInitScript(() => {
+      if (navigator.credentials) navigator.credentials.get = () => Promise.reject(new DOMException("The operation either timed out or was not allowed.", "NotAllowedError"));
+    });
+
+    await pointAtStore(page.context(), store.base);
+    await page.goto(RUNNER_URL);
+    await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-sheet-")), "Notes"));
+    await putInKeyStore(page, "dai:owner", owner);
+    await putInKeyStore(page, `dai:owner:${owner}`, { owner, recovering: true, atStore: true });
+    expect(await openedWithin2s(), "before the row is tapped").toEqual([]);
+
+    await openSheet();
+    expect(await dialogs(), "the row's tap: the recovery sheet, alone").toEqual(["finish-sheet"]);
+    await expect(page.locator("#finish-passkey"), "the passkey way").toBeVisible();
+    await expect(page.locator("#finish-owner"), "the saved-password way").toBeVisible();
+    await expect(page.locator("#finish-secret")).toBeVisible();
+    await expect(page.locator("#finish-with-password")).toBeVisible();
+
+    // The passkey not used: the person is still on the sheet, both ways offered, nothing said.
+    await page.locator("#finish-passkey").click();
+    await expect(page.locator("#finish-passkey")).toBeEnabled();
+    expect(await openedWithin2s(), "a passkey not used").toEqual(["finish-sheet"]);
+    await expect(page.locator("#finish-with-password")).toBeVisible();
+    await expect(page.locator("#doc-note"), "nothing said over the document").toBeHidden();
+    expect(await mark(), "the mark, after a passkey not used").toBe(true);
+
+    // Three ways out, each changing nothing, and nothing opens by itself after.
+    await page.locator("#finish-cancel").click();
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+    expect(await openedWithin2s(), "after Not now").toEqual([]);
+    expect(await mark(), "the mark, after Not now").toBe(true);
+    await openSheet();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+    expect(await openedWithin2s(), "after Escape").toEqual([]);
+    expect(await mark(), "the mark, after Escape").toBe(true);
+    await openSheet();
+    await page.mouse.click(20, 120);
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+    expect(await openedWithin2s(), "after the scrim").toEqual([]);
+    expect(await mark(), "the mark, after the scrim").toBe(true);
+  });
+
+  /*
+   * 2b2fr-L1 (Build 2b-2fr2 item 3): no save takes a note-row sentence away.
+   * The completion sentence of "Finish recovering" was cleared at the next
+   * save, behind a guard no test held; the clearing is gone, and this holds
+   * that any other sentence over the document stays through a save too, and
+   * the document with it (R-Z, "the host's presence over the document is
+   * fixed").
+   */
+  test("a sentence over the document stays through the next save, and the document does not move", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "a passkey ceremony is Chromium's virtual authenticator");
+    const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-offer-")), "Notes");
+    const context = await browser.newContext();
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      // The person cancels the passkey sheet "Keep beyond this browser" opens: the browser answers NotAllowedError.
+      await page.addInitScript(() => {
+        navigator.credentials.create = () => Promise.reject(new DOMException("The operation either timed out or was not allowed.", "NotAllowedError"));
+      });
+      await page.goto(RUNNER_URL);
+      await addPasskeyProvider(context, page);
+      const app = await openFile(page, file);
+      const uuid = await uuidOf(page);
+      await typeNote(app, "one");
+      await decidedForEverySave(page);
+      await page.locator("#more").click();
+      await page.locator("#keep-beyond").click();
+      await page.locator("#keep-new").click();
+      const said = "No passkey was made. Your work is still saved in this browser.";
+      await expect(page.locator("#doc-note")).toHaveText(said, { timeout: 30_000 });
+
+      const top = await watchDocumentTop(page);
+      await typeNote(app, " two");
+      await expect.poll(() => storedHolds(page, uuid, "one two"), { timeout: 30_000 }).toBe(true);
+      await savesSettled(page);
+      const moved = await top();
+      expect(moved, "the document's top, from before the typing to after its save").toEqual({ from: moved.from, min: moved.from, max: moved.from });
+      await expect(page.locator("#doc-note"), "the sentence, through the save").toHaveText(said);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("after Not now, a second document in the same browser context shows no invitation, and the offer stays in the menu", async ({ browser }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const first = await buildNotes(scratch, "First");
     const second = await buildNotes(scratch, "Second");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     let app = await openFile(page, first);
@@ -189,10 +451,11 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await context.close();
   });
 
-  test("no ceremony starts when the offer appears, nor on the tap that opens the menu; one starts on the menu's row", async ({ browser, browserName }) => {
+  test("no ceremony starts when the offer appears, nor on the tap that opens the menu, nor on its row; one starts on the way the row offers", async ({ browser, browserName }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await countCeremonies(page);
     await page.goto(RUNNER_URL);
@@ -220,7 +483,12 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
       const top = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id ?? null, [box.x + box.width / 2, box.y + box.height / 2] as const);
       expect(top, `${target} is the host's, not the document's`).not.toBe("cartridge");
     }
+    // The row opens the two ways (R-Z, amended 31 October); still nothing has started.
     await page.locator("#keep-beyond").click();
+    await expect(page.locator("#keep-ways")).toBeVisible();
+    expect(await ceremonies(page)).toBe(0);
+    await expect(noPasskeys).toBeHidden();
+    await page.locator("#keep-new").click();
     if (passkeys) await expect.poll(() => ceremonies(page)).toBe(1);
     else await expect(noPasskeys).toBeVisible();
     await expect(offer(page)).toBeHidden();
@@ -233,6 +501,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     await addPasskeyProvider(context, page);
@@ -240,6 +509,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     // Enrolled from the menu before any change: no offer stood, so none was answered, and the owner is what holds it back.
     await page.locator("#more").click();
     await page.locator("#keep-beyond").click();
+    await page.locator("#keep-new").click();
     await expect.poll(() => currentOwner(page), { timeout: 30_000 }).not.toBeNull();
     expect(await withKeyStore(page, 'return (await get("dai:keep-offer")) ?? null;'), "the offer was never answered").toBeNull();
 
@@ -255,7 +525,8 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await expect.poll(() => storedHolds(page, uuid, "mine"), { timeout: 30_000 }).toBe(true);
     await decidedForEverySave(page);
     await expect(offer(page)).toHaveCount(0);
-    await expect(page.locator("#save-state")).toHaveText("Saved in this browser");
+    // With a store the change is kept, so the words are the status's, whichever it has reached, and never carry the offer.
+    await expect(page.locator("#save-state")).not.toContainText("Keep?");
     expect(offered.some((text) => text.includes("an owner is signed in")), offered.join("\n")).toBe(true);
     await context.close();
   });
@@ -263,6 +534,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
   test("a tap that lands before the seed's first save is the person's change: the offer and the status follow it, not the next one", async ({ page }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const taps = await buildTaps(scratch, "Taps");
+    await pointAtStore(page.context(), store.base);
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", taps.file);
     const app = appIn(page);
@@ -288,6 +560,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     const first = await buildNotes(scratch, "First");
     const second = await buildNotes(scratch, "Second");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const one = await context.newPage();
     await one.goto(RUNNER_URL);
     await typeNote(await openFile(one, first), "first");
@@ -302,6 +575,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await expect(offer(two)).toBeVisible({ timeout: 30_000 });
     await offer(two).click();
     await two.locator("#keep-beyond").click();
+    await two.locator("#keep-new").click();
     await expect.poll(() => currentOwner(two), { timeout: 30_000 }).not.toBeNull();
 
     // The first tab, untouched since: an owner is signed in, so the offer is gone, and the pill says where the work is.
@@ -319,6 +593,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
       const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
       const taps = await buildTaps(scratch, "Taps");
       const context = await browser.newContext({ viewport });
+      await pointAtStore(context, store.base);
       const page = await context.newPage();
       await countCeremonies(page);
       await page.goto(RUNNER_URL);

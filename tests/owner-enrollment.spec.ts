@@ -17,9 +17,11 @@ import {
   storedHolds,
   typeNote,
   uuidOf,
+  pointAtStore,
   waitMounted,
   withKeyStore,
 } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 
 /**
  * Owner enrollment, Build 2b-1 (R-Z sentences 1, 3 and 8; R-D as amended).
@@ -82,6 +84,14 @@ const revisionOf = (page: Page, uuid: string): Promise<number> =>
 
 test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
   test.slow();
+  // An opener offers to keep beyond this browser only with a store to keep in: the tests that enroll have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
 
   test("with no owner and no connection, a document opens, is edited and saved in this browser, and its data key is minted unwrapped", async ({ browser, browserName }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
@@ -174,11 +184,12 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     await context.close();
   });
 
-  test("enrolling afterwards wraps the data key the document already has, under an owner key both secrets open, and rewrites and uploads nothing", async ({ browser, browserName }) => {
+  test("enrolling afterwards wraps the data key the document already has, under an owner key both secrets open, rewrites nothing, and sends only what the owner's store is owed", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", VIRTUAL_PASSKEY);
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await watchKeychain(page);
     await page.goto(RUNNER_URL);
@@ -208,7 +219,13 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
 
     expect(await passkeysHeld(provider)).toBe(1);
     expect({ digest: await storedDigest(page, uuid), revision: await revisionOf(page, uuid), saves: await savesWritten(page) }).toEqual(before);
-    expect(requests).toEqual([]);
+    // Since Build 2b-2d item 5, what enrolling adopted is kept at once: the owner registered, the wrapped key, the sealed revision, each to the owner's store and nowhere else.
+    await expect.poll(() => requests.length, { timeout: 30_000 }).toBe(3);
+    // The append acknowledged, and then a while with nothing sent: a fourth request, late, would be seen (2b2d-L1).
+    await expect.poll(() => page.evaluate((id) => (window as Any).__runner.keeping.kept(id), uuid), { timeout: 30_000 }).not.toBeNull();
+    await page.waitForTimeout(3_000);
+    const path = (request: string): string => request.replace(store.base, "").replace(/[A-Za-z0-9_-]{22}/, "<owner>").replace(uuid, "<document>");
+    expect(requests.map(path)).toEqual(["POST /o/<owner>/enroll", "PUT /d/<owner>/<document>/key", "POST /d/<owner>/<document>/append?as=head"]);
 
     const keychain = await page.evaluate(() => (window as Any).__keychain as string[]);
     expect(keychain).toHaveLength(1);
@@ -244,6 +261,7 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     let provider = await addPasskeyProvider(context, page);

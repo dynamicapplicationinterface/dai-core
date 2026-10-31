@@ -43,7 +43,7 @@ import { loadAt } from "./navigate.js";
 import { groundKey as groundStorageKey, installAskedKey, KEYS } from "../../../src/keys.js";
 import { HINT_KEY } from "../../../src/link.js";
 import { platform, standalone } from "./platform.js";
-import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
+import { closeSheet as slideClose, openSheet as slideOpen, whileClosed } from "./sheet.js";
 
 /** What Chrome hands over, and which is not in the DOM typings. */
 interface InstallEvent extends Event {
@@ -115,6 +115,60 @@ function withHint(hash: string, uuid: string): string {
     .filter((part) => part.length > 0 && !part.startsWith(`${HINT_KEY}=`));
   parts.push(`${HINT_KEY}=${uuid}`);
   return `#${parts.join("&")}`;
+}
+
+/*
+ * The page's own address, marked in the tab's history state (D303, ruled on
+ * the review of Build 2b-2dr, 2b2dr-M1). The hint in an address says which
+ * document it is probably for, and anybody's address can carry it: the
+ * address bar a person copies, or Safari's share sheet sends, is a link
+ * someone followed. So once a document is mounted at an address that names
+ * it, the hint is taken off the address bar and the mark kept in the history
+ * state of this tab, which a reload keeps and no copied address carries. The
+ * launch address an icon is made from keeps its hint: the operating system
+ * reads it, and an icon's first open is a link someone followed too.
+ */
+const OWN_ADDRESS = "daiOwnAddress";
+
+/** The document this tab's history entry was opened at by the opener, or undefined. */
+export function ownAddressMark(): string | undefined {
+  const state = history.state as Record<string, unknown> | null;
+  const mark = state && typeof state === "object" ? state[OWN_ADDRESS] : undefined;
+  return typeof mark === "string" ? mark : undefined;
+}
+
+/**
+ * As a document mounts: at an address whose hint names it, the hint leaves the
+ * address bar and the mark goes into the history state; at any other address
+ * a mark for another document is dropped. Everything else in the address is
+ * kept exactly as it stands.
+ */
+export function markOwnAddress(uuid: string): void {
+  try {
+    const url = new URL(location.href);
+    const parts = url.hash.replace(/^#/, "").split("&").filter((part) => part.length > 0);
+    const hinted = parts.find((part) => part.startsWith(`${HINT_KEY}=`))?.slice(HINT_KEY.length + 1).toLowerCase();
+    const state = history.state && typeof history.state === "object" ? { ...(history.state as Record<string, unknown>) } : {};
+    if (hinted === uuid) {
+      const rest = parts.filter((part) => !part.startsWith(`${HINT_KEY}=`));
+      url.hash = rest.length > 0 ? `#${rest.join("&")}` : "";
+      history.replaceState({ ...state, [OWN_ADDRESS]: uuid }, "", url.href);
+    } else if (hinted === undefined && ownAddressMark() !== undefined && ownAddressMark() !== uuid) {
+      delete state[OWN_ADDRESS];
+      history.replaceState(state, "", location.href);
+    }
+  } catch {
+    /* The address stays as it is; the hint means what it meant before. */
+  }
+}
+
+/** This page's address as the launch address it was: the hint put back from the mark, for comparing with one. */
+export function pageAddress(): string {
+  const mark = ownAddressMark();
+  if (mark === undefined || location.hash.includes(`${HINT_KEY}=`)) return location.href;
+  const url = new URL(location.href);
+  url.hash = withHint(url.hash, mark);
+  return url.href;
 }
 
 export function manifestAddress(uuid: string): string {
@@ -505,7 +559,7 @@ export function manifestFallback(): string | null {
  */
 function keepHere(identity: Identity & { link?: string }): boolean {
   const target = launchAddress(identity);
-  if (sameLaunch(location.href, target)) return false;
+  if (sameLaunch(pageAddress(), target)) return false;
   try {
     sessionStorage.setItem(KEEP_AFTER_RELOAD, identity.uuid);
   } catch {
@@ -721,6 +775,8 @@ export function watchForInstall(): Keeper | null {
   const sheetSteps = document.getElementById("keep-steps");
   const sheetBackup = document.getElementById("keep-backup");
   const done = document.getElementById("keep-done");
+  // The document's menu, where the action is a row: nothing is added to it while it is open (sheet.ts).
+  const menu = document.getElementById("sheet");
   if (!cta || !label || !titleIcon || !sheet || !sheetIcon || !sheetTitle || !sheetSub || !sheetSteps || !done) return null;
 
   let saved: InstallEvent | null = null;
@@ -837,7 +893,10 @@ export function watchForInstall(): Keeper | null {
       if (asked !== identity.uuid) closeSheet();
       label.textContent = ctaLabel(Boolean(saved));
       // Already an app on this device: nothing to add.
-      cta.hidden = standalone();
+      const app = standalone();
+      whileClosed(menu, "keep-cta", () => {
+        cta.hidden = app;
+      });
       const icon = faviconUrl(identity.favicon);
       titleIcon.hidden = !icon;
       if (icon) titleIcon.src = icon;
@@ -863,7 +922,9 @@ export function watchForInstall(): Keeper | null {
     clear() {
       forget();
       current = null;
-      cta.hidden = true;
+      whileClosed(menu, "keep-cta", () => {
+        cta.hidden = true;
+      });
       cta.classList.remove("nudge");
       titleIcon.hidden = true;
       closeSheet();
