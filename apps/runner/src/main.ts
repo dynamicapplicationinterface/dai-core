@@ -3914,11 +3914,13 @@ document.getElementById("keep-cta")?.addEventListener("click", () => closeSheet(
 /**
  * "Keep beyond this browser": owner enrollment, chosen (R-Z sentence 3).
  *
- * The ceremony starts in this tap and nowhere else, and `enroll` reaches it
- * before anything is awaited: a passkey sheet is allowed only inside the tap.
- * Every document this browser holds that no owner holds yet comes under the
- * new owner; nothing is rewritten and nothing is uploaded. In the menu while
- * this browser context has no owner.
+ * The row opens the two ways, and the ceremony starts in the tap on one of
+ * them and nowhere else; `enroll` reaches it before anything is awaited: a
+ * passkey sheet is allowed only inside the tap. Every document written in
+ * this browser that no owner holds yet comes under the new owner. Nothing is
+ * rewritten, and each is asked to be kept at once (Build 2b-2d item 5): the
+ * owner, its wrapped key and the sealed revision go to the owner's store. In
+ * the menu while this browser context has no owner.
  */
 const keepBeyond = document.getElementById("keep-beyond") as HTMLButtonElement | null;
 const NOT_ENROLLED: Record<NotEnrolled, string> = {

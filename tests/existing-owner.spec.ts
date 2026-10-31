@@ -135,6 +135,9 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       await expect(page.locator("#keep-ways-backup")).toHaveText(
         "Your browser will also offer to save a backup password. Keep it: it opens your documents if the passkey is ever lost.",
       );
+      // Under "Make a new passkey" only: the passkey the person already has hands nothing to a keychain (2b2d-L4).
+      await expect(page.locator("#keep-new #keep-ways-backup")).toBeVisible();
+      await expect(page.locator("#keep-existing")).not.toContainText("backup password");
       expect(await page.evaluate(() => (window as Any).__ceremonies), "no ceremony yet").toBe(0);
     } finally {
       await context.close();
