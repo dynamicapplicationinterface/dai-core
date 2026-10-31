@@ -4140,6 +4140,11 @@ function restoredSentence(at: string): string {
   return `Restored the copy kept at ${shortTime(at)}. Changes saved only in the cleared browser are not included.`;
 }
 const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
+const recoverOwnerField = document.getElementById("recover-owner") as HTMLInputElement | null;
+const recoverSecretField = document.getElementById("recover-secret") as HTMLInputElement | null;
+const recoverWithPasswordButton = document.getElementById("recover-with-password") as HTMLButtonElement | null;
+/** Why the saved-password form is hidden, as last said in the console; null while it is shown. */
+let recoverFormHiddenFor: string | null | undefined;
 /*
  * A recovery the store cut short, finished from the menu: Recover lives in the
  * chooser, which a document on screen hides, so the person who opened what
@@ -4182,7 +4187,26 @@ async function showRecover(): Promise<void> {
   const unfinished = owner !== null && (await ownerRecord(owner).catch(() => null))?.recovering === true;
   const hidden = !storeBase() || (owner !== null && !unfinished);
   if (recoverButton) recoverButton.hidden = hidden;
-  if (recoverKeychain) recoverKeychain.hidden = hidden;
+  /*
+   * The saved-password form, only where it can work (Build 2b-2d item 3): a
+   * store stamped, nobody signed in here (or an owner whose recovery the
+   * store cut short, who finishes it here), and an engine with WebAuthn,
+   * without which no owner was ever enrolled from it. Otherwise hidden, and
+   * why is said once in the console.
+   */
+  const formHiddenFor = !storeBase()
+    ? "no store is stamped"
+    : owner !== null && !unfinished
+      ? "an owner is signed in here"
+      : typeof window.PublicKeyCredential === "undefined"
+        ? "this engine has no WebAuthn"
+        : null;
+  if (formHiddenFor !== recoverFormHiddenFor) {
+    recoverFormHiddenFor = formHiddenFor;
+    console.info(formHiddenFor === null ? "dai: recover form shown" : `dai: recover form hidden: ${formHiddenFor === "no store is stamped" ? "no store" : formHiddenFor}`);
+  }
+  if (recoverKeychain) recoverKeychain.hidden = formHiddenFor !== null;
+  settleRecoverButton();
   const row = !!storeBase() && unfinished;
   whileClosed(sheet, "finish-recovering", () => {
     if (finishRecovering) finishRecovering.hidden = !row;
@@ -4192,7 +4216,7 @@ async function showRecover(): Promise<void> {
 const RECOVERY_WORDS = {
   passkey: { cancelled: "No passkey was used, so nothing was recovered.", refused: "This passkey did not recover any documents. Nothing was restored." },
   keychain: {
-    cancelled: "Fill in the saved password first: tap the field and choose it from your saved passwords.",
+    cancelled: "The account or the saved password reached this page empty. Tap the field, choose the saved password, and both fields fill in.",
     refused: "This password did not recover any documents. Nothing was restored.",
   },
 } as const;
@@ -4246,7 +4270,7 @@ function recoverWithPasskey(from: AskedFrom): void {
     void recovering.then((outcome) => finishAnswered(outcome, "passkey"));
     return;
   }
-  sayWhereAsked("");
+  sayWhereAsked(RECOVERING);
   void recovering.then((outcome) => showRecovered(outcome, "passkey", from));
 }
 recoverButton?.addEventListener("click", () => recoverWithPasskey("chooser"));
@@ -4268,14 +4292,65 @@ function recoverWithPassword(owner: string, secret: string, from: AskedFrom): vo
     void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
     return;
   }
-  sayWhereAsked("");
+  sayWhereAsked(RECOVERING);
   void recovering.then((outcome) => showRecovered(outcome, "keychain", from));
 }
+/*
+ * The chooser's form on a phone (Build 2b-2d item 3). The device reading of
+ * 30 October: a tap on its button did nothing visible; a recording of 31
+ * October: iOS filled both fields from a saved password, visibly, and the
+ * submit read them empty. So the button waits until both fields hold
+ * something, a value or an autofill the engine shows and has not yet handed
+ * the page; and the submit reads the fields as they are when it runs, waiting
+ * a few frames for a value the engine commits after the tap before it calls
+ * either field empty.
+ */
+/** Whether a field holds something: a value, or an autofill the engine shows before it hands the page the value. */
+function holdsSomething(field: HTMLInputElement | null): boolean {
+  if (!field) return false;
+  if (field.value !== "") return true;
+  for (const selector of [":autofill", ":-webkit-autofill"]) {
+    try {
+      if (field.matches(selector)) return true;
+    } catch {
+      /* An engine that does not know the selector. */
+    }
+  }
+  return false;
+}
+function settleRecoverButton(): void {
+  if (recoverWithPasswordButton) recoverWithPasswordButton.disabled = !(holdsSomething(recoverOwnerField) && holdsSomething(recoverSecretField));
+}
+for (const field of [recoverOwnerField, recoverSecretField]) {
+  for (const type of ["input", "change", "focusout", "animationstart"]) field?.addEventListener(type, settleRecoverButton);
+}
+// An autofill some engine commits with no event at all: read again while the form is on screen.
+window.setInterval(() => {
+  if (recoverKeychain && !recoverKeychain.hidden && !loaded) settleRecoverButton();
+}, 400);
+settleRecoverButton();
+/** The next frame, or 50 ms where frames are not drawn (a page out of sight). */
+const nextFrame = (): Promise<void> =>
+  new Promise((settle) => {
+    const timer = window.setTimeout(settle, 50);
+    requestAnimationFrame(() => {
+      window.clearTimeout(timer);
+      settle();
+    });
+  });
 recoverKeychain?.addEventListener("submit", (event) => {
   event.preventDefault();
-  const owner = (document.getElementById("recover-owner") as HTMLInputElement | null)?.value.trim() ?? "";
-  const secret = (document.getElementById("recover-secret") as HTMLInputElement | null)?.value ?? "";
-  recoverWithPassword(owner, secret, "chooser");
+  void (async () => {
+    const read = (): { owner: string; secret: string } => ({ owner: recoverOwnerField?.value.trim() ?? "", secret: recoverSecretField?.value ?? "" });
+    let fields = read();
+    for (let frame = 0; frame < 5 && (!fields.owner || !fields.secret); frame += 1) {
+      await nextFrame();
+      fields = read();
+    }
+    // Lengths only: neither value is ever written anywhere.
+    console.info(`dai: recover form submitted: account ${fields.owner.length} characters, password ${fields.secret.length} characters`);
+    recoverWithPassword(fields.owner, fields.secret, "chooser");
+  })();
 });
 finishKeychain?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -4286,6 +4361,8 @@ finishKeychain?.addEventListener("submit", (event) => {
   if (field) field.value = "";
   recoverWithPassword(owner, secret, "menu");
 });
+/** What the chooser says while a recovery it asked for runs: every step of one is said there (Build 2b-2d item 3). */
+const RECOVERING = "Recovering your documents…";
 /** Titles as a sentence names them: "A", "A and B", "A, B, and C". */
 function namesOf(titles: readonly string[]): string {
   return titles.length <= 2 ? titles.join(" and ") : `${titles.slice(0, -1).join(", ")}, and ${titles[titles.length - 1]}`;
@@ -4293,7 +4370,11 @@ function namesOf(titles: readonly string[]): string {
 /** A recovery's words, where it was asked from: on the chooser, or over the document when it was asked from the menu with one open. */
 function sayWhereAsked(sentence: string, isError = false): void {
   if (loaded) tellOverDocument(sentence, isError);
-  else say(sentence, isError);
+  else {
+    say(sentence, isError);
+    // On a phone the report is under the form, where the keyboard may be: brought on screen (Build 2b-2d item 3).
+    if (sentence) report.scrollIntoView({ block: "nearest" });
+  }
 }
 function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom): void {
   // A refused password leaves nothing in the field to fill again by mistake.
@@ -4366,7 +4447,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
           ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
           : unverified > 0
             ? "A kept copy could not be verified, so it was not restored."
-            : "",
+            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.`,
         unverified > 0,
       );
     }

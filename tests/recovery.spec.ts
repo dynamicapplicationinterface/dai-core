@@ -185,7 +185,8 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       // Recover again, the store back: the rest comes back, and what is here stays.
       await page.locator("#recover").click();
       await expect(page.locator("#recovered li")).toHaveCount(2, { timeout: 30_000 });
-      await expect(page.locator("#report")).toHaveText("");
+      // Every outcome is said on the chooser (Build 2b-2d item 3), in the library's order.
+      await expect(page.locator("#report")).toHaveText(`Recovered ${first} and ${second}.`);
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
       await expect(page.locator("#recover")).toBeHidden();
