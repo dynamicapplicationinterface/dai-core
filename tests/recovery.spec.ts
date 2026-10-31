@@ -267,6 +267,7 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await cutAtHeadsOf(context, store.base, ids[second]!);
       await page.locator("#more").click();
       await page.locator("#finish-recovering").click();
+      await page.locator("#finish-passkey").click();
       await expect(page.locator("#doc-note")).toHaveText(
         "The rest could not be reached: the store stopped answering. Finish recovering again when you are online.",
         { timeout: 30_000 },
@@ -276,6 +277,7 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       // The store, cut from there on, not answering at all: nothing of this run's, and the row is the way back.
       await page.locator("#more").click();
       await page.locator("#finish-recovering").click();
+      await page.locator("#finish-passkey").click();
       await expect(page.locator("#doc-note")).toHaveText(
         "The rest of your library could not be reached right now: the store did not answer. Finish recovering again when you are online.",
         { timeout: 30_000 },
@@ -286,6 +288,8 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await context.unroute(`${store.base}/**`);
       await page.locator("#more").click();
       await page.locator("#finish-recovering").click();
+      await page.locator("#finish-passkey").click();
+      await expect(page.locator("#finish-sheet")).toBeHidden({ timeout: 30_000 });
       await expect(page.locator("#sheet")).toBeHidden();
       await expect
         .poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid).sort(), { timeout: 30_000 })
@@ -317,10 +321,11 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
    * 2b2f-M1 (Build 2b-2fr item 2): an owner who recovered with the saved
    * password alone has no passkey to answer the row's ceremony. Each recovery
    * path recovers alone (R-Z, "Each recovery path ... one never stands in for
-   * the other"), so when no passkey answers, the menu offers the saved-password
-   * form the chooser offers, and the recovery finishes from it.
+   * the other"), so the recovery sheet the row opens carries the
+   * saved-password form the chooser offers beside the passkey (Build 2b-2fr2
+   * item 2), and the recovery finishes from it.
    */
-  test("an owner who recovered with the saved password alone finishes from the menu: no passkey answers, the menu offers the saved password, and the rest comes back", async ({
+  test("an owner who recovered with the saved password alone finishes from the menu: no passkey answers, the recovery sheet offers the saved password, and the rest comes back", async ({
     browser,
     browserName,
   }) => {
@@ -350,30 +355,25 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await page.locator(`#recovered button[data-document="${ids[first]}"]`).click();
       await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
 
-      // The store back; the row's ceremony finds no passkey, and the menu offers the saved password instead.
+      // The store back; the row opens the recovery sheet, and its passkey finds none: the sheet stays, the saved password on it.
       await context.unroute(`${store.base}/**`);
       await page.locator("#more").click();
       await page.locator("#finish-recovering").click();
-      await expect
-        .poll(
-          async () =>
-            (await page.locator("#finish-keychain").isVisible())
-              ? "the saved-password form"
-              : (await page.locator("#doc-note").isVisible())
-                ? `said: ${await page.locator("#doc-note").innerText()}`
-                : "nothing yet",
-          { timeout: 30_000 },
-        )
-        .toBe("the saved-password form");
-      await expect(page.locator("#sheet")).toBeVisible();
-      await expect(page.locator("#finish-recovering"), "the form in the row's place").toBeHidden();
+      await expect(page.locator("#finish-sheet")).toBeVisible();
+      await expect(page.locator("#sheet")).toBeHidden();
+      const answered = page.waitForEvent("console", { predicate: (message) => message.text().includes("finish recovering: no passkey answered"), timeout: 30_000 });
+      await page.locator("#finish-passkey").click();
+      await answered;
+      await expect(page.locator("#finish-sheet")).toBeVisible();
+      await expect(page.locator("#finish-keychain")).toBeVisible();
+      await expect(page.locator("#finish-with-password")).toBeEnabled();
       expect(await recoveringMark(), "nothing recovered yet").toBe(true);
 
       // Filled as a password manager fills it, and submitted: the rest comes back, the mark goes, the document stays open.
       await page.locator("#finish-owner").fill(handed[0]!.owner);
       await page.locator("#finish-secret").fill(handed[0]!.secret);
       await page.locator("#finish-with-password").click();
-      await expect(page.locator("#sheet")).toBeHidden();
+      await expect(page.locator("#finish-sheet")).toBeHidden({ timeout: 30_000 });
       await expect
         .poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid).sort(), { timeout: 30_000 })
         .toEqual([ids[first], ids[second]].sort());
@@ -387,11 +387,129 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await page.locator("#doc-note").click();
       await expect(page.locator("#doc-note")).toBeHidden();
 
-      // From the menu's next opening, neither the row nor the form.
+      // From the menu's next opening, no row, and so no way to the recovery sheet.
       await page.locator("#more").click();
       await expect(page.locator("#sheet")).toBeVisible();
       await expect(page.locator("#finish-recovering")).toBeHidden();
-      await expect(page.locator("#finish-keychain")).toBeHidden();
+      await expect(page.locator("#finish-sheet")).toBeHidden();
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * 2b2fr-M1 (Build 2b-2fr2 item 2; R-Z, "the host's presence over the
+   * document is fixed"). Finishing a recovery is asked for and answered: the
+   * row opens one recovery sheet, from that tap, carrying both ways, the
+   * passkey and the saved password. A ceremony cancelled leaves the person on
+   * that sheet with both still offered; the sheet's own cancel closes it, the
+   * mark stays, and nothing opens by itself afterwards.
+   */
+  test("Finish recovering opens one sheet from the tap, with the passkey and the saved password: a cancelled ceremony stays on it, its cancel closes it, and nothing opens by itself", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, provider } = await openerWithStore(context, store.base);
+      const { ids, owner, first, second } = await twoKept(page);
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      await cutAtHeadsOf(context, store.base, ids[second]!);
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 30_000 },
+      );
+      const recoveringMark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+      await page.locator(`#recovered button[data-document="${ids[first]}"]`).click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(ids[first]);
+      await context.unroute(`${store.base}/**`);
+
+      /** Every sheet on screen, and which ways to finish each offers. */
+      const onScreen = (): Promise<string> =>
+        page.evaluate(
+          () =>
+            [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
+              .filter((dialog) => !dialog.hidden && dialog.getBoundingClientRect().height > 0)
+              .map((dialog) => {
+                const shown = (id: string): boolean => {
+                  const el = dialog.querySelector<HTMLElement>(`#${id}`);
+                  return !!el && el.offsetParent !== null && !(el as HTMLButtonElement).disabled;
+                };
+                const ways = [shown("finish-passkey") ? "passkey" : "", shown("finish-keychain") ? "saved password" : "", shown("finish-recovering") ? "the row" : ""].filter(Boolean);
+                return `${dialog.id}: ${ways.join(" + ") || "no way to finish"}`;
+              })
+              .join("; ") || "nothing",
+        );
+
+      /*
+       * The person cancels the next passkey sheet: the browser answers
+       * NotAllowedError, as it does for a cancel. Made in the page, once, since
+       * Chromium's virtual authenticator, once made to refuse user
+       * verification, refuses every later ceremony on the page too.
+       */
+      await page.evaluate(() => {
+        const get = navigator.credentials.get.bind(navigator.credentials);
+        let cancelOnce = true;
+        navigator.credentials.get = (options?: CredentialRequestOptions) => {
+          if (!cancelOnce) return get(options);
+          cancelOnce = false;
+          return Promise.reject(new DOMException("The operation either timed out or was not allowed.", "NotAllowedError"));
+        };
+      });
+      await page.locator("#more").click();
+      await expect(page.locator("#finish-recovering")).toBeVisible();
+      await page.locator("#finish-recovering").click();
+      // What the tap opened, settled: the recovery sheet alone, with both ways, the menu closed.
+      await expect.poll(onScreen, { timeout: 10_000 }).toBe("finish-sheet: passkey + saved password");
+      expect(await recoveringMark(), "nothing recovered by the tap itself").toBe(true);
+
+      // The passkey asked, and the ceremony cancelled: still on the sheet, both ways still offered.
+      const answered = page.waitForEvent("console", { predicate: (message) => message.text().includes("finish recovering: no passkey answered"), timeout: 30_000 });
+      await page.locator("#finish-passkey").click();
+      await answered;
+      await expect.poll(onScreen, { timeout: 10_000 }).toBe("finish-sheet: passkey + saved password");
+      expect(await recoveringMark()).toBe(true);
+
+      // The sheet's cancel: it closes, the mark stays, and for two seconds nothing opens.
+      await page.locator("#finish-cancel").click();
+      await expect(page.locator("#finish-sheet")).toBeHidden();
+      const opened = await page.evaluate(
+        () =>
+          new Promise<string[]>((settle) => {
+            const seen: string[] = [];
+            const look = (): void => {
+              for (const dialog of document.querySelectorAll<HTMLElement>('[role="dialog"]')) if (!dialog.hidden && !seen.includes(dialog.id)) seen.push(dialog.id);
+            };
+            const watching = new MutationObserver(look);
+            watching.observe(document.body, { attributes: true, attributeFilter: ["hidden"], subtree: true });
+            look();
+            window.setTimeout(() => {
+              watching.disconnect();
+              look();
+              settle(seen);
+            }, 2_000);
+          }),
+      );
+      expect(opened, "nothing opens by itself after the cancel").toEqual([]);
+      expect(await recoveringMark(), "the mark unchanged").toBe(true);
+
+      // The passkey answering: the next tap offers both ways again, and the passkey finishes it.
+      await page.locator("#more").click();
+      await page.locator("#finish-recovering").click();
+      await expect.poll(onScreen, { timeout: 10_000 }).toBe("finish-sheet: passkey + saved password");
+      await page.locator("#finish-passkey").click();
+      await expect
+        .poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).map((item) => item.documentUuid).sort(), { timeout: 30_000 })
+        .toEqual([ids[first], ids[second]].sort());
+      await expect(page.locator("#finish-sheet")).toBeHidden();
+      await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`, { timeout: 10_000 });
+      await expect.poll(recoveringMark, { timeout: 10_000 }).toBeNull();
+      expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null)).toBe(ids[first]);
     } finally {
       await context.close();
       await store.close();

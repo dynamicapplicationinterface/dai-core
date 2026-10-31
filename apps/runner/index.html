@@ -449,10 +449,38 @@
       #recover-keychain[hidden] { display: none; }
       #recover-keychain { margin-top: 8px; display: grid; gap: 6px; max-width: 320px; margin-inline: auto; }
       #recover-keychain input { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; }
-      #finish-keychain[hidden] { display: none; }
-      #finish-keychain { display: grid; gap: 6px; padding: 6px 16px; }
-      #finish-with-password { color: var(--accent); font-weight: 600; padding-inline: 0; }
+      /* The recovery sheet: the menu row's one answer, both ways in it (Build 2b-2fr2). */
+      #finish-sheet[hidden] { display: none; }
+      #finish-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: var(--scrim);
+      }
+      #finish-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+      #finish-sub { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      #finish-passkey {
+        margin-top: 8px;
+        width: 100%;
+        max-width: 24rem;
+        padding: 13px 20px;
+        font-size: 16px;
+        font-weight: 600;
+        border: 0;
+        border-radius: 12px;
+        background: var(--accent);
+        color: var(--on-accent);
+        cursor: pointer;
+      }
+      #finish-passkey:hover { background: var(--accent-press); }
+      #finish-passkey:disabled, #finish-with-password:disabled { opacity: 0.6; }
+      #finish-keychain { display: grid; gap: 6px; width: 100%; max-width: 24rem; margin-top: 4px; }
+      #finish-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; padding: 8px 0; cursor: pointer; }
       #finish-keychain input { font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; }
+      #finish-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
       #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
       /* Out of sight and out of the tab order, but a real form a password manager reads (D298). */
       #keychain-offer { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
@@ -1381,6 +1409,31 @@
       here rather than in the bar, because "signed a3cab3dd" is a sentence for
       somebody who already knows what it means.
     -->
+    <!--
+      Finishing a recovery the store cut short (R-Z sentence 5).
+
+      Opened by the menu's "Finish recovering" row and by nothing else: the
+      host's presence over the document is fixed (R-Z), so no sheet opens
+      unasked. It carries both ways a recovery is made, each alone (R-D as
+      amended): the passkey, and the saved password the chooser offers, for an
+      owner who recovered with it and has no passkey here. A passkey not used
+      leaves the sheet as it was; "Not now" closes it and changes nothing.
+    -->
+    <div id="finish-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="finish-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <h2 id="finish-title">Finish recovering</h2>
+        <p id="finish-sub">The rest of your library is still kept beyond this browser. Use your passkey, or the saved password your password manager kept.</p>
+        <button id="finish-passkey" type="button">Use your passkey</button>
+        <form id="finish-keychain">
+          <input id="finish-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
+          <input id="finish-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
+          <button id="finish-with-password" type="submit">Recover with the saved password</button>
+        </form>
+        <button id="finish-cancel" type="button">Not now</button>
+      </div>
+    </div>
+
     <div id="sheet" hidden role="dialog" aria-modal="true" aria-label="Document">
       <div class="sheet-panel">
         <div class="sheet-grip"></div>
@@ -1444,22 +1497,11 @@
         <!--
           A recovery the store cut short, finished from here (R-Z sentence 5).
           Recover lives in the chooser, which a document on screen hides; this
-          runs the same recovery, passing over what is here already. Shown
-          while the signed-in owner's record is marked recovering, and from the
-          menu's next opening once it is not.
+          opens the recovery sheet, which runs the same recovery, passing over
+          what is here already. Shown while the signed-in owner's record is
+          marked recovering, and from the menu's next opening once it is not.
         -->
         <button id="finish-recovering" type="button" hidden>Finish recovering</button>
-        <!--
-          The same, with the saved password (R-D as amended, D298), in the
-          row's place once no passkey answered the row: an owner who recovered
-          here with the saved password alone has no passkey to answer it. The
-          chooser's form, offered where the person is.
-        -->
-        <form id="finish-keychain" hidden>
-          <input id="finish-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
-          <input id="finish-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
-          <button id="finish-with-password" type="submit">Recover with the saved password</button>
-        </form>
         <button id="export" type="button">Save a copy…</button>
         <!--
           Modify this app (backlog 4.2).

@@ -43,7 +43,7 @@ const CHOOSER = {
   refusedByShell: "the shell refused the document and the frame comes down: the chooser is what is left",
   'document.getElementById("remove")?.addEventListener("click", () => {': "the document is removed: the chooser is what is left",
   sayWhereAsked:
-    "a recovery's words, where it was asked from: the chooser, or over the document when \"Finish recovering\" was asked from the menu with one open (R-Z sentence 5)",
+    "a recovery's words, where it was asked from: the chooser, or over the document when \"Finish recovering\" was asked from the recovery sheet the menu opens, with one open (R-Z sentence 5)",
 };
 
 /**

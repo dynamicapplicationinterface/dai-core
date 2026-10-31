@@ -4050,19 +4050,39 @@ const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormE
 /*
  * A recovery the store cut short, finished from the menu: Recover lives in the
  * chooser, which a document on screen hides, so the person who opened what
- * came back reaches the rest here. The same recovery, from a row that is in
- * the menu only while the signed-in owner's record is marked recovering, and
- * only from the menu's next opening either way (sheet.ts).
+ * came back reaches the rest here. A row that is in the menu only while the
+ * signed-in owner's record is marked recovering, and only from the menu's next
+ * opening either way (sheet.ts); its tap opens the recovery sheet.
  */
 const finishRecovering = document.getElementById("finish-recovering") as HTMLButtonElement | null;
 /*
- * Each recovery path recovers alone (R-D as amended): an owner who recovered
- * here with the saved password alone has no passkey to answer the row. Once no
- * passkey answered it on this page, the menu offers the saved-password form
- * the chooser offers, in the row's place, until the recovery is finished.
+ * The recovery sheet (R-Z, "the host's presence over the document is fixed";
+ * R-D as amended). Opened by the row's tap and by nothing else, and carrying
+ * both ways, each recovering alone: the passkey, and the saved-password form
+ * the chooser offers, for an owner who recovered with the saved password and
+ * has no passkey here. A passkey not used leaves the person on the sheet with
+ * both still offered; "Not now" closes it and changes nothing. A recovery
+ * that ran says what it did over the document, with the sheet closed.
  */
+const finishSheet = document.getElementById("finish-sheet") as HTMLElement | null;
+const finishPasskey = document.getElementById("finish-passkey") as HTMLButtonElement | null;
 const finishKeychain = document.getElementById("finish-keychain") as HTMLFormElement | null;
-let finishByPassword = false;
+const finishWithPassword = document.getElementById("finish-with-password") as HTMLButtonElement | null;
+/** While a recovery the sheet asked for runs, neither way can start a second. */
+function finishRunning(on: boolean): void {
+  if (finishPasskey) finishPasskey.disabled = on;
+  if (finishWithPassword) finishWithPassword.disabled = on;
+}
+function closeFinishSheet(): void {
+  if (finishSheet) slideClose(finishSheet);
+}
+finishSheet?.addEventListener("click", (event) => {
+  if (event.target === finishSheet) closeFinishSheet();
+});
+document.getElementById("finish-cancel")?.addEventListener("click", () => closeFinishSheet());
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeFinishSheet();
+});
 async function showRecover(): Promise<void> {
   // Offered with nobody signed in, and to an owner whose recovery the store cut short.
   const owner = await currentOwner().catch(() => null);
@@ -4071,10 +4091,8 @@ async function showRecover(): Promise<void> {
   if (recoverButton) recoverButton.hidden = hidden;
   if (recoverKeychain) recoverKeychain.hidden = hidden;
   const row = !!storeBase() && unfinished;
-  const byPassword = finishByPassword;
   whileClosed(sheet, "finish-recovering", () => {
-    if (finishRecovering) finishRecovering.hidden = !row || byPassword;
-    if (finishKeychain) finishKeychain.hidden = !row || !byPassword;
+    if (finishRecovering) finishRecovering.hidden = !row;
   });
 }
 /** What each recovery path says when it was not used, or did not open the owner key. */
@@ -4089,35 +4107,56 @@ const RECOVERY_WORDS = {
 type AskedFrom = "chooser" | "menu";
 /** What a recovery asked from the menu said over the open document: it goes at that document's next save, or when dismissed. */
 let finishSaid: string | null = null;
-/** Recover with the passkey, from the chooser or the menu: one recovery, whichever row asked for it. */
+/**
+ * A recovery the sheet asked for has answered. Not used (no passkey answered,
+ * or no saved password filled in): the person stays on the sheet, both ways
+ * offered, and nothing is said. Otherwise the sheet closes and the answer is
+ * said over the document.
+ */
+function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
+  finishRunning(false);
+  if ("cancelled" in outcome) {
+    console.info(`dai: finish recovering: no ${path === "passkey" ? "passkey answered" : "saved password filled in"} (${outcome.cancelled}); the recovery sheet stays, both ways offered`);
+    if (path === "keychain") document.querySelector<HTMLInputElement>("#finish-keychain input:placeholder-shown")?.focus();
+    return;
+  }
+  closeFinishSheet();
+  showRecovered(outcome, path, "menu");
+}
+/** Recover with the passkey, from the chooser or the recovery sheet: one recovery, whichever asked for it. */
 function recoverWithPasskey(from: AskedFrom): void {
   // The ceremony first, inside the tap.
   const recovering = recover(storeBase(), recoveryHere);
+  if (from === "menu") {
+    // What the note row says stays until the answer replaces it: a ceremony not used changes nothing on screen.
+    finishRunning(true);
+    void recovering.then((outcome) => finishAnswered(outcome, "passkey"));
+    return;
+  }
   sayWhereAsked("");
-  void recovering.then((outcome) => {
-    // No passkey answered the menu's row (the engine refused, or this owner recovered with the saved password alone): the menu offers that path.
-    if (from === "menu" && "cancelled" in outcome) {
-      console.info(`dai: finish recovering: no passkey answered (${outcome.cancelled}); the saved password offered`);
-      finishByPassword = true;
-      whileClosed(sheet, "finish-by-password", () => void openMenu());
-      return;
-    }
-    showRecovered(outcome, "passkey", from);
-  });
+  void recovering.then((outcome) => showRecovered(outcome, "passkey", from));
 }
 recoverButton?.addEventListener("click", () => recoverWithPasskey("chooser"));
 finishRecovering?.addEventListener("click", () => {
   closeSheet();
-  recoverWithPasskey("menu");
+  if (finishSheet) slideOpen(finishSheet);
 });
+finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
 /*
  * The keychain path (R-D, D298): the password the password manager kept at
- * enrollment, filled into the chooser's form or the menu's, recovers with no
- * passkey. No ceremony, so nothing here must start inside the tap.
+ * enrollment, filled into the chooser's form or the recovery sheet's,
+ * recovers with no passkey. No ceremony, so nothing here must start inside
+ * the tap.
  */
 function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
+  const recovering = recoverWithKeychain(storeBase(), owner, secret, recoveryHere);
+  if (from === "menu") {
+    finishRunning(true);
+    void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
+    return;
+  }
   sayWhereAsked("");
-  void recoverWithKeychain(storeBase(), owner, secret, recoveryHere).then((outcome) => showRecovered(outcome, "keychain", from));
+  void recovering.then((outcome) => showRecovered(outcome, "keychain", from));
 }
 recoverKeychain?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -4132,7 +4171,6 @@ finishKeychain?.addEventListener("submit", (event) => {
   const secret = field?.value ?? "";
   // Nothing left in the field once it is used, whatever the outcome.
   if (field) field.value = "";
-  closeSheet();
   recoverWithPassword(owner, secret, "menu");
 });
 /** Titles as a sentence names them: "A", "A and B", "A, B, and C". */
