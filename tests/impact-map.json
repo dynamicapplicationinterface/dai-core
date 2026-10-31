@@ -3859,6 +3859,7 @@
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/keeping.ts",
+      "tests/keychain.ts",
       "tests/own-address.spec.ts",
       "tests/owner-store-memory.ts",
       "tests/owner.ts",

@@ -4498,6 +4498,8 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     }
     if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
     const unverified = outcome.refused.length;
+    // Held here under another owner: passed over and said (D303, ruled on the review of Build 2b-2dr).
+    const passed = (outcome.passed ?? []).map((one) => ` ${one.title} was left as it is: this browser holds it for another passkey.`).join("");
     if (from === "menu") {
       /*
        * Over the open document, what this run restored, by name: one held here
@@ -4510,24 +4512,25 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
       if (outcome.unreached !== undefined) console.info(`dai: finish recovering cut short: ${outcome.unreached}`);
       const sentence =
         outcome.unreached !== undefined
-          ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.`
-          : `${recovered}${unverified > 0 ? notVerified : "Your library is complete."}`;
+          ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.${passed}`
+          : `${recovered}${unverified > 0 ? notVerified : "Your library is complete."}${passed}`;
       sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
     } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
       sayWhereAsked(
-        `Restored ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)} ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        `Restored ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)} ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.${passed}`,
         true,
       );
     } else {
-      sayWhereAsked(
+      const said =
         outcome.restored.length === 0 && unverified === 0
-          ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
+          ? passed === ""
+            ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
+            : ""
           : unverified > 0
             ? "A kept copy could not be verified, so it was not restored."
-            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)}`,
-        unverified > 0,
-      );
+            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)}`;
+      sayWhereAsked(`${said}${passed}`.trim(), unverified > 0);
     }
   }
   void showRecover();

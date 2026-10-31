@@ -87,8 +87,12 @@ export interface Here {
 }
 
 export type Recovered =
-  /** `unreached`: the store stopped answering after these, and the rest of the library was not reached. */
-  | { restored: Restored[]; refused: { documentUuid: string; why: Unverified | string }[]; unreached?: string }
+  /**
+   * `unreached`: the store stopped answering after these, and the rest of the
+   * library was not reached. `passed`: held here under another owner, so
+   * passed over and left as they are.
+   */
+  | { restored: Restored[]; refused: { documentUuid: string; why: Unverified | string }[]; passed?: { documentUuid: string; title: string }[]; unreached?: string }
   | { unavailable: string }
   | { cancelled: string }
   | { refused: string };
@@ -328,6 +332,7 @@ async function restore(
   const enrolled = new Map(Object.entries(library.authors));
   const restored: Restored[] = [];
   const refused: { documentUuid: string; why: string }[] = [];
+  const passed: { documentUuid: string; title: string }[] = [];
   let unreached: string | undefined;
   for (const documentUuid of library.documents) {
     const kept = await keptInKeyStore<KeptRecord>(keptKey(documentUuid));
@@ -346,7 +351,13 @@ async function restore(
      */
     const heldHere = await here.held(documentUuid);
     const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
-    if (heldHere !== null && (heldOwner === undefined || heldOwner === asked.owner)) {
+    // Held here under another owner: theirs, passed over, untouched, and said (D303, ruled on the review of Build 2b-2dr).
+    if (heldHere !== null && heldOwner !== undefined && heldOwner !== asked.owner) {
+      console.info(`dai: ${documentUuid} passed over: held here under another owner`);
+      passed.push({ documentUuid, title: heldHere });
+      continue;
+    }
+    if (heldHere !== null) {
       const heads = await headsOf(base, author, asked.owner, documentUuid);
       if (isUnavailable(heads)) {
         unreached = heads.unavailable;
@@ -387,7 +398,7 @@ async function restore(
   // Signed in only once there is something true to show.
   await signIn(unreached !== undefined);
   console.info(`dai: recovered owner ${asked.owner}: ${restored.length} restored, ${refused.length} refused${unreached ? `, the rest unreached: ${unreached}` : ""}`);
-  return { restored, refused, ...(unreached !== undefined ? { unreached } : {}) };
+  return { restored, refused, ...(passed.length > 0 ? { passed } : {}), ...(unreached !== undefined ? { unreached } : {}) };
 }
 
 /** One document: its newest head, verified back to the root, installed at that revision. */

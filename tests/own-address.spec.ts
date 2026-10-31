@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, withKeyStore } from "./owner.js";
+import { watchKeychain, wipe } from "./keychain.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 import { enrollHere, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
 
@@ -299,5 +300,52 @@ test.describe("Recover from the menu over a document (D303)", () => {
     );
     expect(copies, "one copy in the library").toBe(1);
     expect(await storedHolds(page, uuid, "here")).toBe(true);
+  });
+
+  /*
+   * D303, ruled on the review of Build 2b-2dr (2b2dr-H2): a document held here
+   * under another owner is passed over by Recover, not restored, not re-keyed,
+   * not touched, and the note row says it was left as it is.
+   */
+  test("Recover by one owner passes over a document held here under another: its unkept work stays, its key stays, and the note row says so", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const context = await browser.newContext({ viewport: PHONE });
+    await pointAtStore(context, store.base);
+    const handed = await watchKeychain(context);
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    const provider = await addPasskeyProvider(context, page);
+    const file = await notes();
+    // Context A: owner X keeps the document.
+    let app = await openFile(page, file);
+    const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+    await typeNote(app, "x-kept");
+    const x = await enrollHere(page);
+    await waitSettledKept(page, uuid);
+    const xPassword = handed.find((entry) => entry.owner === x)!;
+    expect(xPassword, "X's saved password").toBeTruthy();
+    // Context B: the same document, owner Y keeps it, signs out, and types more here.
+    await wipe(page, provider.cdp);
+    app = await openFile(page, file);
+    await typeNote(app, "y-kept");
+    const y = await enrollHere(page);
+    expect(y).not.toBe(x);
+    await waitSettledKept(page, uuid);
+    await page.evaluate(() => (window as Any).__runner.owner.leave());
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current())).toBeNull();
+    await typeNote(app, "-y-unkept");
+    await expect.poll(() => storedHolds(page, uuid, "-y-unkept"), { timeout: 30_000 }).toBe(true);
+    const keyOwner = (): Promise<string | null> => withKeyStore<string | null>(page, 'return (await get("dai:data-key:" + arg))?.owner ?? null;', uuid);
+    expect(await keyOwner()).toBe(y);
+
+    // Recover from the menu with X's saved password.
+    await page.locator("#more").click();
+    await page.locator("#menu-recover").click();
+    await page.locator("#finish-owner").fill(xPassword.account);
+    await page.locator("#finish-secret").fill(xPassword.secret);
+    await page.locator("#finish-with-password").click();
+    await expect(page.locator("#doc-note")).toHaveText("Notes was left as it is: this browser holds it for another passkey.", { timeout: 30_000 });
+    expect(await storedHolds(page, uuid, "-y-unkept"), "Y's unkept change, still here").toBe(true);
+    expect(await keyOwner(), "the key, still Y's").toBe(y);
   });
 });
