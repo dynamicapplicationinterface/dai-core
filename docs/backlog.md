@@ -11934,8 +11934,8 @@ append of either is a head, and Recover restores both changes.
 
 #### D302 — An engine with PRF and no Ed25519 enrolls an owner the store never registers
 
-*Status: ruled 30 October — not built. Filed 30 October (Build 2b-2f item
-4), from Build 2b-2b's open list.*
+*Status: ruled 30 October and built, Build 2b-2fr item 6 (`823b0612`).
+Filed 30 October (Build 2b-2f item 4), from Build 2b-2b's open list.*
 
 Enrollment derives the keychain path's verifier with Ed25519
 (`keychainVerifier`, `apps/owner-store/src/envelope.ts`; docs/store.md, "The
