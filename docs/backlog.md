@@ -1342,6 +1342,10 @@ own text, and puts D195 in Build 2b. The store's contract is
   adopts and keeps this context's copy; it becomes a second kept line of the
   document. Recover opens the newest line and says when a document has more
   than one kept line. Reconciling the lines is D301's work (Build 2b-3).
+  *Amended 31 October (D303, on the review of Build 2b-2dr):* until 2b-3,
+  Recover opens the line the store took last, names how many kept lines the
+  document has and that the line kept last is shown, and makes no claim
+  about which change is newest.
 
 **Red tests**
 
@@ -11944,7 +11948,12 @@ The second context's join adopts and keeps its copy of a document the store
 already holds under that owner, and its first append names no parent, so the
 document has two kept lines with no shared ancestor (2b2d-M1). Recover opens
 the newest line and says when a document has more than one kept line;
-reconciling the lines is this item's work.
+reconciling the lines is this item's work. Until then Recover opens the line
+the store took last and says so (D303, ruled on the review of Build 2b-2dr).
+
+**Note (31 October).** Envelopes carry no save time, so no host can tell
+which line holds the newest change. Adding one is this item's to rule: an
+optional saved time in the sealed part, read only by the opener.
 
 Nothing accepted is dropped (R-B), and each "Kept" is still the store's
 acknowledgment of that revision; what is missing is the merge. The lost
@@ -12078,6 +12087,18 @@ when it was never saved into a container; no field is added to the address.
 
 **Ruled 31 October, on the code review of Build 2b-2dr.**
 
+- Which line Recover opens. Until Build 2b-3 reconciles lines (D301),
+  Recover opens the line the store took last and says so: it names how many
+  kept lines the document has and that the line kept last is shown. It makes
+  no claim about which change is newest; envelopes carry no save time, and
+  adding one is D301's to rule (an optional saved time in the sealed part,
+  read only by the opener).
+- An arrival from the page's own address that is unchanged since it arrived
+  is the address's snapshot, not the person's work: Recover restores the
+  store's head over it and keeps no line for it. "Unchanged" is a library
+  mark set when a document arrives from its own address and cleared by the
+  first save that carries the person's change. A copy changed since it
+  arrived is kept as its own line, and the rule above says what is shown.
 - A document held here under another owner is passed over by Recover: not
   restored, not re-keyed, not touched, and the note row says it was left as
   it is.
