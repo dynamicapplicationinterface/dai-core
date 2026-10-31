@@ -2826,7 +2826,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
          * here under the lock, never from the library list, which a stalled or
          * failed read leaves empty for a document this context holds (2b2dr3-H1).
          */
-        ...(underLock.read && underLock.record === null ? { arrivedSnapshot: true as const } : {}),
+        // A successor adopting its predecessor's rows holds the person's work, carried across: held, not a snapshot (2b2dr3-L2).
+        ...(underLock.read && underLock.record === null && !succession?.inherit ? { arrivedSnapshot: true as const } : {}),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(
