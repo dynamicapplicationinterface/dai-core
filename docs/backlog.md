@@ -1324,6 +1324,20 @@ own text, and puts D195 in Build 2b. The store's contract is
 - **D195 is in Build 2b.** One author per context (R-A, R-E) needs a key
   that cannot leave its context. Author keys are minted non-extractable, and
   a context holding an extractable key re-keys as D195 says.
+- **Amended 31 October (a context meets an existing owner).** A person is
+  one owner across their browser contexts: Safari, the Home Screen app,
+  another browser. The offer "Keep beyond this browser" in a context with no
+  owner signed in offers two ways: a new passkey, which enrolls; and the
+  passkey the person already has, which runs the recovery ceremony, signs the
+  existing owner in, admits this context under them (Admit), adopts the
+  documents saved in this context under that owner, and keeps them. The
+  second way is named so a person who has kept documents before recognizes
+  it; the first is named so a person who never has does. Neither way is a
+  default. Red test: an owner enrolled in one context and a document saved
+  in a second; in the second, "Keep beyond this browser" → the
+  existing-passkey way → the store lists one owner, that document is kept
+  under it, and after Recover in a third context both documents are listed.
+  Weakened so the second way enrolls: red (two owners at the store).
 
 **Red tests**
 
@@ -11991,6 +12005,18 @@ password" uses the same implementation. Red test: on Chromium with Ed25519
 removed from crypto.subtle before the opener loads, "Keep beyond this
 browser" enrolls an owner the store lists, the next save is "Kept", and
 after a wipe "Recover with the saved password" restores the document.
+
+### Build 2b-2d (filed 31 October)
+
+#### D303 — Clear History and Website Data, with the opener's tab open, did not appear to wipe
+
+*Status: open. Filed 31 October, from the device reading of 30 October.*
+
+Clear History and Website Data on iOS, with the opener's tab still open,
+showed the document at an earlier state rather than an empty chooser;
+whether this was the tab's own memory or storage left behind is
+undetermined (device reading of 30 October); to re-read with the tab closed
+first.
 
 ### Branch review residue (filed 8 October)
 
