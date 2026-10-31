@@ -515,7 +515,6 @@
       #keep-ways-backup { margin: 0; width: 100%; max-width: 24rem; font-size: 13px; line-height: 1.35; color: var(--muted); }
       #keep-ways-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
       #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
-      #recover-with-password:disabled { opacity: 0.45; cursor: default; }
       #recover-hint { margin: 0; font-size: 13px; line-height: 1.35; color: var(--muted); }
       /* Out of sight and out of the tab order, but a real form a password manager reads (D298). */
       #keychain-offer { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
@@ -1667,14 +1666,15 @@
         <!--
           The same, with no passkey (R-D, D298): the password the password
           manager saved when keeping began. Tapping the field fills both from
-          the saved passwords; the account names the site and ends with the owner's id. The button waits
-          until both hold something, and the line under it says how they fill
-          (Build 2b-2d item 3: on a phone, a tap that did nothing visible).
+          the saved passwords; the account names the site and ends with the owner's id. The line under
+          the form says how they fill (Build 2b-2d item 3: on a phone, a tap that did nothing visible).
+          The button is never disabled: a disabled default button blocks the keyboard's Go too, and an
+          autofill can show values the page has not been handed yet (Build 2b-2dr item 3).
         -->
         <form id="recover-keychain" hidden>
           <input id="recover-owner" name="username" autocomplete="username" aria-label="Account" placeholder="Account" autocapitalize="off" spellcheck="false" />
           <input id="recover-secret" name="password" type="password" autocomplete="current-password" aria-label="Saved password" placeholder="Saved password" />
-          <button id="recover-with-password" type="submit" disabled>Recover with the saved password</button>
+          <button id="recover-with-password" type="submit">Recover with the saved password</button>
           <p id="recover-hint">Tap the field and choose the saved password; both fields fill in.</p>
         </form>
         <ul id="recovered" hidden></ul>

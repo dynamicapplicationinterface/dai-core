@@ -14,12 +14,16 @@ import { putInKeyStore } from "./keeping.js";
  * The device reading of 30 October: on an iPhone, a tap on the button did
  * nothing a person could see. A recording of 31 October: iOS filled both
  * fields from a saved password, visibly, and the submit answered "Fill in the
- * saved password first", the sentence for empty fields. So: the button cannot
- * be tapped until both fields hold something, a line under the form says how
- * they fill, the submit reads the fields as they are when it runs, waiting a
- * frame for a value the engine delivers late, every outcome is said in the
- * chooser's report within the screen, and the form is shown only where it can
- * work. At 390 × 844, a phone's size.
+ * saved password first", the sentence for empty fields. So: a line under the
+ * form says how they fill, the submit reads the fields as they are when it
+ * runs, waiting a few frames for a value the engine delivers late, every
+ * outcome is said in the chooser's report within the screen, and the form is
+ * shown only where it can work. At 390 × 844, a phone's size.
+ *
+ * The button is never disabled (Build 2b-2dr item 3): a disabled default
+ * button also blocks the keyboard's Go, and the page cannot see every state
+ * an autofill shows. An autofill iOS commits with no event, a frame after the
+ * tap, reaches the submit.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -28,6 +32,7 @@ type Any = any;
 const PHONE = { width: 390, height: 844 };
 const HINT = "Tap the field and choose the saved password; both fields fill in.";
 const REFUSED = "This password did not recover any documents. Nothing was restored.";
+const EMPTY = "The account or the saved password reached this page empty. Tap the field, choose the saved password, and both fields fill in.";
 
 /** Sets a field the way a password manager's autofill does: the value, then input and change, and no focus. */
 const autofill = (page: Page, selector: string, value: string): Promise<void> =>
@@ -54,7 +59,7 @@ test.describe("the chooser's saved-password form on a phone (Build 2b-2d item 3)
     await store?.close();
   });
 
-  test("the button cannot be tapped with a field empty, and the line under the form says how both fill", async ({ browser }) => {
+  test("the button can always be tapped; tapped with both fields empty it says so in the report, on the screen, and the line under the form says how both fill", async ({ browser }) => {
     const context = await browser.newContext({ viewport: PHONE });
     try {
       await pointAtStore(context, store.base);
@@ -65,16 +70,68 @@ test.describe("the chooser's saved-password form on a phone (Build 2b-2d item 3)
       await expect(form).toBeVisible();
       await expect(page.locator("#recover-hint")).toHaveText(HINT);
       await expect(page.locator("#recover-hint")).toBeVisible();
-      await expect(button).toBeDisabled();
-      // A tap on it changes nothing and says nothing.
-      await button.click({ force: true });
-      await expect(page.locator("#report")).toHaveText("");
-      await autofill(page, "#recover-owner", "an-account");
-      await expect(button).toBeDisabled();
-      await autofill(page, "#recover-secret", "a-password");
       await expect(button).toBeEnabled();
-      await autofill(page, "#recover-owner", "");
-      await expect(button).toBeDisabled();
+      const before = store.received().length;
+      await button.click();
+      await expect(page.locator("#report")).toHaveText(EMPTY, { timeout: 10_000 });
+      expect(await reportInView(page), "the report, on the screen").toMatchObject({ inView: true });
+      expect(store.received().length, "nothing sent for empty fields").toBe(before);
+      await autofill(page, "#recover-owner", "an-account");
+      await expect(button).toBeEnabled();
+    } finally {
+      await context.close();
+    }
+  });
+
+  /*
+   * iOS fills both fields from a saved password visibly and hands the page
+   * the values with no event, after the tap. Here, as the form submits, both
+   * fields are empty, and their values land a frame later with no input and
+   * no change event: the submit waits for them, and the recovery runs.
+   */
+  test("values an autofill commits with no event a frame after the tap reach the submit, and the recovery runs", async ({ browser, browserName }) => {
+    test.skip(browserName !== "webkit", "the iPhone's engine");
+    const context = await browser.newContext({ viewport: PHONE });
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+      await page.locator("#recover-keychain").evaluate((form) => {
+        form.addEventListener(
+          "submit",
+          () => {
+            const [owner, secret] = [...form.querySelectorAll("input")];
+            requestAnimationFrame(() => {
+              owner!.value = "AAAAAAAAAAAAAAAAAAAAAA";
+              secret!.value = "c2VjcmV0LXRoYXQtb3BlbnMtbm90aGluZy1oZXJlLTAw";
+            });
+          },
+          { capture: true, once: true },
+        );
+      });
+      const before = store.received().length;
+      await page.locator("#recover-with-password").click({ force: true });
+      await expect.poll(() => store.received().length, { message: "the recovery's request left", timeout: 10_000 }).toBeGreaterThan(before);
+      await expect(page.locator("#report")).toHaveText(REFUSED, { timeout: 30_000 });
+      expect(await reportInView(page)).toMatchObject({ inView: true });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("the form is shown on an engine with no WebAuthn: the saved password needs none (2b2d-L3)", async ({ browser }) => {
+    const context = await browser.newContext({ viewport: PHONE });
+    try {
+      await pointAtStore(context, store.base);
+      await context.addInitScript(() => {
+        delete (window as Any).PublicKeyCredential;
+      });
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      await expect(page.locator("#open")).toBeVisible();
+      expect(await page.evaluate(() => typeof (window as Any).PublicKeyCredential)).toBe("undefined");
+      await expect(page.locator("#recover-keychain")).toBeVisible();
     } finally {
       await context.close();
     }
