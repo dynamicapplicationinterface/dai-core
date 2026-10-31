@@ -593,6 +593,21 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
   async function emptyContext(browser: Browser, address = RUNNER_URL): Promise<Page> {
     const context = await browser.newContext({ viewport: PHONE });
     await pointAtStore(context, store.base);
+    /*
+     * A library read that can be made to stall once, as a stalled IndexedDB
+     * leaves a request that never fires: while `__stallLibraryRead` is set,
+     * every `getAll` on the library answers nothing, and is counted (2b2dr3-H1).
+     */
+    await context.addInitScript(() => {
+      const real = IDBObjectStore.prototype.getAll;
+      IDBObjectStore.prototype.getAll = function (this: IDBObjectStore, ...args: Any[]) {
+        if ((window as Any).__stallLibraryRead === true && this.name === "cartridges") {
+          (window as Any).__stalledReads = ((window as Any).__stalledReads ?? 0) + 1;
+          return {} as IDBRequest;
+        }
+        return real.apply(this, args as Parameters<typeof real>);
+      };
+    });
     const page = await context.newPage();
     await page.goto(address);
     return page;
@@ -627,6 +642,90 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
     await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
     return { server, origin: `http://127.0.0.1:${(server.address() as { port: number }).port}` };
   }
+
+  /*
+   * The review of Build 2b-2dr3 (2b2dr3-H1): a document held here, changed
+   * here, opened again while the library read stalls, is not an arrival into a
+   * context that does not hold it. The mark is decided from the record read
+   * under the lock, never from the list a failed read leaves empty.
+   */
+  const markOf = (page: Page, uuid: string): Promise<unknown> =>
+    page.evaluate(async (id) => {
+      const db: IDBDatabase = await new Promise((done, fail) => {
+        const open = indexedDB.open("dai_runner_storage");
+        open.onsuccess = () => done(open.result);
+        open.onerror = () => fail(open.error);
+      });
+      const held = await new Promise<Any>((done) => {
+        const get = db.transaction("cartridges", "readonly").objectStore("cartridges").get(id);
+        get.onsuccess = () => done(get.result);
+      });
+      db.close();
+      return held?.arrivedSnapshot ?? null;
+    }, uuid);
+
+  /** The document's change saved here and its save written: then the same file, from another path, opened again while the library read stalls. */
+  async function reopenedWhileTheLibraryStalls(page: Page, file: string, uuid: string): Promise<FrameLocator> {
+    let app = await mounted(page, uuid);
+    await typeNote(app, "mine-unkept");
+    await page.evaluate(() => (window as Any).__runner.flush());
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
+    await expect.poll(() => storedHolds(page, uuid, "mine-unkept"), { timeout: 30_000 }).toBe(true);
+    expect(await markOf(page, uuid), "changed here: no snapshot").toBeNull();
+    const elsewhere = join(mkdtempSync(join(tmpdir(), "dai-another-path-")), "Notes copy.dai.html");
+    writeFileSync(elsewhere, readFileSync(file));
+    await page.evaluate(() => {
+      (window as Any).__stallLibraryRead = true;
+    });
+    // Every library read stalls until the open has decided which copy it opens: each gives up after 5 s with an empty list.
+    const decided = page.waitForEvent("console", { predicate: (message) => /dai: (resumed this device|copy choice for)/.test(message.text()), timeout: 90_000 });
+    let isDecided = false;
+    void decided.then(() => (isDecided = true), () => undefined);
+    await page.setInputFiles("#file", elsewhere);
+    // With the list empty the open shows its card: the person opens it, as on a first sighting.
+    await expect
+      .poll(
+        async () => {
+          if (await page.locator("#card-open").isVisible().catch(() => false)) await page.locator("#card-open").click().catch(() => undefined);
+          return isDecided;
+        },
+        { timeout: 90_000 },
+      )
+      .toBe(true);
+    expect(await page.evaluate(() => (window as Any).__stalledReads ?? 0), "the library read was stalled").toBeGreaterThan(0);
+    await page.evaluate(() => {
+      (window as Any).__stallLibraryRead = false;
+    });
+    app = await mounted(page, uuid);
+    await expect(app.locator("#note")).toHaveValue("mine-unkept");
+    return app;
+  }
+
+  test("a held document opened again while the library read stalls is not marked a snapshot", async ({ browser }) => {
+    const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-stall-")), "Notes");
+    const page = await emptyContext(browser);
+    await page.setInputFiles("#file", file);
+    const uuid = await (async () => {
+      await mounted(page, null);
+      return page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+    })();
+    await reopenedWhileTheLibraryStalls(page, file, uuid);
+    expect(await markOf(page, uuid), "held here: no snapshot").toBeNull();
+  });
+
+  test("Recover after that reopen keeps the change made here as a line, and does not restore over it", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "end to end once; the mark itself is held on both engines above");
+    const kept = await keptElsewhere();
+    const page = await emptyContext(browser);
+    await page.setInputFiles("#file", kept.file);
+    await mounted(page, kept.uuid);
+    const app = await reopenedWhileTheLibraryStalls(page, kept.file, kept.uuid);
+    await recoverWithThePassword(page, kept.account, kept.secret);
+    await expect(page.locator("#doc-note")).toHaveText("Recovered Notes. Notes has two kept lines; the one kept last is shown.", { timeout: 30_000 });
+    await expect.poll(() => kept.heads().length, { timeout: 30_000 }).toBe(2);
+    await expect(app.locator("#note")).toHaveValue("mine-unkept");
+    expect(await storedHolds(page, kept.uuid, "mine-unkept")).toBe(true);
+  });
 
   test("unchanged since it arrived from a file, a document is restored over", async ({ browser }) => {
     const kept = await keptElsewhere();

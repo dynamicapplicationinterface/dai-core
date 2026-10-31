@@ -2780,7 +2780,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       // Read inside the lock, with the revision learned there too (D41): a
       // record read outside it can be written back over a save that committed
       // in between, rewinding the counter and refusing every later save.
-      const keepItem = (await getCartridgeFromLibrary(kept.manifest.documentUuid).catch(() => null)) ?? heldItem;
+      // Read, not assumed: a read that failed is not a record that is absent (2b2dr3-H1).
+      const underLock = await getCartridgeFromLibrary(kept.manifest.documentUuid).then(
+        (record) => ({ read: true, record }),
+        () => ({ read: false, record: null }),
+      );
+      const keepItem = underLock.record ?? heldItem;
       return {
         // Standing consent and issued shares belong to the copy, not to this
         // write. See the note on the save path above.
@@ -2815,8 +2820,13 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // The address this copy came by, when it is short enough to be an
         // address rather than the document (a store link). See identityOf.
         link: shortArrivalLink() ?? heldItem?.link,
-        // A snapshot until it changes here: any arrival into a context that did not hold it, whatever carried it (D303).
-        ...(!heldHere ? { arrivedSnapshot: true as const } : {}),
+        /*
+         * A snapshot until it changes here: any arrival into a context that did
+         * not hold it, whatever carried it (D303). Decided from the record read
+         * here under the lock, never from the library list, which a stalled or
+         * failed read leaves empty for a document this context holds (2b2dr3-H1).
+         */
+        ...(underLock.read && underLock.record === null ? { arrivedSnapshot: true as const } : {}),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(
