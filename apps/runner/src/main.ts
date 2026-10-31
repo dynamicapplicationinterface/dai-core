@@ -4378,6 +4378,18 @@ const RECOVERING = "Recovering your documents…";
 function namesOf(titles: readonly string[]): string {
   return titles.length <= 2 ? titles.join(" and ") : `${titles.slice(0, -1).join(", ")}, and ${titles[titles.length - 1]}`;
 }
+/**
+ * For each document this recovery restored with more than one kept line, one
+ * sentence saying so: Recover opens the newest, and reconciling the lines is
+ * D301's (R-Z, amended 31 October). Empty when every document has one.
+ */
+function moreThanOneLine(restored: readonly Restored[]): string {
+  const counted = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  return restored
+    .filter((one) => !one.alreadyHere && one.lines !== undefined && one.lines > 1)
+    .map((one) => ` ${one.title} has ${counted[one.lines!] ?? String(one.lines)} kept lines; the newest is shown.`)
+    .join("");
+}
 /** A recovery's words, where it was asked from: on the chooser, or over the document when it was asked from the menu with one open. */
 function sayWhereAsked(sentence: string, isError = false): void {
   if (loaded) tellOverDocument(sentence, isError);
@@ -4438,7 +4450,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
        * row it was asked from, since Recover is under the document.
        */
       const now = outcome.restored.filter((one) => !one.alreadyHere).map((one) => one.title);
-      const recovered = now.length > 0 ? `Recovered ${namesOf(now)}. ` : "";
+      const recovered = now.length > 0 ? `Recovered ${namesOf(now)}.${moreThanOneLine(outcome.restored)} ` : "";
       const notVerified = "A kept copy could not be verified, so it was not restored.";
       if (outcome.unreached !== undefined) console.info(`dai: finish recovering cut short: ${outcome.unreached}`);
       const sentence =
@@ -4449,7 +4461,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
       sayWhereAsked(
-        `Restored ${namesOf(outcome.restored.map((one) => one.title))}. ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        `Restored ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)} ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.`,
         true,
       );
     } else {
@@ -4458,7 +4470,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
           ? `Nothing kept was found for this ${path === "passkey" ? "passkey" : "password"}.`
           : unverified > 0
             ? "A kept copy could not be verified, so it was not restored."
-            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.`,
+            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)}`,
         unverified > 0,
       );
     }

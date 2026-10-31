@@ -57,6 +57,11 @@ export interface Restored {
   at: string;
   /** Restored by an earlier recovery that the store cut short, and held here since: nothing of it was written this time. */
   alreadyHere?: true;
+  /**
+   * The document's kept lines when it has more than one: its heads at the
+   * store, one per line, the newest restored (R-Z, amended 31 October; D301).
+   */
+  lines?: number;
 }
 
 /** What the opener writes into its library for one restored document, under that document's lock. */
@@ -465,5 +470,5 @@ async function restoreOne(
     publicKeyFingerprint: resealed.publicKeyFingerprint,
     revision: top.inside.checkpoint.revision,
   });
-  return { restored: { documentUuid, title: top.inside.title, at: head.at } };
+  return { restored: { documentUuid, title: top.inside.title, at: head.at, ...(heads.heads.length > 1 ? { lines: heads.heads.length } : {}) } };
 }

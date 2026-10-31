@@ -186,6 +186,8 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       const row = page.locator(`#recovered button[data-document="${uuid}"]`);
       await expect(row).toBeVisible({ timeout: 30_000 });
       await expect(page.locator("#report")).not.toHaveClass(/error/);
+      // The document has two kept lines, and Recover says so (R-Z, amended 31 October; D301).
+      await expect(page.locator("#report")).toHaveText("Recovered Notes. Notes has two kept lines; the newest is shown.");
       await row.click();
       await expect(appIn(page).locator("#note")).toHaveValue("on-home-screen", { timeout: 60_000 });
     } finally {
