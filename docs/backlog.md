@@ -12076,6 +12076,16 @@ is said. D304 is the signed-in half of the same want. The date in the arrival
 sentence is the state's own: the container's `savedAt`, or its `createdAt`
 when it was never saved into a container; no field is added to the address.
 
+**Ruled 31 October, on the code review of Build 2b-2dr.**
+
+- A document held here under another owner is passed over by Recover: not
+  restored, not re-keyed, not touched, and the note row says it was left as
+  it is.
+- The own-address mark lives in the tab's history state, not in the
+  address. The address bar never carries the hint, so a copied or shared
+  address is a link someone followed; the tab's own reload, with its history
+  state, is the page's own address.
+
 ### Build 2b-2dr (filed 31 October)
 
 #### D304 — Recover while an owner is signed in
