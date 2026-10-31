@@ -326,7 +326,7 @@ test.describe("Recover from the menu over a document (D303)", () => {
     await recoverFromTheMenu(page);
     await expect(app.locator("#note")).toHaveValue("A-B", { timeout: 60_000 });
     await expect(page.locator("#doc-note")).toHaveText(
-      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      /^Recovered Notes\. Restored the copy kept at [^.]+\.$/,
       { timeout: 30_000 },
     );
     expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
@@ -402,7 +402,7 @@ test.describe("Recover from the menu over a document (D303)", () => {
     await recoverFromTheMenu(page);
     await expect(app.locator("#note")).toHaveValue("kept-K", { timeout: 60_000 });
     await expect(page.locator("#doc-note")).toHaveText(
-      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      /^Recovered Notes\. Restored the copy kept at [^.]+\.$/,
       { timeout: 30_000 },
     );
     await page.waitForTimeout(3_000);
@@ -559,7 +559,7 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
     await recoverWithThePassword(page, kept.account, kept.secret);
     await expect(app.locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
     await expect(page.locator("#doc-note")).toHaveText(
-      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      /^Recovered Notes\. Restored the copy kept at [^.]+\.$/,
       { timeout: 30_000 },
     );
     await page.waitForTimeout(3_000);
@@ -619,7 +619,7 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
     await recoverWithThePassword(page, kept.account, kept.secret);
     await expect(app.locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
     await expect(page.locator("#doc-note")).toHaveText(
-      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      /^Recovered Notes\. Restored the copy kept at [^.]+\.$/,
       { timeout: 30_000 },
     );
     await page.waitForTimeout(3_000);

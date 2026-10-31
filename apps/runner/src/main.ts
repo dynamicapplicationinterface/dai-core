@@ -3260,12 +3260,12 @@ window.addEventListener("message", (event) => {
     showStorage();
     void refreshKept();
     // A copy just recovered says which revision it is, once (R-Z, "The restored revision, in words").
-    const restoredAt = shown ? restoredNotes.get(shown.manifest.documentUuid) : undefined;
-    if (shown && restoredAt) {
+    const restored = shown ? restoredNotes.get(shown.manifest.documentUuid) : undefined;
+    if (shown && restored) {
       restoredNotes.delete(shown.manifest.documentUuid);
       const before = recoveredSaid?.documentUuid === shown.manifest.documentUuid ? recoveredSaid.sentence : "";
       recoveredSaid = undefined;
-      tellOverDocument(`${before ? `${before} ` : ""}${restoredSentence(restoredAt)}`);
+      tellOverDocument(`${before ? `${before} ` : ""}${restoredSentence(restored.at, restored.over)}`);
     }
     frameSessionLanes = data.payload?.sessionLanes === true;
 
@@ -4235,11 +4235,17 @@ const recoveryHere: Here = {
   snapshot: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.arrivedSnapshot === true,
 };
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
-/** Documents recovered on this page, not yet opened: the store's time for each. */
-const restoredNotes = new Map<string, string>();
+/** Documents recovered on this page, not yet opened: the store's time for each, and whether it was restored over a snapshot held here. */
+const restoredNotes = new Map<string, { at: string; over: boolean }>();
 const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-function restoredSentence(at: string): string {
-  return `Restored the copy kept at ${shortTime(at)}. Changes saved only in the cleared browser are not included.`;
+/*
+ * The restored revision, in words (R-Z). The clause about the cleared browser
+ * is the wipe's: said when Recover filled a context that held nothing. A
+ * snapshot restored over was this browser's own arrival, not a clearing, so
+ * its sentence stops at the time (2b2dr3-L1).
+ */
+function restoredSentence(at: string, over = false): string {
+  return `Restored the copy kept at ${shortTime(at)}.${over ? "" : " Changes saved only in the cleared browser are not included."}`;
 }
 const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
 const recoverOwnerField = document.getElementById("recover-owner") as HTMLInputElement | null;
@@ -4525,7 +4531,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     if (joined.length > 0) void keepHeldRevisions(joined);
     for (const one of outcome.restored) {
       // One held here since an earlier recovery may have changed since, or held here and kept as a line: no sentence about where it came from.
-      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, one.at);
+      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true });
       const row = document.createElement("li");
       const open = document.createElement("button");
       open.type = "button";

@@ -68,6 +68,8 @@ export interface Restored {
    * October). `lines` counts it.
    */
   joined?: true;
+  /** Restored over a snapshot this browser held: its own arrival, not a clearing (D303; 2b2dr3-L1). */
+  over?: true;
 }
 
 /** What the opener writes into its library for one restored document, under that document's lock. */
@@ -396,7 +398,7 @@ async function restore(
     if ("why" in outcome) {
       console.warn(`dai: ${documentUuid} not restored: ${outcome.why}`);
       refused.push({ documentUuid, why: outcome.why });
-    } else if (outcome.restored) restored.push(outcome.restored);
+    } else if (outcome.restored) restored.push(heldHere !== null ? { ...outcome.restored, over: true } : outcome.restored);
   }
   // Nothing written: nobody is signed in on nothing.
   if (unreached !== undefined && !writing) return { unavailable: unreached };
