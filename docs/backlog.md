@@ -12022,8 +12022,9 @@ after a wipe "Recover with the saved password" restores the document.
 
 #### D303 — Clear History and Website Data, with the opener's tab open, did not appear to wipe
 
-*Status: ruled 31 October (below); open until the device re-read. Filed 31
-October, from the device reading of 30 October.*
+*Status: ruled 31 October (below) and built, Build 2b-2dr item 2
+(`af2d49aa`); open until the device re-read. Filed 31 October, from the
+device reading of 30 October.*
 
 Clear History and Website Data on iOS, with the opener's tab still open,
 showed the document at an earlier state rather than an empty chooser;
