@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, appIn, buildNotes, pointAtStore, storedHolds, typeNote } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote } from "./owner.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
+import { enrollHere, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
 
 /**
  * A document that arrives from the page's own address (D303, ruled 31 October).
@@ -184,5 +185,119 @@ test.describe("a document from the page's own address (D303)", () => {
     // The iOS reload has taken it to its own address since, where it is held.
     await expect.poll(() => page.url()).toContain("opener-doc=");
     await expect(page.locator("#doc-note")).not.toContainText("this page's address");
+  });
+});
+
+/**
+ * Recover over a document (D303, ruled 31 October; Build 2b-2dr item 6).
+ *
+ * Recover lives in the chooser, which an open document covers. So the menu
+ * offers it when nobody is signed in and a store is stamped, and it opens the
+ * recovery sheet with both ways. A document held here and kept nowhere, the
+ * arrival from the page's own address among them, is not replaced by what
+ * Recover brings: it is adopted under the owner and kept as a line beside the
+ * store's, and the newest line is shown and said.
+ */
+test.describe("Recover from the menu over a document (D303)", () => {
+  test.slow();
+  test.skip(({ browserName }) => browserName === "firefox", "the iOS path: WebKit's, and Chromium for a second engine");
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
+
+  const notes = (): Promise<string> => buildNotes(mkdtempSync(join(tmpdir(), "dai-menu-recover-")), "Notes");
+
+  test("the menu has Recover with a store stamped and nobody signed in, opening the recovery sheet with both ways; not with no store, nor with an owner signed in", async ({ browser }) => {
+    // No store: no row.
+    const bare = await browser.newContext({ viewport: PHONE });
+    const plain = await bare.newPage();
+    await plain.goto(RUNNER_URL);
+    await openFile(plain, await notes());
+    await plain.locator("#more").click();
+    await expect(plain.locator("#sheet")).toBeVisible();
+    await expect(plain.locator("#menu-recover")).toBeHidden();
+
+    // A store, nobody signed in: the row, and the sheet it opens.
+    const context = await browser.newContext({ viewport: PHONE });
+    await pointAtStore(context, store.base);
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    await openFile(page, await notes());
+    await page.locator("#more").click();
+    await expect(page.locator("#menu-recover")).toBeVisible();
+    await expect(page.locator("#menu-recover")).toHaveText("Recover documents kept beyond this browser");
+    await page.locator("#menu-recover").click();
+    await expect(page.locator("#finish-sheet")).toBeVisible();
+    await expect(page.locator("#finish-title")).toHaveText("Recover documents kept beyond this browser");
+    await expect(page.locator("#finish-passkey")).toBeVisible();
+    await expect(page.locator("#finish-keychain")).toBeVisible();
+    await page.locator("#finish-cancel").click();
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+
+    // An owner signed in here: no row.
+    const owner = "menu-owner-0000000000000";
+    await putInKeyStore(page, `dai:owner:${owner}`, { owner, atStore: true });
+    await putInKeyStore(page, "dai:owner", owner);
+    await page.evaluate(() => new BroadcastChannel("dai:owner").postMessage("changed"));
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
+    await page.locator("#more").click();
+    await expect(page.locator("#sheet")).toBeVisible();
+    await expect(page.locator("#menu-recover")).toBeHidden();
+  });
+
+  test("after the arrival from the page's own address and a change, Recover from the menu keeps the copy here as a second line, shows the newest and says so, and leaves one copy in the library", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const page = await iphone(browser, store);
+    await page.goto(RUNNER_URL);
+    const provider = await addPasskeyProvider(page.context(), page);
+    expect(provider.id).toBeTruthy();
+    // Safari, earlier: the document opened from a file, changed, and kept under its owner.
+    await page.setInputFiles("#file", await notes());
+    let app = await mounted(page, null);
+    const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+    await typeNote(app, "kept");
+    await expect.poll(() => storedHolds(page, uuid, "kept"), { timeout: 30_000 }).toBe(true);
+    const owner = await enrollHere(page);
+    await waitSettledKept(page, uuid);
+    const heads = (): string[] => {
+      const found = store.values().find((value) => value.object === `d:${owner}:${uuid}` && value.key === "heads");
+      return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
+    };
+    expect(heads()).toHaveLength(1);
+
+    // The tab at its own address, everything cleared under it, and the address reloaded.
+    await page.reload();
+    await mounted(page, uuid);
+    expect(page.url()).toMatch(/#.*\ba=.*opener-doc=/);
+    await wipeUnderLivePage(page);
+    await page.reload();
+    app = await mounted(page, uuid);
+    await expect(page.locator("#doc-note")).toContainText(RECOVER_TOO);
+    await typeNote(app, "here");
+    await expect.poll(() => storedHolds(page, uuid, "here"), { timeout: 30_000 }).toBe(true);
+    const shown = await app.locator("#note").inputValue();
+
+    // Recover, from the menu, with the passkey.
+    await page.locator("#more").click();
+    await page.locator("#menu-recover").click();
+    await page.locator("#finish-passkey").click();
+    await expect(page.locator("#doc-note")).toHaveText("Recovered Notes. Notes has two kept lines; the newest is shown.", { timeout: 30_000 });
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current()), { timeout: 30_000 }).toBe(owner);
+    // The copy here, kept as its own line: two heads, and the revision here acknowledged by the store.
+    await expect.poll(() => heads().length, { timeout: 30_000 }).toBe(2);
+    await waitKeptCurrent(page, uuid);
+    // The newest line is the one shown, and nothing of the person's was replaced.
+    await expect(app.locator("#note")).toHaveValue(shown);
+    expect(shown).toContain("here");
+    const copies = await page.evaluate(
+      async (id) => ((await (window as Any).__runner.listLibrary()) as Any[]).filter((item) => item.documentUuid === id).length,
+      uuid,
+    );
+    expect(copies, "one copy in the library").toBe(1);
+    expect(await storedHolds(page, uuid, "here")).toBe(true);
   });
 });

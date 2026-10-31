@@ -45,7 +45,7 @@ import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { keychainKey } from "./keychain-key.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
-import { adoptUnder, announceOwnerChange, currentOwner, ownerOfAccount, type DataKeyRecord, type OwnerRecord, type StoreDataKey } from "./owner.js";
+import { adoptUnder, announceOwnerChange, currentOwner, dataKeyOf, ownerOfAccount, type DataKeyRecord, type OwnerRecord, type StoreDataKey } from "./owner.js";
 import type { KeptRecord } from "./keeping.js";
 
 const PRF_INPUT = utf8("dai owner prf v1");
@@ -62,6 +62,12 @@ export interface Restored {
    * store, one per line, the newest restored (R-Z, amended 31 October; D301).
    */
   lines?: number;
+  /**
+   * Held here and kept nowhere, so adopted under the owner and left to be kept
+   * as a line of its own, the newest, rather than replaced (D303, ruled 31
+   * October). `lines` counts it.
+   */
+  joined?: true;
 }
 
 /** What the opener writes into its library for one restored document, under that document's lock. */
@@ -296,17 +302,18 @@ async function restore(
   if (isRefused(library)) return { refused: library.refused };
 
   // The owner's record, its key held non-extractable; marked recovering until every document was reached.
+  const recordOf = (recovering: boolean): OwnerRecord => ({
+    owner: asked.owner,
+    credential: admitted.credential,
+    key: ownerKey,
+    wraps: { prf: fromB64u(admitted.wraps.prf), keychain: fromB64u(admitted.wraps.keychain) },
+    keychain: "not offered",
+    enrolled: new Date().toISOString(),
+    atStore: true,
+    ...(recovering ? { recovering: true } : {}),
+  });
   const signIn = async (recovering: boolean): Promise<void> => {
-    const record: OwnerRecord = {
-      owner: asked.owner,
-      credential: admitted.credential,
-      key: ownerKey,
-      wraps: { prf: fromB64u(admitted.wraps.prf), keychain: fromB64u(admitted.wraps.keychain) },
-      keychain: "not offered",
-      enrolled: new Date().toISOString(),
-      atStore: true,
-      ...(recovering ? { recovering: true } : {}),
-    };
+    const record = recordOf(recovering);
     await keepInKeyStore(ownerRecordKey(asked.owner), record);
     await keepInKeyStore(KEYS.OWNER, asked.owner);
     announceOwnerChange();
@@ -328,6 +335,41 @@ async function restore(
     if (kept && title !== null) {
       restored.push({ documentUuid, title, at: kept.at, alreadyHere: true });
       continue;
+    }
+    /*
+     * Held here and kept nowhere (the arrival from the page's own address,
+     * changed since or not): not replaced by the store's copy, which would
+     * throw this one away. It takes the path a context meeting an existing
+     * owner takes (R-Z, amended 31 October): adopted under the owner with the
+     * store's data key, and kept by the opener as a line of its own, the
+     * newest (D303, ruled 31 October).
+     */
+    const heldHere = await here.held(documentUuid);
+    const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
+    if (heldHere !== null && (heldOwner === undefined || heldOwner === asked.owner)) {
+      const heads = await headsOf(base, author, asked.owner, documentUuid);
+      if (isUnavailable(heads)) {
+        unreached = heads.unavailable;
+        break;
+      }
+      if (isRefused(heads)) {
+        refused.push({ documentUuid, why: `heads: ${heads.refused}` });
+        continue;
+      }
+      if (heads.key && heads.heads.length > 0) {
+        let key: CryptoKey;
+        try {
+          key = await crypto.subtle.unwrapKey("raw", fromB64u(heads.key), ownerKey, "AES-KW", { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+        } catch {
+          refused.push({ documentUuid, why: "the data key does not open under the owner key" });
+          continue;
+        }
+        await beforeFirstWrite();
+        await adoptUnder(recordOf(true), [documentUuid], new Map([[documentUuid, { key, wrapped: fromB64u(heads.key) }]]));
+        const newest = [...heads.heads].sort((x, y) => Date.parse(y.at) - Date.parse(x.at))[0]!;
+        restored.push({ documentUuid, title: heldHere, at: newest.at, lines: heads.heads.length + 1, joined: true });
+        continue;
+      }
     }
     const outcome = await restoreOne(base, here.install, beforeFirstWrite, author, asked.owner, documentUuid, ownerKey, enrolled);
     if ("unavailable" in outcome) {

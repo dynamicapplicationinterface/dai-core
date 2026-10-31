@@ -4213,6 +4213,36 @@ let recoverFormHiddenFor: string | null | undefined;
  */
 const finishRecovering = document.getElementById("finish-recovering") as HTMLButtonElement | null;
 /*
+ * Recover over a document (D303, ruled 31 October): the chooser's Recover is
+ * under the open document, so with a store stamped and nobody signed in the
+ * menu offers it, and its tap opens the same recovery sheet, named for a
+ * recovery rather than for finishing one. Its answers are the chooser's words,
+ * said over the document. A document held here and kept nowhere is adopted
+ * and kept as a line, never replaced (`restore` in recover.ts).
+ */
+const menuRecover = document.getElementById("menu-recover") as HTMLButtonElement | null;
+/** What the recovery sheet was opened for: finishing a recovery cut short, or Recover from the menu. */
+let finishSheetFor: "finish" | "recover" = "finish";
+const FINISH_WORDS = {
+  finish: {
+    title: "Finish recovering",
+    sub: "The rest of your library is still kept beyond this browser. Use your passkey, or the saved password your password manager kept.",
+  },
+  recover: {
+    title: "Recover documents kept beyond this browser",
+    sub: "Your documents kept beyond this browser come back here. Use your passkey, or the saved password your password manager kept.",
+  },
+} as const;
+function openFinishSheet(purpose: "finish" | "recover"): void {
+  finishSheetFor = purpose;
+  const title = document.getElementById("finish-title");
+  const sub = document.getElementById("finish-sub");
+  if (title) title.textContent = FINISH_WORDS[purpose].title;
+  if (sub) sub.textContent = FINISH_WORDS[purpose].sub;
+  closeSheet();
+  if (finishSheet) slideOpen(finishSheet);
+}
+/*
  * The recovery sheet (R-Z, "the host's presence over the document is fixed";
  * R-D as amended). Opened by the row's tap and by nothing else, and carrying
  * both ways, each recovering alone: the passkey, and the saved-password form
@@ -4263,6 +4293,11 @@ async function showRecover(): Promise<void> {
   whileClosed(sheet, "finish-recovering", () => {
     if (finishRecovering) finishRecovering.hidden = !row;
   });
+  // Recover over a document: a store stamped and nobody signed in here (D303, ruled 31 October).
+  const recoverRow = !!storeBase() && owner === null;
+  whileClosed(sheet, "menu-recover", () => {
+    if (menuRecover) menuRecover.hidden = !recoverRow;
+  });
 }
 /** What each recovery path says when it was not used, or did not open the owner key. */
 const RECOVERY_WORDS = {
@@ -4288,7 +4323,8 @@ function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): 
     return;
   }
   closeFinishSheet();
-  showRecovered(outcome, path, "menu");
+  // Recover from the menu is a recovery, said in the chooser's words; finishing one is said as finishing.
+  showRecovered(outcome, path, finishSheetFor === "recover" ? "chooser" : "menu");
 }
 /**
  * A recovery, answered whatever happens inside it (R-Z sentence 5, "If
@@ -4326,10 +4362,8 @@ function recoverWithPasskey(from: AskedFrom): void {
   void recovering.then((outcome) => showRecovered(outcome, "passkey", from));
 }
 recoverButton?.addEventListener("click", () => recoverWithPasskey("chooser"));
-finishRecovering?.addEventListener("click", () => {
-  closeSheet();
-  if (finishSheet) slideOpen(finishSheet);
-});
+finishRecovering?.addEventListener("click", () => openFinishSheet("finish"));
+menuRecover?.addEventListener("click", () => openFinishSheet("recover"));
 finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
 /*
  * The keychain path (R-D, D298): the password the password manager kept at
@@ -4442,9 +4476,12 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     console.info(`dai: recovery (${path}) refused: ${outcome.refused}`);
     sayWhereAsked(RECOVERY_WORDS[path].refused, true);
   } else if ("restored" in outcome) {
+    // A copy held here and kept nowhere, adopted by this recovery: kept now, as its own line (D303, ruled 31 October).
+    const joined = outcome.restored.filter((one) => one.joined).map((one) => one.documentUuid);
+    if (joined.length > 0) void keepHeldRevisions(joined);
     for (const one of outcome.restored) {
-      // One held here since an earlier recovery may have changed since: no sentence about where it came from.
-      if (!one.alreadyHere) restoredNotes.set(one.documentUuid, one.at);
+      // One held here since an earlier recovery may have changed since, or held here and kept as a line: no sentence about where it came from.
+      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, one.at);
       const row = document.createElement("li");
       const open = document.createElement("button");
       open.type = "button";
