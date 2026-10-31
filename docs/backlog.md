@@ -12063,6 +12063,19 @@ followed, the note row says it was opened as the page's address held it on
 Recover brings it. The arrival is not kept and not signed in. Still owed: a
 device re-read with every Safari tab closed before the wipe.
 
+**Ruled 31 October, Recover over a document.** Recover appears in the ⋯ menu
+when nobody is signed in and a store is stamped, opening the same recovery
+sheet the chooser offers, both ways. When Recover brings a document this
+context already holds unkept (the arrival from the page's own address, with
+or without changes made since), that copy is not thrown away and not
+silently replaced: it takes the path R-Z's amendment of 31 October built for
+a context meeting an existing owner, adopted under the owner and kept as a
+line, and the newest line is shown with the sentence that the document has
+more than one kept line. Nothing of the person's is lost, and what is shown
+is said. D304 is the signed-in half of the same want. The date in the arrival
+sentence is the state's own: the container's `savedAt`, or its `createdAt`
+when it was never saved into a container; no field is added to the address.
+
 ### Build 2b-2dr (filed 31 October)
 
 #### D304 — Recover while an owner is signed in
@@ -12076,6 +12089,9 @@ cannot bring the newest line of a document it holds. Wanted after 2b-3:
 Recover in the ⋯ menu while signed in, for documents the store holds that
 this context does not, and for a document whose newest kept line is not the
 one shown here.
+
+The half with nobody signed in is D303's ruling of 31 October: Recover in the
+⋯ menu, a document held here unkept adopted and kept as a line.
 
 ### Branch review residue (filed 8 October)
 
