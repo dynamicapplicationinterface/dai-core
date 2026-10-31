@@ -5188,6 +5188,8 @@ async function frameMerge(databaseBytes: Uint8Array, level: number, siblingView?
   }
 
   const id = Math.random().toString(36).slice(2);
+  // The document the merge is asked into, named now: its snapshot is the one a merge with rows applied ends (2b2dr3-L3).
+  const askedInto = mountedUuid;
   return new Promise<MergeReport>((resolve) => {
     // A merge that never answers must not leave the person waiting on a
     // spinner with no account of why. Long enough for a large document to be
@@ -5212,9 +5214,8 @@ async function frameMerge(databaseBytes: Uint8Array, level: number, siblingView?
       window.removeEventListener("message", onResult);
       const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;
       const refusedBatches = Array.isArray(data.refusedBatches) ? data.refusedBatches : [];
-      // Changes that came across are a write here: the copy is no longer a snapshot (D303).
-      const into = mountedUuid;
-      if (!why && applied > 0 && into) void endSnapshot(into);
+      // Changes that came across are a write here: the copy it was asked into is no longer a snapshot (D303).
+      if (!why && applied > 0 && askedInto) void endSnapshot(askedInto);
       resolve({ applied, duplicate, rejected, newReplicas, refusedBatches, conflicts, ...(why ? { refused: why } : {}) });
     };
     window.addEventListener("message", onResult);
