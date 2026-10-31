@@ -326,7 +326,7 @@ test.describe("Recover from the menu over a document (D303)", () => {
     await recoverFromTheMenu(page);
     await expect(app.locator("#note")).toHaveValue("A-B", { timeout: 60_000 });
     await expect(page.locator("#doc-note")).toHaveText(
-      /^Recovered Notes\. Restored the copy kept at [^.]+\.$/,
+      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
       { timeout: 30_000 },
     );
     expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
@@ -725,6 +725,34 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
     await expect.poll(() => kept.heads().length, { timeout: 30_000 }).toBe(2);
     await expect(app.locator("#note")).toHaveValue("mine-unkept");
     expect(await storedHolds(page, kept.uuid, "mine-unkept")).toBe(true);
+  });
+
+  /*
+   * The review of Build 2b-2dr4 (2b2dr4-L1): restored over after a wipe, the
+   * arrival from the page's own address keeps R-Z's whole sentence, since
+   * that browser was cleared; any other snapshot restored over says the time
+   * alone. Recover with the saved password, so both engines run it.
+   */
+  test("unchanged since it arrived from the page's own address after a wipe, restored over, the sentence keeps the cleared browser's clause", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const page = await iphone(browser, store);
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", kept.file);
+    await mounted(page, kept.uuid);
+    await page.reload();
+    await mounted(page, kept.uuid);
+    expect(await ownMark(page)).toBe(kept.uuid);
+    await wipeUnderLivePage(page);
+    await page.reload();
+    const app = await mounted(page, kept.uuid);
+    await expect(page.locator("#doc-note")).toContainText("this page's address");
+    await expect(app.locator("#note")).toHaveValue("");
+    await recoverWithThePassword(page, kept.account, kept.secret);
+    await expect(app.locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toHaveText(
+      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      { timeout: 30_000 },
+    );
   });
 
   test("unchanged since it arrived from a file, a document is restored over", async ({ browser }) => {

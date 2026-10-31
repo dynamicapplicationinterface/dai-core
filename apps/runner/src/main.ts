@@ -2101,6 +2101,12 @@ type Carrier = {
  * The arrival is neither kept nor signed in by this.
  */
 let ownAddressArrival: { documentUuid: string; at: string | undefined } | undefined;
+/*
+ * Documents that arrived on this page from the page's own address: a tab
+ * reloaded after its browser was cleared (D303). Restored over, theirs is a
+ * cleared browser, and R-Z's whole sentence is true (2b2dr4-L1).
+ */
+const arrivedFromOwnAddress = new Set<string>();
 function ownAddressSentence(at: string | undefined): string {
   const date = at !== undefined && !Number.isNaN(Date.parse(at))
     ? ` on ${new Date(at).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" })}`
@@ -2895,6 +2901,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     ownAddressArrival = fromOwnAddress
       ? { documentUuid: loaded.manifest.documentUuid, at: savedAtOf(loaded) ?? loaded.manifest.createdAt }
       : undefined;
+    if (fromOwnAddress) arrivedFromOwnAddress.add(loaded.manifest.documentUuid);
     await mount(loaded);
     hostMark("mounted");
   } catch (error) {
@@ -4241,9 +4248,11 @@ const restoredNotes = new Map<string, { at: string; over: boolean }>();
 const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 /*
  * The restored revision, in words (R-Z). The clause about the cleared browser
- * is the wipe's: said when Recover filled a context that held nothing. A
- * snapshot restored over was this browser's own arrival, not a clearing, so
- * its sentence stops at the time (2b2dr3-L1).
+ * is the wipe's: said when Recover filled a context that held nothing, and
+ * over a snapshot that arrived from the page's own address after its browser
+ * was cleared (2b2dr4-L1). Any other snapshot restored over was this
+ * browser's own arrival, not a clearing, so its sentence stops at the time
+ * (2b2dr3-L1).
  */
 function restoredSentence(at: string, over = false): string {
   return `Restored the copy kept at ${shortTime(at)}.${over ? "" : " Changes saved only in the cleared browser are not included."}`;
@@ -4532,7 +4541,8 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     if (joined.length > 0) void keepHeldRevisions(joined);
     for (const one of outcome.restored) {
       // One held here since an earlier recovery may have changed since, or held here and kept as a line: no sentence about where it came from.
-      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true });
+      // Restored over a snapshot from the page's own address: a cleared browser, so the whole sentence (2b2dr4-L1).
+      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true && !arrivedFromOwnAddress.has(one.documentUuid) });
       const row = document.createElement("li");
       const open = document.createElement("button");
       open.type = "button";
