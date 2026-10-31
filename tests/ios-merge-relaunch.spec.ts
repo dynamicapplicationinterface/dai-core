@@ -12,15 +12,19 @@ const RUNNER_URL = "http://localhost:5175/";
 /**
  * The document this tab is at its own address for: the address's hint, or,
  * once the hint is off the address bar, the mark in the tab's history state
- * (D303, ruled on the review of Build 2b-2dr).
+ * (D303, ruled on the review of Build 2b-2dr). Asked while the page
+ * navigates (a relaunch), it answers null, as for a page not there yet, and
+ * the poll asks again.
  */
 const ownAddressOf = (page: Page): Promise<string | null> =>
-  page.evaluate((key) => {
-    const hinted = new RegExp(`[#&]${key}=([^&]+)`).exec(location.hash);
-    if (hinted) return hinted[1]!;
-    const state = history.state as { daiOwnAddress?: unknown } | null;
-    return typeof state?.daiOwnAddress === "string" ? state.daiOwnAddress : null;
-  }, HINT_KEY);
+  page
+    .evaluate((key) => {
+      const hinted = new RegExp(`[#&]${key}=([^&]+)`).exec(location.hash);
+      if (hinted) return hinted[1]!;
+      const state = history.state as { daiOwnAddress?: unknown } | null;
+      return typeof state?.daiOwnAddress === "string" ? state.daiOwnAddress : null;
+    }, HINT_KEY)
+    .catch(() => null);
 
 const IPHONE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";

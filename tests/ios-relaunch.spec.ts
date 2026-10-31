@@ -11,15 +11,19 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * The document this tab is at its own address for: the address's hint, or,
  * once the hint is off the address bar, the mark in the tab's history state
- * (D303, ruled on the review of Build 2b-2dr).
+ * (D303, ruled on the review of Build 2b-2dr). Asked while the page
+ * navigates (a relaunch), it answers null, as for a page not there yet, and
+ * the poll asks again.
  */
 const ownAddressOf = (page: Page): Promise<string | null> =>
-  page.evaluate((key) => {
-    const hinted = new RegExp(`[#&]${key}=([^&]+)`).exec(location.hash);
-    if (hinted) return hinted[1]!;
-    const state = history.state as { daiOwnAddress?: unknown } | null;
-    return typeof state?.daiOwnAddress === "string" ? state.daiOwnAddress : null;
-  }, HINT_KEY);
+  page
+    .evaluate((key) => {
+      const hinted = new RegExp(`[#&]${key}=([^&]+)`).exec(location.hash);
+      if (hinted) return hinted[1]!;
+      const state = history.state as { daiOwnAddress?: unknown } | null;
+      return typeof state?.daiOwnAddress === "string" ? state.daiOwnAddress : null;
+    }, HINT_KEY)
+    .catch(() => null);
 
 const RUNNER_URL = "http://localhost:5175/";
 /** Small enough for an inline link, and declares no colour. */
