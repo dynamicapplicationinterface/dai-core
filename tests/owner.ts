@@ -206,10 +206,11 @@ export async function pointAtStore(context: BrowserContext, base: string): Promi
   }, base);
 }
 
-/** Opens the menu and taps "Keep beyond this browser". */
+/** Opens the menu, taps "Keep beyond this browser", and takes the way that makes a new passkey (R-Z, amended 31 October). */
 export async function keepFromMenu(page: Page): Promise<void> {
   await page.locator("#more").click();
   await page.locator("#keep-beyond").click();
+  await page.locator("#keep-new").click();
 }
 
 /** The owner current in this browser context, as the opener kept it, or null. */

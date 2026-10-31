@@ -404,6 +404,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
       await decidedForEverySave(page);
       await page.locator("#more").click();
       await page.locator("#keep-beyond").click();
+      await page.locator("#keep-new").click();
       const said = "No passkey was made. Your work is still saved in this browser.";
       await expect(page.locator("#doc-note")).toHaveText(said, { timeout: 30_000 });
 
@@ -450,7 +451,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await context.close();
   });
 
-  test("no ceremony starts when the offer appears, nor on the tap that opens the menu; one starts on the menu's row", async ({ browser, browserName }) => {
+  test("no ceremony starts when the offer appears, nor on the tap that opens the menu, nor on its row; one starts on the way the row offers", async ({ browser, browserName }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-offer-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
@@ -482,7 +483,12 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
       const top = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id ?? null, [box.x + box.width / 2, box.y + box.height / 2] as const);
       expect(top, `${target} is the host's, not the document's`).not.toBe("cartridge");
     }
+    // The row opens the two ways (R-Z, amended 31 October); still nothing has started.
     await page.locator("#keep-beyond").click();
+    await expect(page.locator("#keep-ways")).toBeVisible();
+    expect(await ceremonies(page)).toBe(0);
+    await expect(noPasskeys).toBeHidden();
+    await page.locator("#keep-new").click();
     if (passkeys) await expect.poll(() => ceremonies(page)).toBe(1);
     else await expect(noPasskeys).toBeVisible();
     await expect(offer(page)).toBeHidden();
@@ -503,6 +509,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     // Enrolled from the menu before any change: no offer stood, so none was answered, and the owner is what holds it back.
     await page.locator("#more").click();
     await page.locator("#keep-beyond").click();
+    await page.locator("#keep-new").click();
     await expect.poll(() => currentOwner(page), { timeout: 30_000 }).not.toBeNull();
     expect(await withKeyStore(page, 'return (await get("dai:keep-offer")) ?? null;'), "the offer was never answered").toBeNull();
 
@@ -568,6 +575,7 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
     await expect(offer(two)).toBeVisible({ timeout: 30_000 });
     await offer(two).click();
     await two.locator("#keep-beyond").click();
+    await two.locator("#keep-new").click();
     await expect.poll(() => currentOwner(two), { timeout: 30_000 }).not.toBeNull();
 
     // The first tab, untouched since: an owner is signed in, so the offer is gone, and the pill says where the work is.

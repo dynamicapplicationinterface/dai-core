@@ -163,11 +163,51 @@ async function heldDataKey(documentUuid: string): Promise<DataKeyRecord> {
 }
 
 /** Wraps a document's data key under an owner, unless it is wrapped already. Never rewrites the document. */
-async function wrapUnder(documentUuid: string, owner: OwnerRecord): Promise<void> {
+async function wrapUnder(documentUuid: string, owner: OwnerRecord): Promise<boolean> {
   const held = await heldDataKey(documentUuid);
-  if (held.owner) return;
+  if (held.owner) return false;
   const wrapped = new Uint8Array(await crypto.subtle.wrapKey("raw", held.key, owner.key, "AES-KW"));
   await keepInKeyStore(dataKeyKey(documentUuid), { key: held.key, owner: owner.owner, wrapped } satisfies DataKeyRecord);
+  return true;
+}
+
+/** A document's data key as the store holds it under an owner: opened, and as wrapped there. */
+export interface StoreDataKey {
+  key: CryptoKey;
+  wrapped: Uint8Array;
+}
+
+/*
+ * The adoption: each document named that no owner holds yet comes under
+ * `owner`. One the store already holds under that owner, from another of the
+ * person's browser contexts, takes the store's data key in place of this
+ * browser's, so every envelope of it opens under the one key the store hands a
+ * recovery: the key here sealed nothing yet, since no owner held the document
+ * here and nothing of it was kept. Answers the documents adopted.
+ */
+async function adoptAll(owner: OwnerRecord, documents: readonly string[], atStore: ReadonlyMap<string, StoreDataKey>): Promise<string[]> {
+  const adopted: string[] = [];
+  for (const documentUuid of documents) {
+    const there = atStore.get(documentUuid);
+    if (!there) {
+      if (await wrapUnder(documentUuid, owner)) adopted.push(documentUuid);
+      continue;
+    }
+    if ((await dataKeyOf(documentUuid))?.owner) continue;
+    await keepInKeyStore(dataKeyKey(documentUuid), { key: there.key, owner: owner.owner, wrapped: there.wrapped, atStore: true } satisfies DataKeyRecord);
+    adopted.push(documentUuid);
+  }
+  return adopted;
+}
+
+/**
+ * Adopts, under an owner signed in here by the passkey the person already has
+ * (R-Z, amended 31 October), the documents saved in this browser that no owner
+ * holds: the adoption `enroll` makes, with the store's data key for each
+ * document the store already holds under that owner.
+ */
+export function adoptUnder(owner: OwnerRecord, documents: readonly string[], atStore: ReadonlyMap<string, StoreDataKey>): Promise<string[]> {
+  return serially(() => adoptAll(owner, documents, atStore));
 }
 
 /**
@@ -318,7 +358,7 @@ async function keep(
   await keepInKeyStore(ownerRecordKey(owner), record);
   await keepInKeyStore(KEYS.OWNER, owner);
   announceOwnerChange();
-  for (const documentUuid of documents) await wrapUnder(documentUuid, record);
+  await adoptAll(record, documents, new Map());
   console.info(`dai: enrolled as owner ${owner}; ${documents.length} document(s) adopted`);
   // Last, once everything is kept: the form path reloads the page, and an enrollment must not depend on what follows it.
   const offered = async (): Promise<void> =>

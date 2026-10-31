@@ -481,6 +481,38 @@
       #finish-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; padding: 8px 0; cursor: pointer; }
       #finish-keychain input { font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; }
       #finish-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
+      /* Keeping beyond this browser, its two ways: one look for both, so neither is the default (R-Z, amended 31 October). */
+      #keep-ways[hidden] { display: none; }
+      #keep-ways {
+        position: fixed;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: var(--scrim);
+      }
+      #keep-ways-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+      #keep-ways-sub { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      .keep-way {
+        display: grid;
+        gap: 2px;
+        width: 100%;
+        max-width: 24rem;
+        margin-top: 4px;
+        padding: 12px 16px;
+        text-align: left;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      .keep-way:disabled { opacity: 0.6; }
+      .keep-way-name { font-size: 16px; font-weight: 600; color: var(--accent); }
+      .keep-way-for { font-size: 13px; line-height: 1.35; color: var(--muted); }
+      #keep-ways-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; cursor: pointer; }
       #recover-with-password { background: transparent; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; }
       /* Out of sight and out of the tab order, but a real form a password manager reads (D298). */
       #keychain-offer { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
@@ -1431,6 +1463,34 @@
           <button id="finish-with-password" type="submit">Recover with the saved password</button>
         </form>
         <button id="finish-cancel" type="button">Not now</button>
+      </div>
+    </div>
+
+    <!--
+      Keeping beyond this browser, its two ways (R-Z, amended 31 October).
+
+      A person is one owner across their browser contexts: Safari, the Home
+      Screen app, another browser. So the menu's "Keep beyond this browser"
+      opens this, and the passkey ceremony starts from one of its two ways and
+      nowhere else: a new passkey, which enrolls, and the passkey the person
+      already has, which signs that owner in here and keeps this browser's
+      documents under them. Each is named so the person it is for recognizes
+      it, and neither is a default: same look, nothing focused first.
+    -->
+    <div id="keep-ways" hidden role="dialog" aria-modal="true" aria-labelledby="keep-ways-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <h2 id="keep-ways-title">Keep beyond this browser</h2>
+        <p id="keep-ways-sub">One passkey keeps all your documents, wherever you open them: Safari, the Home Screen app, another browser.</p>
+        <button id="keep-new" type="button" class="keep-way">
+          <span class="keep-way-name">Make a new passkey</span>
+          <span class="keep-way-for">I have never kept documents beyond a browser.</span>
+        </button>
+        <button id="keep-existing" type="button" class="keep-way">
+          <span class="keep-way-name">Use the passkey I already have</span>
+          <span class="keep-way-for">I have kept documents before, here or in another browser.</span>
+        </button>
+        <button id="keep-ways-cancel" type="button">Not now</button>
       </div>
     </div>
 

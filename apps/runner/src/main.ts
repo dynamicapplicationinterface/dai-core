@@ -88,9 +88,9 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
-import { afterSaveWritten, answerKeepOffer, currentOwner, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
+import { afterSaveWritten, answerKeepOffer, currentOwner, dataKeyOf, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
-import { recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored } from "./recover.js";
+import { joinOwner, recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -3935,11 +3935,7 @@ async function offerKeychainByForm(owner: string, secret: string, offered: () =>
 }
 function keepBeyondThisBrowser(): void {
   // The documents written in this browser are what keeping beyond it keeps; one only opened here is claimed by nobody.
-  const enrolling = enroll(
-    location.hostname,
-    async () => (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid),
-    offerKeychainByForm,
-  );
+  const enrolling = enroll(location.hostname, writtenHere, offerKeychainByForm);
   void enrolling.then((result) => {
     if ("refused" in result) {
       console.info(`dai: not enrolled (${result.refused}): ${result.why}`);
@@ -3948,14 +3944,86 @@ function keepBeyondThisBrowser(): void {
     void showKeepBeyond();
   });
 }
+/*
+ * The two ways (R-Z, amended 31 October): a person is one owner across their
+ * browser contexts. The menu's row opens the sheet that offers them, and the
+ * ceremony starts in the tap on one of them: a new passkey enrolls; the
+ * passkey the person already has signs that owner in here, admits this
+ * context, adopts the documents saved here and keeps them. "Not now", the
+ * scrim or Escape closes it and changes nothing.
+ */
+const keepWays = document.getElementById("keep-ways") as HTMLElement | null;
+function closeKeepWays(): void {
+  if (keepWays) slideClose(keepWays);
+}
+keepWays?.addEventListener("click", (event) => {
+  if (event.target === keepWays) closeKeepWays();
+});
+document.getElementById("keep-ways-cancel")?.addEventListener("click", () => closeKeepWays());
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeKeepWays();
+});
 keepBeyond?.addEventListener("click", () => {
   closeSheet();
   const answering = keepOffering;
   setKeepOffering(false);
-  // The ceremony first, inside the tap; the offer's answer, when it stood, is kept after.
-  keepBeyondThisBrowser();
+  if (keepWays) slideOpen(keepWays);
   if (answering) void answerKeepOffer("keep");
 });
+document.getElementById("keep-new")?.addEventListener("click", () => {
+  closeKeepWays();
+  // The ceremony first, inside the tap.
+  keepBeyondThisBrowser();
+});
+/** What the passkey the person already has says when it did not sign an owner in here. */
+const NOT_JOINED = {
+  cancelled: "No passkey was used. Your work is still saved in this browser.",
+  refused: "This passkey did not open documents kept beyond this browser. Your work is still saved in this browser.",
+  unavailable: "The store did not answer, so nothing was kept beyond this browser yet. Your work is still saved in this browser; try again when you are online.",
+} as const;
+document.getElementById("keep-existing")?.addEventListener("click", () => {
+  closeKeepWays();
+  // The ceremony first, inside the tap: recovery's, for the owner the passkey names.
+  const joining = joinOwner(storeBase(), writtenHere);
+  void joining.then((result) => {
+    if ("joined" in result) void keepHeldRevisions(result.adopted);
+    else {
+      const [kind, why] = "cancelled" in result ? (["cancelled", result.cancelled] as const) : "unavailable" in result ? (["unavailable", result.unavailable] as const) : (["refused", result.refused] as const);
+      console.info(`dai: not joined (${kind}): ${why}`);
+      tellOverDocument(NOT_JOINED[kind], kind !== "cancelled");
+    }
+    void showKeepBeyond();
+  });
+});
+/** The documents written in this browser: what keeping beyond it keeps. One only opened here is claimed by nobody. */
+async function writtenHere(): Promise<string[]> {
+  return (await listCartridgesFromLibrary()).filter((item) => item.wrote === true).map((item) => item.documentUuid);
+}
+/**
+ * Asks the store to keep the revision held here of each document named that
+ * is under the owner signed in and not kept at that revision: what an owner
+ * adopted, kept at once, so its next status is "Kept" with no further change
+ * (R-Z, amended 31 October). A document with a revision already waiting for
+ * the store is left to it: that one is newer.
+ */
+async function keepHeldRevisions(documents: readonly string[]): Promise<void> {
+  try {
+    const owner = await currentOwner();
+    if (!owner || !storeBase()) return;
+    const waiting = new Set(waitingDocuments());
+    for (const item of await listCartridgesFromLibrary()) {
+      if (!documents.includes(item.documentUuid) || waiting.has(item.documentUuid) || !item.html) continue;
+      if ((await dataKeyOf(item.documentUuid))?.owner !== owner) continue;
+      const stored = await readStored(item.documentUuid);
+      const kept = await keptOf(item.documentUuid);
+      if (!stored.db || (kept?.owner === owner && kept.revision >= stored.revision)) continue;
+      console.info(`dai: keeping ${item.documentUuid} r${stored.revision}, adopted under ${owner}`);
+      keepRevision({ documentUuid: item.documentUuid, revision: stored.revision, database: stored.db, html: item.html, title: item.appName, build: item.build });
+    }
+  } catch (error: unknown) {
+    console.warn(`dai: adopted documents not asked to be kept: ${String(error)}`);
+  }
+}
 document.getElementById("keep-not-now")?.addEventListener("click", () => {
   closeSheet();
   setKeepOffering(false);

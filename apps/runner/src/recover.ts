@@ -45,7 +45,7 @@ import { keepInKeyStore, keptInKeyStore } from "./opfs.js";
 import { keychainKey } from "./keychain-key.js";
 import { readCartridge, resealCartridge } from "./cartridge.js";
 import { person } from "./person.js";
-import { announceOwnerChange, currentOwner, type DataKeyRecord, type OwnerRecord } from "./owner.js";
+import { adoptUnder, announceOwnerChange, currentOwner, type DataKeyRecord, type OwnerRecord, type StoreDataKey } from "./owner.js";
 import type { KeptRecord } from "./keeping.js";
 
 const PRF_INPUT = utf8("dai owner prf v1");
@@ -167,6 +167,92 @@ export async function recoverWithKeychain(base: string | undefined, owner: strin
     },
     open: async (wraps) => (await openOwnerKey(wraps.keychain, bytes, "keychain")) ?? "the saved password does not open the owner key",
   });
+}
+
+export type Joined =
+  /** Signed in as the owner the passkey names, this context admitted; `adopted` are the documents now under that owner. */
+  | { joined: string; adopted: string[] }
+  | { unavailable: string }
+  | { cancelled: string }
+  | { refused: string };
+
+/**
+ * The passkey the person already has, from "Keep beyond this browser" (R-Z,
+ * amended 31 October): a person is one owner across their browser contexts.
+ * Recovery's ceremony, inside the tap; then Admit, which makes this context a
+ * new author under that owner (R-E) and hands over the owner key's wraps; the
+ * owner signed in here; and the documents saved in this context adopted under
+ * that owner, as enrolling adopts them. A document the store already holds
+ * under that owner keeps the store's data key. Nothing is restored here:
+ * the owner's other documents stay at the store. Call it from the tap.
+ */
+export function joinOwner(base: string | undefined, documents: () => Promise<readonly string[]>): Promise<Joined> {
+  if (!window.PublicKeyCredential || !navigator.credentials?.get) return Promise.resolve({ cancelled: "this browser has no passkeys" });
+  const challenge = admitChallenge();
+  // Reached before any await: the ceremony runs inside the tap.
+  const asked = navigator.credentials.get({
+    publicKey: {
+      challenge: utf8(challenge),
+      userVerification: "required",
+      extensions: { prf: { eval: { first: PRF_INPUT } } } as AuthenticationExtensionsClientInputs,
+    },
+  }) as Promise<PublicKeyCredential | null>;
+  return asked.then(
+    async (assertion): Promise<Joined> => {
+      if (!assertion) return { cancelled: "no passkey chosen" };
+      const response = assertion.response as AuthenticatorAssertionResponse;
+      if (!response.userHandle) return { refused: "the passkey names no owner" };
+      const secret = (assertion.getClientExtensionResults() as { prf?: { results?: { first?: ArrayBuffer } } }).prf?.results?.first;
+      if (!secret) return { refused: "the passkey's provider gave no PRF output" };
+      if (!base) return { unavailable: "no store is configured here" };
+      if ((await currentOwner()) !== null) return { refused: "an owner is signed in here" };
+      const owner = b64u(bytesOf(response.userHandle));
+      const me = await person();
+      const author: Author = { privateKey: me.keys.privateKey, pub: me.pub, id: me.author };
+      const admitted = await admitAuthor(base, author, owner, {
+        kind: "passkey",
+        credential: b64u(bytesOf(assertion.rawId)),
+        clientDataJSON: b64u(bytesOf(response.clientDataJSON)),
+        authenticatorData: b64u(bytesOf(response.authenticatorData)),
+        signature: b64u(bytesOf(response.signature)),
+      });
+      if (isUnavailable(admitted)) return { unavailable: admitted.unavailable };
+      if (isRefused(admitted)) return { refused: admitted.refused };
+      const ownerKey = await openOwnerKey(admitted.wraps.prf, bytesOf(secret), "prf");
+      if (!ownerKey) return { refused: "the passkey does not open the owner key" };
+      // The store's data key for each document saved here that it holds under this owner, read before anyone is signed in.
+      const saved = await documents();
+      const atStore = new Map<string, StoreDataKey>();
+      for (const documentUuid of saved) {
+        const heads = await headsOf(base, author, owner, documentUuid);
+        if (isUnavailable(heads)) return { unavailable: heads.unavailable };
+        if (isRefused(heads)) return { refused: `heads: ${heads.refused}` };
+        if (!heads.key) continue;
+        try {
+          const key = await crypto.subtle.unwrapKey("raw", fromB64u(heads.key), ownerKey, "AES-KW", { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+          atStore.set(documentUuid, { key, wrapped: fromB64u(heads.key) });
+        } catch {
+          return { refused: "a data key the store holds does not open under the owner key" };
+        }
+      }
+      const record: OwnerRecord = {
+        owner,
+        credential: admitted.credential,
+        key: ownerKey,
+        wraps: { prf: fromB64u(admitted.wraps.prf), keychain: fromB64u(admitted.wraps.keychain) },
+        keychain: "not offered",
+        enrolled: new Date().toISOString(),
+        atStore: true,
+      };
+      await keepInKeyStore(ownerRecordKey(owner), record);
+      await keepInKeyStore(KEYS.OWNER, owner);
+      announceOwnerChange();
+      const adopted = await adoptUnder(record, saved, atStore);
+      console.info(`dai: joined owner ${owner} with the passkey already held; ${adopted.length} document(s) adopted`);
+      return { joined: owner, adopted };
+    },
+    (error: unknown) => ({ cancelled: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
+  );
 }
 
 /*
