@@ -12104,6 +12104,15 @@ when it was never saved into a container; no field is added to the address.
   person's change, whether it came from the page's own address or from a
   link someone followed. The snapshot mark is set at arrival and decides what
   Recover does; the own-address mark decides only what is said.
+  *Amended 31 October, on the code review of Build 2b-2dr2:* Every arrival
+  into a context that does not hold the document is a snapshot until the
+  document changes here, whatever carried it: an inline link, a file, the
+  share target, a link to a file on another host, a store link or a mailbox
+  link. Any write to the document's database here other than the restore
+  itself ends the snapshot, whether the person made it or it came across
+  from another copy. Recover restores the store's head over a snapshot and
+  keeps no line for it; a file restored over still holds its own state. The
+  own-address mark decides only what is said.
 - A document held here under another owner is passed over by Recover: not
   restored, not re-keyed, not touched, and the note row says it was left as
   it is.
