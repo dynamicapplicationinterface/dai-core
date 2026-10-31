@@ -84,7 +84,7 @@ export interface Install {
 export interface Here {
   install: (one: Install) => Promise<void>;
   held: (documentUuid: string) => Promise<string | null>;
-  /** Whether a document held here is the address's snapshot, unchanged by the person since it arrived (D303). */
+  /** Whether a document held here is a snapshot: arrived by an inline carrier into this context and unchanged by the person since (D303). */
   snapshot: (documentUuid: string) => Promise<boolean>;
 }
 
@@ -349,9 +349,10 @@ async function restore(
      * takes the path a context meeting an existing owner takes (R-Z, amended
      * 31 October): adopted under the owner with the store's data key, and kept
      * by the opener as a line of its own, the one the store takes last (D303,
-     * as ruled on the review of Build 2b-2dr). An arrival from the page's own
-     * address unchanged since is the address's snapshot, not the person's
-     * work: the store's head is restored over it, and no line is kept.
+     * as ruled on the review of Build 2b-2dr). A document that arrived by an inline
+     * carrier, from the page's own address or a link someone followed, and is
+     * unchanged since is a snapshot, not the person's work: the store's head
+     * is restored over it, and no line is kept.
      */
     const heldHere = await here.held(documentUuid);
     const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
@@ -361,7 +362,7 @@ async function restore(
       passed.push({ documentUuid, title: heldHere });
       continue;
     }
-    // The address's snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
+    // A snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
     if (heldHere !== null && !(await here.snapshot(documentUuid))) {
       const heads = await headsOf(base, author, asked.owner, documentUuid);
       if (isUnavailable(heads)) {

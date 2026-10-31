@@ -2073,6 +2073,13 @@ type Carrier = {
    * copies or shares, which carries no mark (D303).
    */
   fromOwnAddress?: boolean;
+  /**
+   * Carried in the address itself (`#a=`): arriving into a context that does
+   * not hold it, it is a snapshot until the person's first change, whatever
+   * address it came by (D303). The snapshot decides what Recover does; the
+   * own-address mark only what is said.
+   */
+  inline?: true;
 };
 
 /*
@@ -2800,8 +2807,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // The address this copy came by, when it is short enough to be an
         // address rather than the document (a store link). See identityOf.
         link: shortArrivalLink() ?? heldItem?.link,
-        // The address's snapshot until the person changes it (D303, ruled on the review of Build 2b-2dr).
-        ...(fromOwnAddress ? { addressSnapshot: true as const } : {}),
+        // A snapshot until the person changes it: any inline arrival into a context that did not hold it (D303).
+        ...(carrier.inline === true && !heldHere ? { arrivedSnapshot: true as const } : {}),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(
@@ -3816,8 +3823,8 @@ window.addEventListener("message", (event) => {
             // apart by its application rather than by its data (D85).
             ...(buildOf(resealed.manifest) ? { build: buildOf(resealed.manifest) } : {}),
           };
-          // A change of the person's: no longer the address's snapshot (D303).
-          if (data.payload?.authored === true) delete record.addressSnapshot;
+          // A change of the person's: no longer a snapshot (D303).
+          if (data.payload?.authored === true) delete record.arrivedSnapshot;
           await saveCartridgeToLibrary(record);
           // What the owner's store is asked to keep, once this save has landed.
           landed = {
@@ -4188,8 +4195,8 @@ function installRestored(one: Install): Promise<void> {
     await saveDatabaseToOpfs(one.documentUuid, one.database);
     // What this write does not own, it keeps: on a wiped browser there is nothing, but a record held here stays whole.
     const held = await getCartridgeFromLibrary(one.documentUuid).catch(() => null);
-    // Restored over the address's snapshot, it is the store's copy now (D303).
-    const { addressSnapshot: _snapshot, ...kept } = held ?? {};
+    // Restored over a snapshot, it is the store's copy now (D303).
+    const { arrivedSnapshot: _snapshot, ...kept } = held ?? {};
     void _snapshot;
     await saveCartridgeToLibrary({
       ...kept,
@@ -4207,7 +4214,7 @@ function installRestored(one: Install): Promise<void> {
 const recoveryHere: Here = {
   install: installRestored,
   held: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.appName ?? null,
-  snapshot: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.addressSnapshot === true,
+  snapshot: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.arrivedSnapshot === true,
 };
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
 /** Documents recovered on this page, not yet opened: the store's time for each. */
@@ -4552,7 +4559,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
       sayWhereAsked(`${said}${passed}`.trim(), unverified > 0);
     }
     /*
-     * The document on screen restored over (the address's snapshot, D303): the
+     * The document on screen restored over (a snapshot, D303): the
      * restored copy is opened in its place, and the recovery's words are said
      * over it with the restored revision's (R-Z, "The restored revision, in
      * words"), in the one note row.
@@ -5894,6 +5901,8 @@ async function openFromLink(carried: string, consentedFor?: string, ownMark?: st
     hinted: consentedFor,
     // The page's own address is marked in the tab's history state, never in the address (D303).
     fromOwnAddress: ownMark !== undefined && ownMark === consentedFor,
+    // A document carried in the address itself: a snapshot until the person changes it (D303).
+    inline: true,
   });
 }
 

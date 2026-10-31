@@ -1,7 +1,9 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium, expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
+import { inlineLink } from "../src/link.js";
 import { test } from "./fixtures.js";
 import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, withKeyStore } from "./owner.js";
 import { watchKeychain, wipe } from "./keychain.js";
@@ -345,6 +347,9 @@ test.describe("Recover from the menu over a document (D303)", () => {
     test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
     const { page, app, uuid, owner, heads, keptAB } = await keptThenArrived(browser);
     await typeNote(app, "C");
+    // The change saved and its save written: the library record, not only the stored bytes, says so.
+    await page.evaluate(() => (window as Any).__runner.flush());
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
     await expect.poll(() => storedHolds(page, uuid, "C"), { timeout: 30_000 }).toBe(true);
     await recoverFromTheMenu(page);
     await expect(page.locator("#doc-note")).toHaveText("Recovered Notes. Notes has two kept lines; the one kept last is shown.", { timeout: 30_000 });
@@ -407,5 +412,119 @@ test.describe("Recover from the menu over a document (D303)", () => {
     await expect(page.locator("#doc-note")).toHaveText("Notes was left as it is: this browser holds it for another passkey.", { timeout: 30_000 });
     expect(await storedHolds(page, uuid, "-y-unkept"), "Y's unkept change, still here").toBe(true);
     expect(await keyOwner(), "the key, still Y's").toBe(y);
+  });
+});
+
+/**
+ * A snapshot by any inline carrier (D303, ruled on the review of Build 2b-2dr):
+ * a document that arrives by `#a=` into a context that does not hold it is a
+ * snapshot until the first save that carries the person's change, whether it
+ * came from the page's own address or from a link someone followed. The
+ * snapshot mark decides what Recover does; the own-address mark decides only
+ * what is said. So whether a browser keeps a tab's history state across a
+ * wipe never decides what Recover keeps.
+ *
+ * The owner and the newer kept copy are made in a Chromium of their own (the
+ * passkey with PRF is its virtual authenticator); the context the link is
+ * followed in is the project's engine, and recovers with the saved password,
+ * which both engines can.
+ */
+test.describe("a snapshot by a link someone followed (D303)", () => {
+  test.slow();
+  test.skip(({ browserName }) => browserName === "firefox", "Chromium and WebKit");
+  const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
+
+  /** The document kept under its owner, changed past what the link carries; the link, the owner, its saved password and the store's heads. */
+  async function keptElsewhere(): Promise<{ link: string; uuid: string; owner: string; account: string; secret: string; heads: () => string[] }> {
+    const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-followed-")), "Notes");
+    const link = await inlineLink(readFileSync(file, "utf8"), RUNNER_URL, {
+      template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+      runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+    });
+    if (!link) throw new Error("expected an inline link");
+    const elsewhere = await chromium.launch();
+    try {
+      const context = await elsewhere.newContext();
+      await pointAtStore(context, store.base);
+      const handed = await watchKeychain(context);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      await addPasskeyProvider(context, page);
+      const app = await openFile(page, file);
+      const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+      await typeNote(app, "kept-copy");
+      const owner = await enrollHere(page);
+      await waitSettledKept(page, uuid);
+      const password = handed.find((entry) => entry.owner === owner);
+      if (!password) throw new Error("no saved password handed over");
+      const heads = (): string[] => {
+        const found = store.values().find((value) => value.object === `d:${owner}:${uuid}` && value.key === "heads");
+        return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
+      };
+      expect(heads()).toHaveLength(1);
+      return { link, uuid, owner, account: password.account, secret: password.secret, heads };
+    } finally {
+      await elsewhere.close();
+    }
+  }
+
+  /** The link followed in an empty context of this engine: the card, Open, the document as the link carries it. */
+  async function followed(browser: Browser, link: string, uuid: string): Promise<{ page: Page; app: FrameLocator }> {
+    const context = await browser.newContext({ viewport: PHONE });
+    await pointAtStore(context, store.base);
+    const page = await context.newPage();
+    await page.goto(link);
+    const app = await mounted(page, uuid);
+    await expect(app.locator("#note")).toHaveValue("");
+    expect(await ownMark(page), "no own-address mark: a link someone followed").toBeNull();
+    expect((await page.locator("#doc-note").textContent()) ?? "").not.toContain("this page's address");
+    return { page, app };
+  }
+
+  async function recoverWithThePassword(page: Page, account: string, secret: string): Promise<void> {
+    await page.locator("#more").click();
+    await page.locator("#menu-recover").click();
+    await page.locator("#finish-owner").fill(account);
+    await page.locator("#finish-secret").fill(secret);
+    await page.locator("#finish-with-password").click();
+  }
+
+  const copiesOf = (page: Page, uuid: string): Promise<number> =>
+    page.evaluate(async (id) => ((await (window as Any).__runner.listLibrary()) as Any[]).filter((item) => item.documentUuid === id).length, uuid);
+
+  test("unchanged since it arrived, a document from a followed link is restored over: the kept copy, one head, one copy, no lines clause", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const { page, app } = await followed(browser, kept.link, kept.uuid);
+    await recoverWithThePassword(page, kept.account, kept.secret);
+    await expect(app.locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toHaveText(
+      /^Recovered Notes\. Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/,
+      { timeout: 30_000 },
+    );
+    await page.waitForTimeout(3_000);
+    expect(kept.heads(), "one head: no line kept for the snapshot").toHaveLength(1);
+    expect(await copiesOf(page, kept.uuid), "one copy in the library").toBe(1);
+  });
+
+  test("changed since it arrived, a document from a followed link is kept as its own line, and the lines sentence says so", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const { page, app } = await followed(browser, kept.link, kept.uuid);
+    await typeNote(app, "C");
+    // The change saved and its save written: the library record, not only the stored bytes, says so.
+    await page.evaluate(() => (window as Any).__runner.flush());
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
+    await expect.poll(() => storedHolds(page, kept.uuid, "C"), { timeout: 30_000 }).toBe(true);
+    await recoverWithThePassword(page, kept.account, kept.secret);
+    await expect(page.locator("#doc-note")).toHaveText("Recovered Notes. Notes has two kept lines; the one kept last is shown.", { timeout: 30_000 });
+    await expect.poll(() => kept.heads().length, { timeout: 30_000 }).toBe(2);
+    await expect(app.locator("#note")).toHaveValue("C");
+    expect(await copiesOf(page, kept.uuid), "one copy in the library").toBe(1);
   });
 });
