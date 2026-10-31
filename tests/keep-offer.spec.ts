@@ -302,6 +302,82 @@ test.describe("the invitation to keep beyond this browser (R-Z sentence 3)", () 
   });
 
   /*
+   * 2b2fr2-L1 (pre-merge item 2): the recovery sheet on every engine. The
+   * passkey path of recovery.spec.ts is Chromium's alone; this stands the
+   * owner and its mark up in the key store as the opener keeps them, so no
+   * passkey is needed. The row's tap opens the sheet and nothing else does
+   * (R-Z, "the host's presence over the document is fixed"; R-D as amended,
+   * both ways offered): a passkey not used leaves the person on it, and "Not
+   * now", Escape and the scrim each close it, the mark kept, with nothing
+   * opening by itself in the 2 s after.
+   */
+  test("the recovery sheet opens from the menu's row alone, offers both ways, and closes three ways with nothing opening by itself", async ({ page }) => {
+    const dialogs = (): Promise<string[]> =>
+      page.evaluate(() => [...document.querySelectorAll<HTMLElement>("[role=dialog]")].filter((d) => !d.hidden && d.getBoundingClientRect().height > 0).map((d) => d.id));
+    /** Every dialog watched for 2 s, every 100 ms: any that opened. */
+    const openedWithin2s = async (): Promise<string[]> => {
+      const seen = new Set<string>();
+      const until = Date.now() + 2_000;
+      while (Date.now() < until) {
+        for (const id of await dialogs()) seen.add(id);
+        await page.waitForTimeout(100);
+      }
+      return [...seen];
+    };
+    const owner = "sheet-owner-000000000000";
+    const mark = (): Promise<boolean | null> => withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`);
+    const openSheet = async (): Promise<void> => {
+      await page.locator("#more").click();
+      await expect(page.locator("#finish-recovering")).toBeVisible();
+      await page.locator("#finish-recovering").click();
+      await expect(page.locator("#finish-sheet")).toBeVisible();
+      await expect.poll(() => page.locator("#finish-sheet .keep-panel").evaluate((el) => el.getAnimations().length)).toBe(0);
+    };
+    // A passkey not used, the same on every engine: the browser answers NotAllowedError (an engine with no passkeys has none to ask).
+    await page.addInitScript(() => {
+      if (navigator.credentials) navigator.credentials.get = () => Promise.reject(new DOMException("The operation either timed out or was not allowed.", "NotAllowedError"));
+    });
+
+    await pointAtStore(page.context(), store.base);
+    await page.goto(RUNNER_URL);
+    await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-sheet-")), "Notes"));
+    await putInKeyStore(page, "dai:owner", owner);
+    await putInKeyStore(page, `dai:owner:${owner}`, { owner, recovering: true, atStore: true });
+    expect(await openedWithin2s(), "before the row is tapped").toEqual([]);
+
+    await openSheet();
+    expect(await dialogs(), "the row's tap: the recovery sheet, alone").toEqual(["finish-sheet"]);
+    await expect(page.locator("#finish-passkey"), "the passkey way").toBeVisible();
+    await expect(page.locator("#finish-owner"), "the saved-password way").toBeVisible();
+    await expect(page.locator("#finish-secret")).toBeVisible();
+    await expect(page.locator("#finish-with-password")).toBeVisible();
+
+    // The passkey not used: the person is still on the sheet, both ways offered, nothing said.
+    await page.locator("#finish-passkey").click();
+    await expect(page.locator("#finish-passkey")).toBeEnabled();
+    expect(await openedWithin2s(), "a passkey not used").toEqual(["finish-sheet"]);
+    await expect(page.locator("#finish-with-password")).toBeVisible();
+    await expect(page.locator("#doc-note"), "nothing said over the document").toBeHidden();
+    expect(await mark(), "the mark, after a passkey not used").toBe(true);
+
+    // Three ways out, each changing nothing, and nothing opens by itself after.
+    await page.locator("#finish-cancel").click();
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+    expect(await openedWithin2s(), "after Not now").toEqual([]);
+    expect(await mark(), "the mark, after Not now").toBe(true);
+    await openSheet();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+    expect(await openedWithin2s(), "after Escape").toEqual([]);
+    expect(await mark(), "the mark, after Escape").toBe(true);
+    await openSheet();
+    await page.mouse.click(20, 120);
+    await expect(page.locator("#finish-sheet")).toBeHidden();
+    expect(await openedWithin2s(), "after the scrim").toEqual([]);
+    expect(await mark(), "the mark, after the scrim").toBe(true);
+  });
+
+  /*
    * 2b2fr-L1 (Build 2b-2fr2 item 3): no save takes a note-row sentence away.
    * The completion sentence of "Finish recovering" was cleared at the next
    * save, behind a guard no test held; the clearing is gone, and this holds
