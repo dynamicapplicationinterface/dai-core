@@ -3988,7 +3988,18 @@ function keepBeyondThisBrowser(): void {
  * scrim or Escape closes it and changes nothing.
  */
 const keepWays = document.getElementById("keep-ways") as HTMLElement | null;
-function closeKeepWays(): void {
+/*
+ * Opened from the offer while it stood: what the person does here answers it
+ * (R-Z sentence 3). A way chosen answers "keep"; closing the sheet is a
+ * dismissal and is kept as "not now", so the offer stays in the menu and does
+ * not reappear (2b2d-L5).
+ */
+let keepWaysAnswerTheOffer = false;
+function closeKeepWays(chosen?: "keep"): void {
+  if (keepWaysAnswerTheOffer) {
+    keepWaysAnswerTheOffer = false;
+    void answerKeepOffer(chosen ?? "not now");
+  }
   if (keepWays) slideClose(keepWays);
 }
 keepWays?.addEventListener("click", (event) => {
@@ -4000,13 +4011,12 @@ document.addEventListener("keydown", (event) => {
 });
 keepBeyond?.addEventListener("click", () => {
   closeSheet();
-  const answering = keepOffering;
+  keepWaysAnswerTheOffer = keepOffering;
   setKeepOffering(false);
   if (keepWays) slideOpen(keepWays);
-  if (answering) void answerKeepOffer("keep");
 });
 document.getElementById("keep-new")?.addEventListener("click", () => {
-  closeKeepWays();
+  closeKeepWays("keep");
   // The ceremony first, inside the tap.
   keepBeyondThisBrowser();
 });
@@ -4017,7 +4027,7 @@ const NOT_JOINED = {
   unavailable: "The store did not answer, so nothing was kept beyond this browser yet. Your work is still saved in this browser; try again when you are online.",
 } as const;
 document.getElementById("keep-existing")?.addEventListener("click", () => {
-  closeKeepWays();
+  closeKeepWays("keep");
   // The ceremony first, inside the tap: recovery's, for the owner the passkey names.
   const joining = joinOwner(storeBase(), writtenHere);
   void joining.then((result) => {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 import { enrollHere, keptRecord, pillText, waitSettledKept } from "./keeping.js";
 import { wipe } from "./keychain.js";
@@ -139,6 +139,39 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       await expect(page.locator("#keep-new #keep-ways-backup")).toBeVisible();
       await expect(page.locator("#keep-existing")).not.toContainText("backup password");
       expect(await page.evaluate(() => (window as Any).__ceremonies), "no ceremony yet").toBe(0);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * R-Z sentence 3: dismissing the offer changes nothing, it stays in the
+   * menu, and it does not reappear. "Not now" on the two ways is a dismissal
+   * and is recorded as one; only a way chosen answers "keep" (2b2d-L5).
+   */
+  test("\"Not now\" on the two ways is recorded as not now, and the offer stays in the menu without reappearing", async ({ browser }) => {
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-existing-")), "Notes"));
+      await typeNote(app, "worth keeping");
+      await expect(offer(page)).toBeVisible({ timeout: 30_000 });
+      await offer(page).click();
+      await page.locator("#keep-beyond").click();
+      await expect(page.locator("#keep-ways")).toBeVisible();
+      await page.locator("#keep-ways-cancel").click();
+      await expect(page.locator("#keep-ways")).toBeHidden();
+      await expect
+        .poll(() => withKeyStore<Any>(page, 'return (await get("dai:keep-offer"))?.answer ?? null;'), { timeout: 10_000 })
+        .toBe("not now");
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBeNull();
+      await expect(offer(page)).toHaveCount(0);
+      await page.locator("#more").click();
+      await expect(page.locator("#keep-beyond")).toBeVisible();
     } finally {
       await context.close();
       await store.close();
