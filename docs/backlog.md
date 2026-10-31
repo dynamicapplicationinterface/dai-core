@@ -12138,6 +12138,19 @@ one shown here.
 The half with nobody signed in is D303's ruling of 31 October: Recover in the
 ⋯ menu, a document held here unkept adopted and kept as a line.
 
+### Build 2b-2dr3 (filed 31 October)
+
+#### D305 — Apps that write as they open end their snapshot at once
+
+*Status: open, with D301 (Build 2b-3). Filed 31 October, from Build 2b-2dr3
+item 3.*
+
+Apps that write as they open end their snapshot at once, so a stale copy of
+such a document is kept as a line when Recover meets it, and Recover shows
+the line kept last. Nothing is lost and the lines are said, but the kept
+copy is not what is shown. Wanted with D301: a saved time in the sealed
+part, or a signal that the person touched the document before the save.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
