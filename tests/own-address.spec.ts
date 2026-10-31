@@ -1,9 +1,12 @@
-import { createReadStream, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
+import { compileDirectory } from "../src/compile.js";
+import { signedBytes, signedViewOf } from "../src/core.js";
 import { inlineLink } from "../src/link.js";
 import { publish } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
@@ -659,6 +662,110 @@ test.describe("a snapshot by a link someone followed (D303)", () => {
       await restoredOver(page, app, kept);
     } finally {
       files.server.close();
+    }
+  });
+});
+
+/*
+ * D303 as amended on the review of Build 2b-2dr2 (2b2dr2-L1): any write here
+ * other than the restore ends the snapshot, changes that came across from
+ * another copy included. A snapshot that takes in another copy's rows is no
+ * longer the arrival's state, so Recover keeps it as a line, not restored
+ * over.
+ */
+test.describe("a snapshot that takes in another copy's changes (D303)", () => {
+  test.slow();
+  test("changes that came across end the snapshot: Recover keeps the copy as a line", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    try {
+      const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const scratch = mkdtempSync(join(tmpdir(), "dai-snapshot-merge-"));
+      const built = await compileDirectory({
+        policyLayer: true,
+        sourceDir: join(repo, "tests", "fixture", "chess"),
+        root: repo,
+        appName: "Velvet Chess",
+        signingKey: resolve(repo, "conformance", "signing-key.pem"),
+        allowTestKey: true,
+      });
+      const file = join(scratch, "chess.dai.html");
+      writeFileSync(file, built.html, "utf8");
+      const uuid = built.manifest.documentUuid;
+      const view = createHash("sha256").update(signedBytes(signedViewOf(built.manifest))).digest("hex");
+
+      const context = await browser.newContext({ viewport: PHONE });
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const provider = await addPasskeyProvider(context, page);
+      const chess = appIn(page);
+
+      // One copy: a game begun, the document kept under its owner; its database is another copy's changes for the next.
+      await page.setInputFiles("#file", file);
+      await page.locator("#card-open").click({ timeout: 60_000 });
+      await expect(chess.locator("#app")).toBeVisible({ timeout: 60_000 });
+      await chess.locator("[data-new-game]:visible").first().click({ timeout: 60_000 });
+      await chess.locator("#setup-you").fill("Ada");
+      await chess.locator("#setup-them").fill("Bo");
+      await chess.locator('input[name="color"][value="w"]').check();
+      await chess.locator("#new-game-form button[type=submit]").click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.savesWritten as number), { timeout: 30_000 }).toBeGreaterThan(0);
+      const owner = await enrollHere(page);
+      await waitSettledKept(page, uuid);
+      const other = (await page.evaluate(async (id) => [...((await (window as Any).__runner.loadStored(id)) as Uint8Array)], uuid)) as number[];
+      const heads = (): string[] => {
+        const found = store.values().find((value) => value.object === `d:${owner}:${uuid}` && value.key === "heads");
+        return found ? (JSON.parse(found.bytes.toString("utf8")) as string[]) : [];
+      };
+      expect(heads()).toHaveLength(1);
+
+      // A context with nothing: the file opened again (a snapshot), and the other copy's changes come across.
+      await wipe(page, provider.cdp);
+      await page.setInputFiles("#file", file);
+      await page.locator("#card-open").click({ timeout: 60_000 });
+      await expect(chess.locator("#app")).toBeVisible({ timeout: 60_000 });
+      /*
+       * Chess writes a row of its own as it opens, which already ends the
+       * snapshot (a write here). So the copy is put back to a snapshot, its
+       * writes settled, and the other copy's changes are the only write after.
+       */
+      await page.evaluate(() => (window as Any).__runner.flush());
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
+      await page.evaluate(async (id) => {
+        const db: IDBDatabase = await new Promise((done, fail) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => done(open.result);
+          open.onerror = () => fail(open.error);
+        });
+        const store = db.transaction("cartridges", "readwrite").objectStore("cartridges");
+        const held = await new Promise<Any>((done) => {
+          const get = store.get(id);
+          get.onsuccess = () => done(get.result);
+        });
+        await new Promise<void>((done) => {
+          const put = store.put({ ...held, arrivedSnapshot: true });
+          put.onsuccess = () => done();
+        });
+        db.close();
+      }, uuid);
+      const report = (await page.evaluate(([bytes, digest]) => (window as Any).__runner.mergeInFrame(bytes, digest), [other, view] as const)) as {
+        applied: number;
+        refused?: string;
+      };
+      expect(report.refused).toBeUndefined();
+      expect(report.applied, "changes came across").toBeGreaterThan(0);
+      await page.evaluate(() => (window as Any).__runner.flush());
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 }).toBe(true);
+
+      // Recover from the menu: the copy here is kept as a line, not restored over.
+      await page.locator("#more").click();
+      await page.locator("#menu-recover").click();
+      await page.locator("#finish-passkey").click();
+      await expect(page.locator("#doc-note")).toHaveText("Recovered Velvet Chess. Velvet Chess has two kept lines; the one kept last is shown.", { timeout: 30_000 });
+      await expect.poll(() => heads().length, { timeout: 30_000 }).toBe(2);
+    } finally {
+      await store.close();
     }
   });
 });

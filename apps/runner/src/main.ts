@@ -806,6 +806,21 @@ function withLibraryLock<T>(documentUuid: string, work: () => Promise<T>): Promi
  * `change` receives the record as it is at that moment and returns what to
  * write. A document this device does not hold is left alone.
  */
+/**
+ * A write to a document here other than the restore ends its snapshot (D303,
+ * as amended on the review of Build 2b-2dr2): changes that came across from
+ * another copy, as the person's own change does at its save.
+ */
+async function endSnapshot(documentUuid: string): Promise<void> {
+  // Nothing to write for a copy that is not one.
+  if ((await getCartridgeFromLibrary(documentUuid).catch(() => null))?.arrivedSnapshot !== true) return;
+  await amendLibraryRecord(documentUuid, (held) => {
+    if (held.arrivedSnapshot !== true) return held;
+    const { arrivedSnapshot: _ended, ...rest } = held;
+    void _ended;
+    return rest;
+  });
+}
 async function amendLibraryRecord(
   documentUuid: string,
   change: (held: LibraryItem) => LibraryItem,
@@ -5180,6 +5195,9 @@ async function frameMerge(databaseBytes: Uint8Array, level: number, siblingView?
       window.removeEventListener("message", onResult);
       const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;
       const refusedBatches = Array.isArray(data.refusedBatches) ? data.refusedBatches : [];
+      // Changes that came across are a write here: the copy is no longer a snapshot (D303).
+      const into = mountedUuid;
+      if (!why && applied > 0 && into) void endSnapshot(into);
       resolve({ applied, duplicate, rejected, newReplicas, refusedBatches, conflicts, ...(why ? { refused: why } : {}) });
     };
     window.addEventListener("message", onResult);
@@ -6294,7 +6312,11 @@ async function startMailboxIfPossible(): Promise<void> {
         if (mountedUuid === uuid) void badge()?.opened(uuid).catch(() => undefined);
       },
       // A pulled move is stored on this device before the cursor passes it.
-      persist: flushDocument,
+      // Batches pulled and merged are a write here: no longer a snapshot (D303); then stored.
+      persist: async () => {
+        await endSnapshot(uuid);
+        return flushDocument();
+      },
       onNote: (message) => tellOverDocument(message),
     });
   }
