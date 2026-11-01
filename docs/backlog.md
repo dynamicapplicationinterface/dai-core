@@ -12219,6 +12219,53 @@ page, waits for nothing.
 The save the D195 test's reload cut is D294's runner case (seen again,
 1 November), not a fault of the document.
 
+### Build 2b-2dr6 (filed 1 November)
+
+#### D308 — A library read that did not answer is taken for "nothing held"
+
+*Status: open. Filed 1 November, from the review of Build 2b-2dr6 item 1b
+(2b2dr6b-L1), whose tap is fixed in item 1c. 2b2dr3-H1's class.*
+
+`listCartridgesFromLibrary()` in apps/runner/src/opfs.ts answers `[]` when
+its read times out (5 s) or fails, the same as a library that holds nothing.
+A caller that decides on the list therefore takes "the read did not answer"
+for "this device holds none of it". The recovered row's tap did, and said a
+document was gone that was still here; item 1c decides it on one record read
+(`libraryRecord`, bounded, rejecting when the read did not answer) and
+says "The library could not be read. Try again." instead.
+
+The other decision paths in apps/runner/src/main.ts that read the list so, on
+1 November (line numbers at the item 1c commit):
+
+- **The resume on load** (`main.ts:6834`): the document open last not found
+  in the list, the resume key is forgotten (`forgetOpen`), a lasting effect
+  of a read that did not answer.
+- **An icon or reference address with nothing to read** (`main.ts:6675`,
+  `hintOnly`): the document not found, the launch goes on as for a document
+  not held here.
+- **An arrival's succession and siblings** (`main.ts:2256`, `ingest`): an
+  empty library plans no succession and finds no copy held here, so a
+  document this device holds can be met as new.
+- **The reopen after a recovery restored the document on screen**
+  (`main.ts:4707`): not found, it is not reopened, with nothing said.
+- **A recovery that breaks off** (`main.ts:4406`, `answeredAlways`): an
+  empty read names nothing as held under the owner (words only).
+- **Keeping what was written here** (`main.ts:4102` `writtenHere`,
+  `main.ts:4116` `keepHeldRevisions`): nothing is asked of the store; a later
+  change asks again (benign).
+- Related, by the record read: recovery's `held` and `snapshot`
+  (`main.ts:4244`, `main.ts:4245`) read with `.catch(() => null)`, so a failed
+  read is taken for a document not held here, and `restore` would treat it as
+  one to restore.
+
+Not decision paths: the diagnostics' "library holds it" line
+(`main.ts:1063`, which says "error" on a throw) and the test hooks
+(`main.ts:7209`, `main.ts:7280`).
+
+Wanted: each decision path told a read that did not answer from an empty
+library (a rejecting read, as `libraryRecord`), and a sentence, or nothing
+done, where it did not answer.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

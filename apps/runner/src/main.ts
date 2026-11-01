@@ -4542,6 +4542,9 @@ function sayWhereAsked(sentence: string, isError = false): void {
  * the document from the library. A document gone from the library by another
  * way than this page's Remove (another tab's, a cleared library) is not a
  * button that does nothing: the tap takes the row out and says so (2b2dr6-L2).
+ * Only a read that answered decides that: a read that failed or did not answer
+ * says nothing about what is held, so the row stays and the chooser says the
+ * library could not be read (2b2dr6b-L1).
  */
 function recoveredRow(documentUuid: string, title: string): HTMLButtonElement | null {
   if (!recoveredList) return null;
@@ -4553,7 +4556,14 @@ function recoveredRow(documentUuid: string, title: string): HTMLButtonElement | 
   open.dataset.document = documentUuid;
   open.addEventListener("click", () => {
     void (async () => {
-      const item = (await listCartridgesFromLibrary().catch(() => [])).find((candidate) => candidate.documentUuid === documentUuid);
+      let item: LibraryItem | null;
+      try {
+        item = await libraryRecord(documentUuid);
+      } catch (error) {
+        console.warn(`dai: recovered row for ${documentUuid}: the library read did not answer (${String(error)}); the row stays`);
+        sayWhereAsked(LIBRARY_UNREAD, true);
+        return;
+      }
       if (item) {
         await launchFromLibrary(item, "a recovered copy");
         return;
@@ -4567,6 +4577,29 @@ function recoveredRow(documentUuid: string, title: string): HTMLButtonElement | 
   row.append(open);
   recoveredList.append(row);
   return open;
+}
+/** Said when a library read that a decision waits on fails or does not answer: what is held is not known, so nothing is said about it. */
+const LIBRARY_UNREAD = "The library could not be read. Try again.";
+/**
+ * One record of the library, bounded as the list's read is (5 s): the record,
+ * null when the library answered that it holds none, and a rejection when the
+ * read failed or did not answer. The list's read answers empty in both of
+ * those cases, so it cannot tell "not held" from "not known" (2b2dr6b-L1).
+ */
+function libraryRecord(documentUuid: string): Promise<LibraryItem | null> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("library read timed out after 5s")), 5_000);
+    getCartridgeFromLibrary(documentUuid).then(
+      (item) => {
+        window.clearTimeout(timer);
+        resolve(item);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom): void {
   if (path === "keychain") {

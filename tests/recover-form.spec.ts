@@ -428,4 +428,64 @@ test.describe("the saved password after Remove from this device, on a phone (Bui
       await context.close();
     }
   });
+
+  /*
+   * The review of Build 2b-2dr6 item 1b (2b2dr6b-L1): the row's tap decided
+   * "gone" on a library read that answers empty when it times out or fails,
+   * so a stalled read said the document was no longer here, and took the row
+   * out, while the library still held it. A read that did not answer says
+   * nothing about what is held: the row stays, the chooser says the library
+   * could not be read, and a tap again opens the document.
+   */
+  test("a library read that does not answer leaves the row, says the library could not be read, and a tap again opens the document", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const context = await browser.newContext({ viewport: PHONE });
+    try {
+      // The next library read stalls once, a request that never answers, then reads answer again.
+      await context.addInitScript(() => {
+        const stallOnce = <T extends (...args: Any[]) => IDBRequest>(real: T): T =>
+          function (this: IDBObjectStore, ...args: Any[]) {
+            if ((window as Any).__stallLibraryOnce === true && this.name === "cartridges") {
+              (window as Any).__stallLibraryOnce = false;
+              (window as Any).__stalledLibraryReads = ((window as Any).__stalledLibraryReads ?? 0) + 1;
+              return {} as IDBRequest;
+            }
+            return real.apply(this, args);
+          } as T;
+        IDBObjectStore.prototype.getAll = stallOnce(IDBObjectStore.prototype.getAll);
+        IDBObjectStore.prototype.get = stallOnce(IDBObjectStore.prototype.get);
+      });
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const row = page.locator(`#recovered button[data-document="${kept.uuid}"]`);
+      const opened = (): Promise<string | null> => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null);
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+      await page.locator("#recover-owner").fill(kept.account);
+      await page.locator("#recover-secret").fill(kept.secret);
+      await page.locator("#recover-secret").press("Enter");
+      await expect(page.locator("#report")).toHaveText("Recovered Notes.", { timeout: 30_000 });
+      await expect(row).toHaveText(/^Notes · kept /);
+
+      // The tap, with the library read stalled: nothing is said about what is held.
+      await page.evaluate(() => {
+        (window as Any).__stallLibraryOnce = true;
+      });
+      await row.click();
+      await expect(page.locator("#report")).toHaveText("The library could not be read. Try again.", { timeout: 30_000 });
+      expect(await page.evaluate(() => (window as Any).__stalledLibraryReads), "the stall was met").toBe(1);
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await expect(row).toBeVisible();
+      expect(await opened(), "nothing opened").toBeNull();
+      expect(((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).some((item) => item.documentUuid === kept.uuid), "the library still holds it").toBe(true);
+
+      // Tapped again, the read answering: the document opens with what was kept.
+      await row.click();
+      await expect.poll(opened, { timeout: 30_000 }).toBe(kept.uuid);
+      await expect(appIn(page).locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
+      await expect.poll(async () => (await storedRow(page, kept.uuid, "notes", "body = ?", ["kept-copy"])).length, { timeout: 30_000 }).toBe(1);
+    } finally {
+      await context.close();
+    }
+  });
 });
