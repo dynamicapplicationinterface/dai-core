@@ -88,20 +88,47 @@ export async function openerWithStore(context: BrowserContext, base: string): Pr
   return { page, provider };
 }
 
-/** Enrolls from the menu and waits until this browser context is signed in as the new owner. */
+/**
+ * Enrolls from the menu and waits until this browser context is signed in as
+ * the new owner, on the page the next step will use (tests/README.md, the
+ * rule for waiting). Where the browser has no Credential Management API, as
+ * Safari, enrolling hands the keychain secret to a form whose submission
+ * reloads the page: then the owner is read only after that load, with the
+ * opener on the page that came back. A read that lands while a page is going
+ * or coming answers nothing and is asked again (2b2dr5c-M1).
+ */
 export async function enrollHere(page: Page): Promise<string> {
-  await keepFromMenu(page);
-  let owner: string | null = null;
-  await expect
-    .poll(
-      async () => {
-        owner = await page.evaluate(() => (window as Any).__runner.owner.current());
-        return owner !== null;
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(true);
-  return owner!;
+  const said = { form: false, settled: false };
+  let loadsAfterForm = 0;
+  const onConsole = (message: { text(): string }): void => {
+    const text = message.text();
+    if (text.includes("keychain secret offered by a form")) said.form = true;
+    else if (/dai: keychain secret (offered|not offered)/.test(text)) said.settled = true;
+  };
+  const onLoad = (): void => {
+    if (said.form) loadsAfterForm += 1;
+  };
+  page.on("console", onConsole);
+  page.on("load", onLoad);
+  try {
+    await keepFromMenu(page);
+    let owner: string | null = null;
+    await expect
+      .poll(
+        async () => {
+          // The state the next step needs: the keychain offer settled, and with a form, the page it reloaded to.
+          if (said.form ? loadsAfterForm === 0 : !said.settled) return false;
+          owner = await page.evaluate(() => (window as Any).__runner?.owner?.current?.() ?? null).catch(() => null);
+          return owner !== null;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    return owner!;
+  } finally {
+    page.off("console", onConsole);
+    page.off("load", onLoad);
+  }
 }
 
 /**
