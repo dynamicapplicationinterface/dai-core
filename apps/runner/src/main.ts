@@ -4537,11 +4537,13 @@ function sayWhereAsked(sentence: string, isError = false): void {
 }
 /**
  * The row for a document on the chooser's recovered list, made once per page
- * and relabelled by each recovery that walks it: kept at the store's time when
+ * and relabeled by each recovery that walks it: kept at the store's time when
  * this run restored it, "here" when it was held here already. Its button opens
- * the document from the library.
+ * the document from the library. A document gone from the library by another
+ * way than this page's Remove (another tab's, a cleared library) is not a
+ * button that does nothing: the tap takes the row out and says so (2b2dr6-L2).
  */
-function recoveredRow(documentUuid: string): HTMLButtonElement | null {
+function recoveredRow(documentUuid: string, title: string): HTMLButtonElement | null {
   if (!recoveredList) return null;
   const found = [...recoveredList.querySelectorAll<HTMLButtonElement>("button[data-document]")].find((button) => button.dataset.document === documentUuid);
   if (found) return found;
@@ -4551,8 +4553,15 @@ function recoveredRow(documentUuid: string): HTMLButtonElement | null {
   open.dataset.document = documentUuid;
   open.addEventListener("click", () => {
     void (async () => {
-      const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === documentUuid);
-      if (item) await launchFromLibrary(item, "a recovered copy");
+      const item = (await listCartridgesFromLibrary().catch(() => [])).find((candidate) => candidate.documentUuid === documentUuid);
+      if (item) {
+        await launchFromLibrary(item, "a recovered copy");
+        return;
+      }
+      console.info(`dai: recovered row for ${documentUuid}: no longer in the library; taken out`);
+      row.remove();
+      if (recoveredList) recoveredList.hidden = recoveredList.childElementCount === 0;
+      sayWhereAsked(`${title} is no longer on this device.`);
     })();
   });
   row.append(open);
@@ -4604,7 +4613,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
      * something under it to tap.
      */
     for (const one of outcome.restored) {
-      const open = recoveredRow(one.documentUuid);
+      const open = recoveredRow(one.documentUuid, one.title);
       if (one.alreadyHere) {
         if (open) open.textContent = `${one.title} · here`;
         continue;

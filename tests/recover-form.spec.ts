@@ -377,4 +377,55 @@ test.describe("the saved password after Remove from this device, on a phone (Bui
       await context.close();
     }
   });
+
+  /*
+   * The review of Build 2b-2dr6 (2b2dr6-L2): a row outlives a document removed
+   * by any way but this page's Remove, another tab's included, and its button
+   * then did nothing. Tapped with the document no longer in the library, the
+   * row is taken out and the chooser says so.
+   */
+  test("a row whose document another tab removed says it is no longer on this device, and goes", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const context = await browser.newContext({ viewport: PHONE });
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const row = page.locator(`#recovered button[data-document="${kept.uuid}"]`);
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+      await page.locator("#recover-owner").fill(kept.account);
+      await page.locator("#recover-secret").fill(kept.secret);
+      await page.locator("#recover-secret").press("Enter");
+      await expect(page.locator("#report")).toHaveText("Recovered Notes.", { timeout: 30_000 });
+      await expect(row).toHaveText(/^Notes · kept /);
+
+      // Another tab of this browser opens the document from its own recovery, and removes it.
+      const other = await context.newPage();
+      await other.goto(RUNNER_URL);
+      await expect(other.locator("#recover-keychain")).toBeVisible();
+      await other.locator("#recover-owner").fill(kept.account);
+      await other.locator("#recover-secret").fill(kept.secret);
+      await other.locator("#recover-secret").press("Enter");
+      await expect(other.locator("#report")).toHaveText("Your library is complete.", { timeout: 30_000 });
+      await other.locator(`#recovered button[data-document="${kept.uuid}"]`).click();
+      await expect.poll(() => other.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(kept.uuid);
+      await expect.poll(async () => (await storedRow(other, kept.uuid, "notes", "body = ?", ["kept-copy"])).length, { timeout: 30_000 }).toBe(1);
+      other.once("dialog", (dialog) => void dialog.accept());
+      await other.click("#more");
+      await other.click("#remove");
+      await expect(other.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
+      await expect
+        .poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).some((item) => item.documentUuid === kept.uuid), { timeout: 30_000 })
+        .toBe(false);
+
+      // The first tab's row, tapped: no document behind it, so it says so and goes.
+      await row.click();
+      await expect(page.locator("#report")).toHaveText("Notes is no longer on this device.", { timeout: 30_000 });
+      await expect(page.locator("#recovered li")).toHaveCount(0);
+      await expect(page.locator("#recovered")).toBeHidden();
+      expect(await page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), "nothing opened").toBeNull();
+    } finally {
+      await context.close();
+    }
+  });
 });
