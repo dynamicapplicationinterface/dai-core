@@ -184,10 +184,12 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
 
       // Recover again, the store back: the rest comes back, and what is here stays.
       await page.locator("#recover").click();
-      // What this recovery restored, by name, and only that, in the list too (2b2dr5-L1): the first was here already.
+      // What this recovery restored, by name, and only that (2b2dr5-L1): the first was here already, so not named,
+      // but listed, as here, beside the second (2b2dr5-L1 as amended, Build 2b-2dr6).
       await expect(page.locator("#report")).toHaveText(`Recovered ${second}.`, { timeout: 30_000 });
-      await expect(page.locator("#recovered li")).toHaveCount(1);
-      await expect(page.locator(`#recovered button[data-document="${ids[second]}"]`)).toBeVisible();
+      await expect(page.locator("#recovered li")).toHaveCount(2);
+      await expect(page.locator(`#recovered button[data-document="${ids[second]}"]`)).toHaveText(new RegExp(`^${second} · kept `));
+      await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toHaveText(`${first} · here`);
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
       // Still offered with the owner signed in (D304, amended 1 November): a later Recover passes over what is here.
@@ -299,8 +301,9 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
         .toEqual([ids[first], ids[second]].sort());
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
-      // The list holds what this run brought back, only (2b2dr5-L1): the first was here already.
-      await expect(page.locator("#recovered li")).toHaveCount(1);
+      // The list holds what this run walked: the second, brought back, and the first, here already, listed as here (2b2dr5-L1 as amended, Build 2b-2dr6).
+      await expect(page.locator("#recovered li")).toHaveCount(2);
+      await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toHaveText(`${first} · here`);
       // 2b2f-M2 (Build 2b-2fr item 3): one sentence over the document naming what this run restored (R-Z sentence 5).
       await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`, { timeout: 10_000 });
       expect(await page.locator("#report").textContent(), "the chooser's line, unchanged").toBe(chooserLine);
@@ -941,8 +944,9 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
    * here read "Recovered …" when nothing was restored. The chooser says what
    * the recovery sheet says, through one function the two share: what this
    * recovery restored, by name, and, when everything kept is here already,
-   * the sheet's words for that, "Your library is complete."; the list holds
-   * only what came back.
+   * the sheet's words for that, "Your library is complete.". Amended in Build
+   * 2b-2dr6: a document here already is not named but is listed, as here,
+   * with its open button, so the sentence is never alone with nothing to tap.
    */
   test("an owner whose documents are all here taps Recover on the chooser: the sentence says the library is complete, and names nothing as recovered", async ({
     browser,
@@ -966,7 +970,11 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await page.locator("#recover").click();
       await expect(page.locator("#report")).toHaveText("Your library is complete.", { timeout: 30_000 });
       await expect(page.locator("#report")).not.toContainText("Recovered");
-      await expect(page.locator("#recovered li")).toHaveCount(0);
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await expect(page.locator(`#recovered button[data-document="${id}"]`)).toHaveText("Ydoc · here");
+      // Its button opens the document held here.
+      await page.locator(`#recovered button[data-document="${id}"]`).click();
+      await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(id);
       expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
     } finally {
       await context.close();

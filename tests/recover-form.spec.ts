@@ -1,11 +1,12 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { chromium, expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, buildNotes, openFile, pointAtStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedRow, typeNote } from "./owner.js";
+import { watchKeychain } from "./keychain.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
-import { putInKeyStore } from "./keeping.js";
+import { enrollHere, putInKeyStore, waitSettledKept } from "./keeping.js";
 
 /**
  * The chooser's "Recover with the saved password" form, as a phone meets it
@@ -241,6 +242,137 @@ test.describe("the chooser's saved-password form on a phone (Build 2b-2d item 3)
       await expect(page.locator("#recover-keychain")).toBeVisible();
       await expect(page.locator("#recover")).toBeVisible();
       expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner unchanged").toBe(owner);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+/*
+ * The device reading of 1 November, step 2 (Build 2b-2dr6). After "Remove from
+ * this device", the owner still signed in, the password typed and Return
+ * pressed: to the person nothing happened, the fields kept their values and no
+ * sentence was in sight. Tapping the button then said "Your library is
+ * complete." over an empty list, with no way onward. The Return had recovered
+ * the document; its sentence and its row were drawn under the keyboard, and the
+ * second recovery emptied the list of what the first had brought back.
+ *
+ * Now, after a saved-password recovery on the chooser answers, whatever the
+ * outcome, the password field is emptied and both fields let go of the focus,
+ * so the keyboard drops and the sentence and the list are in view; the account
+ * stays. The list is this page's record of what was recovered: a later
+ * recovery never empties it. A document held here under this owner is not
+ * named in the sentence, which says what this run did, but is listed, as
+ * here, with its open button (2b2dr5-L1 as amended). Enter in the password
+ * field recovers as the button does: the phone's Return relies on the form's
+ * implicit submission, which WebKit pins here; iOS itself cannot be driven.
+ *
+ * The owner and the kept copy are made in a Chromium of their own (the passkey
+ * with PRF is its virtual authenticator); the page under test is the project's
+ * engine, which recovers with the saved password alone.
+ */
+test.describe("the saved password after Remove from this device, on a phone (Build 2b-2dr6)", () => {
+  test.slow();
+  test.skip(({ browserName }) => browserName === "firefox", "Chromium and WebKit");
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
+
+  /** A notes document kept under a new owner in another browser; its id and the saved password the opener handed over. */
+  async function keptElsewhere(): Promise<{ uuid: string; owner: string; account: string; secret: string }> {
+    const elsewhere = await chromium.launch();
+    try {
+      const context = await elsewhere.newContext();
+      await pointAtStore(context, store.base);
+      const handed = await watchKeychain(context);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      await addPasskeyProvider(context, page);
+      const app = await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-after-remove-")), "Notes"));
+      const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+      await typeNote(app, "kept-copy");
+      const owner = await enrollHere(page);
+      await waitSettledKept(page, uuid);
+      const password = handed.find((entry) => entry.owner === owner);
+      if (!password) throw new Error("no saved password handed over");
+      return { uuid, owner, account: password.account, secret: password.secret };
+    } finally {
+      await elsewhere.close();
+    }
+  }
+
+  /** The input that has the focus on the page, by id, or null: whether a keyboard is up. */
+  const focusedField = (page: Page): Promise<string | null> =>
+    page.evaluate(() => (document.activeElement instanceof HTMLInputElement ? document.activeElement.id : null));
+
+  test("after Remove, Enter in the password field recovers and the keyboard drops; a recovery again keeps the list, the document listed as here; a fresh page lists it as here", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const context = await browser.newContext({ viewport: PHONE });
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const report = page.locator("#report");
+      const row = page.locator(`#recovered button[data-document="${kept.uuid}"]`);
+      const opened = (): Promise<string | null> => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null);
+
+      // Step 1 of the reading: the saved password brings the document back, and it opens.
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+      await page.locator("#recover-owner").fill(kept.account);
+      await page.locator("#recover-secret").fill(kept.secret);
+      await page.locator("#recover-with-password").click();
+      await expect(report).toHaveText("Recovered Notes.", { timeout: 30_000 });
+      await row.click();
+      await expect.poll(opened, { timeout: 30_000 }).toBe(kept.uuid);
+      await expect(appIn(page).locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
+      await expect.poll(async () => (await storedRow(page, kept.uuid, "notes", "body = ?", ["kept-copy"])).length, { timeout: 30_000 }).toBe(1);
+
+      // Step 2: Remove from this device, the owner still signed in; the chooser offers the form.
+      page.once("dialog", (dialog) => void dialog.accept());
+      await page.click("#more");
+      await page.click("#remove");
+      await expect(page.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner still signed in").toBe(kept.owner);
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+
+      // The password typed and Return pressed: the form's implicit submission recovers, as the button does.
+      await page.locator("#recover-owner").fill(kept.account);
+      await page.locator("#recover-secret").fill(kept.secret);
+      await page.locator("#recover-secret").press("Enter");
+      await expect(report).toHaveText("Recovered Notes.", { timeout: 30_000 });
+      await expect(row).toHaveText(/^Notes · kept /);
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      // The password field emptied and no field holding the focus, so the keyboard drops; the account stays.
+      await expect(page.locator("#recover-secret")).toHaveValue("");
+      await expect(page.locator("#recover-owner")).toHaveValue(kept.account);
+      await expect.poll(() => focusedField(page), { message: "no field has the focus" }).toBeNull();
+
+      // Recover again: nothing new; the sentence says so, and the list keeps the document, as here.
+      await page.locator("#recover-secret").fill(kept.secret);
+      await page.locator("#recover-with-password").click();
+      await expect(report).toHaveText("Your library is complete.", { timeout: 30_000 });
+      await expect(row).toHaveText("Notes · here");
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await expect(page.locator("#recover-secret")).toHaveValue("");
+      await expect.poll(() => focusedField(page)).toBeNull();
+
+      // A fresh page: the document held here, the recovery lists it as here, and its button opens it.
+      await page.reload();
+      await expect(page.locator("#recover-keychain")).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator("#recovered li")).toHaveCount(0);
+      await page.locator("#recover-owner").fill(kept.account);
+      await page.locator("#recover-secret").fill(kept.secret);
+      await page.locator("#recover-secret").press("Enter");
+      await expect(report).toHaveText("Your library is complete.", { timeout: 30_000 });
+      await expect(row).toHaveText("Notes · here");
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await row.click();
+      await expect.poll(opened, { timeout: 30_000 }).toBe(kept.uuid);
+      await expect(appIn(page).locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
     } finally {
       await context.close();
     }

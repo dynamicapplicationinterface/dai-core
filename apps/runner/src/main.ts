@@ -4535,15 +4535,47 @@ function sayWhereAsked(sentence: string, isError = false): void {
     if (sentence) report.scrollIntoView({ block: "nearest" });
   }
 }
+/**
+ * The row for a document on the chooser's recovered list, made once per page
+ * and relabelled by each recovery that walks it: kept at the store's time when
+ * this run restored it, "here" when it was held here already. Its button opens
+ * the document from the library.
+ */
+function recoveredRow(documentUuid: string): HTMLButtonElement | null {
+  if (!recoveredList) return null;
+  const found = [...recoveredList.querySelectorAll<HTMLButtonElement>("button[data-document]")].find((button) => button.dataset.document === documentUuid);
+  if (found) return found;
+  const row = document.createElement("li");
+  const open = document.createElement("button");
+  open.type = "button";
+  open.dataset.document = documentUuid;
+  open.addEventListener("click", () => {
+    void (async () => {
+      const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === documentUuid);
+      if (item) await launchFromLibrary(item, "a recovered copy");
+    })();
+  });
+  row.append(open);
+  recoveredList.append(row);
+  return open;
+}
 function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom): void {
-  // A refused password leaves nothing in the field to fill again by mistake.
-  if (path === "keychain" && !("restored" in outcome)) {
-    const secret = document.getElementById("recover-secret") as HTMLInputElement | null;
-    if (secret) secret.value = "";
-  }
-  if (recoveredList) {
-    recoveredList.replaceChildren();
-    recoveredList.hidden = true;
+  if (path === "keychain") {
+    /*
+     * Answered, whatever the outcome: nothing left in the password field to
+     * fill again by mistake, and on the chooser neither field keeps the focus,
+     * so a phone's keyboard drops and the sentence and the list under the form
+     * are in view (the device reading of 1 November: a Return that recovered
+     * looked like nothing, its answer under the keyboard). The account stays.
+     */
+    if (from === "chooser" || !("restored" in outcome)) {
+      if (recoverSecretField) recoverSecretField.value = "";
+    }
+    if (from === "chooser") {
+      recoverSecretField?.blur();
+      recoverOwnerField?.blur();
+      if (document.activeElement instanceof HTMLElement && recoverKeychain?.contains(document.activeElement)) document.activeElement.blur();
+    }
   }
   if ("unavailable" in outcome) {
     console.info(`dai: recovery unavailable: ${outcome.unavailable}`);
@@ -4563,25 +4595,24 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     // A copy held here and kept nowhere, adopted by this recovery: kept now, as its own line (D303, ruled 31 October).
     const joined = outcome.restored.filter((one) => one.joined).map((one) => one.documentUuid);
     if (joined.length > 0) void keepHeldRevisions(joined);
+    /*
+     * The list is this page's record of what was recovered: a later recovery
+     * relabels its rows and adds to them, and never empties it (Build 2b-2dr6).
+     * A document held here under this owner is not named in the sentence,
+     * which says what this run did, but is listed, as here, with its button
+     * (2b2dr5-L1, amended 1 November): "Your library is complete." always has
+     * something under it to tap.
+     */
     for (const one of outcome.restored) {
-      // Here already, from an earlier recovery: not this recovery's, neither listed nor named (2b2dr5-L1).
-      if (one.alreadyHere) continue;
+      const open = recoveredRow(one.documentUuid);
+      if (one.alreadyHere) {
+        if (open) open.textContent = `${one.title} · here`;
+        continue;
+      }
       // Held here and kept as a line: no sentence about where it came from.
       // Restored over a snapshot from the page's own address: a cleared browser, so the whole sentence (2b2dr4-L1).
-      if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true && !arrivedFromOwnAddress.has(one.documentUuid) });
-      const row = document.createElement("li");
-      const open = document.createElement("button");
-      open.type = "button";
-      open.dataset.document = one.documentUuid;
-      open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
-      open.addEventListener("click", () => {
-        void (async () => {
-          const item = (await listCartridgesFromLibrary()).find((candidate) => candidate.documentUuid === one.documentUuid);
-          if (item) await launchFromLibrary(item, "a recovered copy");
-        })();
-      });
-      row.append(open);
-      recoveredList?.append(row);
+      if (!one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true && !arrivedFromOwnAddress.has(one.documentUuid) });
+      if (open) open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
     }
     if (recoveredList) recoveredList.hidden = recoveredList.childElementCount === 0;
     const unverified = outcome.refused.length;
@@ -4672,7 +4703,13 @@ document.getElementById("remove")?.addEventListener("click", () => {
       `An icon you added to your home screen stays there, and still opens the app — empty.`,
   );
   if (!sure) return;
-  void deleteApp(loaded.manifest.documentUuid).then(() => {
+  const removed = loaded.manifest.documentUuid;
+  void deleteApp(removed).then(() => {
+    // The recovered list keeps what was recovered on this page, never a row for a document no longer here.
+    for (const button of recoveredList?.querySelectorAll<HTMLButtonElement>("button[data-document]") ?? []) {
+      if (button.dataset.document === removed) button.closest("li")?.remove();
+    }
+    if (recoveredList) recoveredList.hidden = recoveredList.childElementCount === 0;
     say(`${name} was removed. What you had entered here is gone.`);
   });
 });
