@@ -338,67 +338,78 @@ async function restore(
   const refused: { documentUuid: string; why: string }[] = [];
   const passed: { documentUuid: string; title: string }[] = [];
   let unreached: string | undefined;
-  for (const documentUuid of library.documents) {
-    const kept = await keptInKeyStore<KeptRecord>(keptKey(documentUuid));
-    const title = kept?.owner === asked.owner ? await here.held(documentUuid) : null;
-    if (kept && title !== null) {
-      restored.push({ documentUuid, title, at: kept.at, alreadyHere: true });
-      continue;
-    }
-    /*
-     * Held here and kept nowhere, and changed here since it arrived:
-     * not replaced by the store's copy, which would throw their work away. It
-     * takes the path a context meeting an existing owner takes (R-Z, amended
-     * 31 October): adopted under the owner with the store's data key, and kept
-     * by the opener as a line of its own, the one the store takes last (D303,
-     * as ruled on the review of Build 2b-2dr). A document that arrived into this
-     * context, whatever carried it, and is unchanged here since is a snapshot,
-     * not the person's work: the store's head is restored over it, and no
-     * line is kept.
-     */
-    const heldHere = await here.held(documentUuid);
-    const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
-    // Held here under another owner: theirs, passed over, untouched, and said (D303, ruled on the review of Build 2b-2dr).
-    if (heldHere !== null && heldOwner !== undefined && heldOwner !== asked.owner) {
-      console.info(`dai: ${documentUuid} passed over: held here under another owner`);
-      passed.push({ documentUuid, title: heldHere });
-      continue;
-    }
-    // A snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
-    if (heldHere !== null && !(await here.snapshot(documentUuid))) {
-      const heads = await headsOf(base, author, asked.owner, documentUuid);
-      if (isUnavailable(heads)) {
-        unreached = heads.unavailable;
-        break;
-      }
-      if (isRefused(heads)) {
-        refused.push({ documentUuid, why: `heads: ${heads.refused}` });
+  /*
+   * What this recovery wrote is its own record, kept as it goes: a document
+   * that throws partway leaves the ones before it restored and named, as a
+   * store that stops answering does, never read back from the library
+   * (2b2dr5b-L2).
+   */
+  try {
+    for (const documentUuid of library.documents) {
+      const kept = await keptInKeyStore<KeptRecord>(keptKey(documentUuid));
+      const title = kept?.owner === asked.owner ? await here.held(documentUuid) : null;
+      if (kept && title !== null) {
+        restored.push({ documentUuid, title, at: kept.at, alreadyHere: true });
         continue;
       }
-      if (heads.key && heads.heads.length > 0) {
-        let key: CryptoKey;
-        try {
-          key = await crypto.subtle.unwrapKey("raw", fromB64u(heads.key), ownerKey, "AES-KW", { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
-        } catch {
-          refused.push({ documentUuid, why: "the data key does not open under the owner key" });
+      /*
+       * Held here and kept nowhere, and changed here since it arrived:
+       * not replaced by the store's copy, which would throw their work away. It
+       * takes the path a context meeting an existing owner takes (R-Z, amended
+       * 31 October): adopted under the owner with the store's data key, and kept
+       * by the opener as a line of its own, the one the store takes last (D303,
+       * as ruled on the review of Build 2b-2dr). A document that arrived into this
+       * context, whatever carried it, and is unchanged here since is a snapshot,
+       * not the person's work: the store's head is restored over it, and no
+       * line is kept.
+       */
+      const heldHere = await here.held(documentUuid);
+      const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
+      // Held here under another owner: theirs, passed over, untouched, and said (D303, ruled on the review of Build 2b-2dr).
+      if (heldHere !== null && heldOwner !== undefined && heldOwner !== asked.owner) {
+        console.info(`dai: ${documentUuid} passed over: held here under another owner`);
+        passed.push({ documentUuid, title: heldHere });
+        continue;
+      }
+      // A snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
+      if (heldHere !== null && !(await here.snapshot(documentUuid))) {
+        const heads = await headsOf(base, author, asked.owner, documentUuid);
+        if (isUnavailable(heads)) {
+          unreached = heads.unavailable;
+          break;
+        }
+        if (isRefused(heads)) {
+          refused.push({ documentUuid, why: `heads: ${heads.refused}` });
           continue;
         }
-        await beforeFirstWrite();
-        await adoptUnder(recordOf(true), [documentUuid], new Map([[documentUuid, { key, wrapped: fromB64u(heads.key) }]]));
-        const newest = [...heads.heads].sort((x, y) => Date.parse(y.at) - Date.parse(x.at))[0]!;
-        restored.push({ documentUuid, title: heldHere, at: newest.at, lines: heads.heads.length + 1, joined: true });
-        continue;
+        if (heads.key && heads.heads.length > 0) {
+          let key: CryptoKey;
+          try {
+            key = await crypto.subtle.unwrapKey("raw", fromB64u(heads.key), ownerKey, "AES-KW", { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+          } catch {
+            refused.push({ documentUuid, why: "the data key does not open under the owner key" });
+            continue;
+          }
+          await beforeFirstWrite();
+          await adoptUnder(recordOf(true), [documentUuid], new Map([[documentUuid, { key, wrapped: fromB64u(heads.key) }]]));
+          const newest = [...heads.heads].sort((x, y) => Date.parse(y.at) - Date.parse(x.at))[0]!;
+          restored.push({ documentUuid, title: heldHere, at: newest.at, lines: heads.heads.length + 1, joined: true });
+          continue;
+        }
       }
+      const outcome = await restoreOne(base, here.install, beforeFirstWrite, author, asked.owner, documentUuid, ownerKey, enrolled);
+      if ("unavailable" in outcome) {
+        unreached = outcome.unavailable;
+        break;
+      }
+      if ("why" in outcome) {
+        console.warn(`dai: ${documentUuid} not restored: ${outcome.why}`);
+        refused.push({ documentUuid, why: outcome.why });
+      } else if (outcome.restored) restored.push(heldHere !== null ? { ...outcome.restored, over: true } : outcome.restored);
     }
-    const outcome = await restoreOne(base, here.install, beforeFirstWrite, author, asked.owner, documentUuid, ownerKey, enrolled);
-    if ("unavailable" in outcome) {
-      unreached = outcome.unavailable;
-      break;
-    }
-    if ("why" in outcome) {
-      console.warn(`dai: ${documentUuid} not restored: ${outcome.why}`);
-      refused.push({ documentUuid, why: outcome.why });
-    } else if (outcome.restored) restored.push(heldHere !== null ? { ...outcome.restored, over: true } : outcome.restored);
+  } catch (error: unknown) {
+    unreached = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.warn(`dai: recovery broke off: ${unreached}`);
   }
   // Nothing written: nobody is signed in on nothing.
   if (unreached !== undefined && !writing) return { unavailable: unreached };

@@ -656,6 +656,57 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
     }
   });
 
+  /*
+   * The review of Build 2b-2dr5 item 2 (2b2dr5b-L2): a recovery that breaks
+   * off names what it wrote, from its own record of writes, never from a
+   * library read, which a stalled IndexedDB leaves empty. Every library
+   * `getAll` stalls (a request that never fires) while the chooser's recovery
+   * runs and breaks off at the second document.
+   */
+  test("a recovery that breaks off while the library read stalls still names exactly what it restored", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      await context.addInitScript(() => {
+        const real = IDBObjectStore.prototype.getAll;
+        IDBObjectStore.prototype.getAll = function (this: IDBObjectStore, ...args: Any[]) {
+          if ((window as Any).__stallLibraryRead === true && this.name === "cartridges") {
+            (window as Any).__stalledReads = ((window as Any).__stalledReads ?? 0) + 1;
+            return {} as IDBRequest;
+          }
+          return real.apply(this, args as Parameters<typeof real>);
+        };
+      });
+      const { page, provider } = await openerWithStore(context, store.base);
+      const { ids, first, second } = await twoKept(page);
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      // The second document's Heads answered with its key and no heads: the recovery breaks off there.
+      store.rewrite(async (path, answer) => {
+        if (!path.endsWith(`/${ids[second]}/heads`) || !answer.ok) return answer;
+        const { key } = (await answer.json()) as { key: string | null };
+        return new Response(JSON.stringify({ key }), { status: 200, headers: answer.headers });
+      });
+      await page.evaluate(() => {
+        (window as Any).__stallLibraryRead = true;
+      });
+      await page.locator("#recover").click();
+      await expect(page.locator("#report"), "the first named, from what the recovery wrote").toHaveText(
+        `Restored ${first}. The rest could not be reached: the store stopped answering. Recover again when you are online.`,
+        { timeout: 60_000 },
+      );
+      await page.evaluate(() => {
+        (window as Any).__stallLibraryRead = false;
+      });
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toBeVisible();
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
   test("a document kept many times is recovered from its head, the head's parent and its container's envelope, not every revision kept", async ({
     browser,
     browserName,

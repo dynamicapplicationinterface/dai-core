@@ -467,6 +467,62 @@ test.describe("Recover from the menu over a document (D303)", () => {
     expect(await storedHolds(page, uuid, "-y-unkept"), "Y's unkept change, still here").toBe(true);
     expect(await keyOwner(), "the key, still Y's").toBe(y);
   });
+
+  /*
+   * The review of Build 2b-2dr5 item 2 (2b2dr5b-L1): "Your library is
+   * complete." is said only when nothing was passed over. Owner X keeps two
+   * documents; here, owner Y keeps one of them and signs out; X recovers on
+   * the chooser twice with X's saved password. The second time everything of
+   * X's that can be here is here, and the other is held for Y: the pass-over
+   * sentence alone.
+   */
+  test("with a document passed over for another owner, the chooser does not say the library is complete", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const context = await browser.newContext({ viewport: PHONE });
+    await pointAtStore(context, store.base);
+    const handed = await watchKeychain(context);
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    const provider = await addPasskeyProvider(context, page);
+    const scratch = mkdtempSync(join(tmpdir(), "dai-passed-complete-"));
+    const mine = await buildNotes(scratch, "Mine");
+    const shared = await buildNotes(scratch, "Shared");
+    // One context: X keeps both.
+    let app = await openFile(page, mine);
+    const mineId = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+    await typeNote(app, "mine-kept");
+    const x = await enrollHere(page);
+    await waitSettledKept(page, mineId);
+    app = await openFile(page, shared);
+    const sharedId = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
+    await typeNote(app, "x-kept");
+    await waitSettledKept(page, sharedId);
+    const xPassword = handed.find((entry) => entry.owner === x)!;
+    // Here: Y keeps the shared one, then signs out, and it is put away.
+    await wipe(page, provider.cdp);
+    app = await openFile(page, shared);
+    await typeNote(app, "y-kept");
+    const y = await enrollHere(page);
+    expect(y).not.toBe(x);
+    await waitSettledKept(page, sharedId);
+    await page.evaluate(() => (window as Any).__runner.owner.leave());
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.owner.current())).toBeNull();
+    await page.evaluate(() => (window as Any).__runner.eject());
+    await expect(page.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
+    const recoverWithX = async (): Promise<void> => {
+      await page.locator("#recover-owner").fill(xPassword.account);
+      await page.locator("#recover-secret").fill(xPassword.secret);
+      await page.locator("#recover-with-password").click();
+    };
+    const passedOver = "Shared was left as it is: this browser holds it for another passkey.";
+    // X's first recovery: Mine comes back, Shared is passed over.
+    await recoverWithX();
+    await expect(page.locator("#report")).toHaveText(`Recovered Mine. ${passedOver}`, { timeout: 30_000 });
+    // Again, everything of X's that can be here is here: the pass-over sentence alone.
+    await recoverWithX();
+    await expect(page.locator("#report")).toHaveText(passedOver, { timeout: 30_000 });
+    await expect(page.locator("#report")).not.toContainText("complete");
+  });
 });
 
 /**

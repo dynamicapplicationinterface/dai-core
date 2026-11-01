@@ -4394,7 +4394,7 @@ function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): 
  * what this browser now holds under the owner signed in, each held here
  * already, and with nobody signed in nothing was restored.
  */
-function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOVERY_WORDS, before: Promise<ReadonlySet<string>>): Promise<Recovered> {
+function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOVERY_WORDS): Promise<Recovered> {
   return recovering.catch(async (error: unknown): Promise<Recovered> => {
     const why = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     console.warn(`dai: recovery (${path}) broke off: ${why}`);
@@ -4403,25 +4403,16 @@ function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOV
     const restored: Restored[] = [];
     for (const item of await listCartridgesFromLibrary().catch(() => [])) {
       const kept = await keptOf(item.documentUuid).catch(() => null);
-      // Here already when this recovery began: not this recovery's (2b2dr5-L1); the rest it restored before the throw.
-      if (kept?.owner === owner) restored.push({ documentUuid: item.documentUuid, title: item.appName, at: kept.at, ...((await before).has(item.documentUuid) ? { alreadyHere: true as const } : {}) });
+      // Not known to be this recovery's: `restore` names what it wrote itself, even when it breaks off (2b2dr5b-L2).
+      if (kept?.owner === owner) restored.push({ documentUuid: item.documentUuid, title: item.appName, at: kept.at, alreadyHere: true });
     }
     return { restored, refused: [], unreached: why };
   });
 }
-/** The documents held here with a kept record as a recovery begins: read beside the ceremony, never before it. */
-async function heldKeptHere(): Promise<ReadonlySet<string>> {
-  const held = new Set<string>();
-  for (const item of await listCartridgesFromLibrary().catch(() => [])) {
-    if (await keptOf(item.documentUuid).catch(() => null)) held.add(item.documentUuid);
-  }
-  return held;
-}
 /** Recover with the passkey, from the chooser or the recovery sheet: one recovery, whichever asked for it. */
 function recoverWithPasskey(from: AskedFrom): void {
-  // The ceremony first, inside the tap; what is here already is read beside it.
-  const asked = recover(storeBase(), recoveryHere);
-  const recovering = answeredAlways(asked, "passkey", heldKeptHere());
+  // The ceremony first, inside the tap.
+  const recovering = answeredAlways(recover(storeBase(), recoveryHere), "passkey");
   if (from === "menu") {
     // What the note row says stays until the answer replaces it: a ceremony not used changes nothing on screen.
     finishRunning(true);
@@ -4442,8 +4433,7 @@ finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
  * the tap.
  */
 function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
-  const before = heldKeptHere();
-  const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain", before);
+  const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain");
   if (from === "menu") {
     finishRunning(true);
     void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
@@ -4510,6 +4500,14 @@ function namesOf(titles: readonly string[]): string {
  */
 /** Said when everything kept beyond this browser is here already: the recovery sheet's words, the chooser's too. */
 const LIBRARY_COMPLETE = "Your library is complete.";
+/**
+ * "Your library is complete." when it is: never beside a document passed over
+ * for another owner, which is in this owner's library and not here for them
+ * (2b2dr5b-L1). Empty otherwise, for the chooser and the sheet alike.
+ */
+function libraryComplete(outcome: { passed?: readonly unknown[] }): string {
+  return (outcome.passed ?? []).length > 0 ? "" : LIBRARY_COMPLETE;
+}
 /**
  * What a recovery restored, by name, for the chooser and the recovery sheet
  * alike: a document here already, from an earlier recovery, is not this
@@ -4600,7 +4598,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
       const sentence =
         outcome.unreached !== undefined
           ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.${passed}`
-          : `${recovered}${unverified > 0 ? notVerified : LIBRARY_COMPLETE}${passed}`;
+          : `${recovered}${unverified > 0 ? notVerified : libraryComplete(outcome)}${passed}`;
       sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
     } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
@@ -4616,7 +4614,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
             : ""
           : unverified > 0
             ? "A kept copy could not be verified, so it was not restored."
-            : recoveredNamed(outcome.restored) || LIBRARY_COMPLETE;
+            : recoveredNamed(outcome.restored) || libraryComplete(outcome);
       sayWhereAsked(`${said}${passed}`.trim(), unverified > 0);
     }
     /*
