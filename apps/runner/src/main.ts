@@ -4394,7 +4394,7 @@ function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): 
  * what this browser now holds under the owner signed in, each held here
  * already, and with nobody signed in nothing was restored.
  */
-function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOVERY_WORDS): Promise<Recovered> {
+function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOVERY_WORDS, before: Promise<ReadonlySet<string>>): Promise<Recovered> {
   return recovering.catch(async (error: unknown): Promise<Recovered> => {
     const why = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     console.warn(`dai: recovery (${path}) broke off: ${why}`);
@@ -4403,15 +4403,25 @@ function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOV
     const restored: Restored[] = [];
     for (const item of await listCartridgesFromLibrary().catch(() => [])) {
       const kept = await keptOf(item.documentUuid).catch(() => null);
-      if (kept?.owner === owner) restored.push({ documentUuid: item.documentUuid, title: item.appName, at: kept.at, alreadyHere: true });
+      // Here already when this recovery began: not this recovery's (2b2dr5-L1); the rest it restored before the throw.
+      if (kept?.owner === owner) restored.push({ documentUuid: item.documentUuid, title: item.appName, at: kept.at, ...((await before).has(item.documentUuid) ? { alreadyHere: true as const } : {}) });
     }
     return { restored, refused: [], unreached: why };
   });
 }
+/** The documents held here with a kept record as a recovery begins: read beside the ceremony, never before it. */
+async function heldKeptHere(): Promise<ReadonlySet<string>> {
+  const held = new Set<string>();
+  for (const item of await listCartridgesFromLibrary().catch(() => [])) {
+    if (await keptOf(item.documentUuid).catch(() => null)) held.add(item.documentUuid);
+  }
+  return held;
+}
 /** Recover with the passkey, from the chooser or the recovery sheet: one recovery, whichever asked for it. */
 function recoverWithPasskey(from: AskedFrom): void {
-  // The ceremony first, inside the tap.
-  const recovering = answeredAlways(recover(storeBase(), recoveryHere), "passkey");
+  // The ceremony first, inside the tap; what is here already is read beside it.
+  const asked = recover(storeBase(), recoveryHere);
+  const recovering = answeredAlways(asked, "passkey", heldKeptHere());
   if (from === "menu") {
     // What the note row says stays until the answer replaces it: a ceremony not used changes nothing on screen.
     finishRunning(true);
@@ -4432,7 +4442,8 @@ finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
  * the tap.
  */
 function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
-  const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain");
+  const before = heldKeptHere();
+  const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain", before);
   if (from === "menu") {
     finishRunning(true);
     void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
@@ -4497,6 +4508,17 @@ function namesOf(titles: readonly string[]): string {
  * time); reconciling the lines is D301's (D303, ruled on the review of Build
  * 2b-2dr). Empty when every document has one.
  */
+/** Said when everything kept beyond this browser is here already: the recovery sheet's words, the chooser's too. */
+const LIBRARY_COMPLETE = "Your library is complete.";
+/**
+ * What a recovery restored, by name, for the chooser and the recovery sheet
+ * alike: a document here already, from an earlier recovery, is not this
+ * recovery's, and is not named (2b2dr5-L1). Empty when nothing was restored.
+ */
+function recoveredNamed(restored: readonly Restored[], verb = "Recovered"): string {
+  const now = restored.filter((one) => !one.alreadyHere);
+  return now.length > 0 ? `${verb} ${namesOf(now.map((one) => one.title))}.${moreThanOneLine(now)}` : "";
+}
 function moreThanOneLine(restored: readonly Restored[]): string {
   const counted = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
   return restored
@@ -4542,7 +4564,9 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     const joined = outcome.restored.filter((one) => one.joined).map((one) => one.documentUuid);
     if (joined.length > 0) void keepHeldRevisions(joined);
     for (const one of outcome.restored) {
-      // One held here since an earlier recovery may have changed since, or held here and kept as a line: no sentence about where it came from.
+      // Here already, from an earlier recovery: not this recovery's, neither listed nor named (2b2dr5-L1).
+      if (one.alreadyHere) continue;
+      // Held here and kept as a line: no sentence about where it came from.
       // Restored over a snapshot from the page's own address: a cleared browser, so the whole sentence (2b2dr4-L1).
       if (!one.alreadyHere && !one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true && !arrivedFromOwnAddress.has(one.documentUuid) });
       const row = document.createElement("li");
@@ -4559,7 +4583,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
       row.append(open);
       recoveredList?.append(row);
     }
-    if (recoveredList) recoveredList.hidden = outcome.restored.length === 0;
+    if (recoveredList) recoveredList.hidden = recoveredList.childElementCount === 0;
     const unverified = outcome.refused.length;
     // Held here under another owner: passed over and said (D303, ruled on the review of Build 2b-2dr).
     const passed = (outcome.passed ?? []).map((one) => ` ${one.title} was left as it is: this browser holds it for another passkey.`).join("");
@@ -4569,19 +4593,19 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
        * since an earlier run is not this run's. Cut short, the way back is the
        * row it was asked from, since Recover is under the document.
        */
-      const now = outcome.restored.filter((one) => !one.alreadyHere).map((one) => one.title);
-      const recovered = now.length > 0 ? `Recovered ${namesOf(now)}.${moreThanOneLine(outcome.restored)} ` : "";
+      const named = recoveredNamed(outcome.restored);
+      const recovered = named ? `${named} ` : "";
       const notVerified = "A kept copy could not be verified, so it was not restored.";
       if (outcome.unreached !== undefined) console.info(`dai: finish recovering cut short: ${outcome.unreached}`);
       const sentence =
         outcome.unreached !== undefined
           ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.${passed}`
-          : `${recovered}${unverified > 0 ? notVerified : "Your library is complete."}${passed}`;
+          : `${recovered}${unverified > 0 ? notVerified : LIBRARY_COMPLETE}${passed}`;
       sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
     } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
       sayWhereAsked(
-        `Restored ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)} ${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.${passed}`,
+        `${recoveredNamed(outcome.restored, "Restored")}${recoveredNamed(outcome.restored) ? " " : ""}${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.${passed}`,
         true,
       );
     } else {
@@ -4592,7 +4616,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
             : ""
           : unverified > 0
             ? "A kept copy could not be verified, so it was not restored."
-            : `Recovered ${namesOf(outcome.restored.map((one) => one.title))}.${moreThanOneLine(outcome.restored)}`;
+            : recoveredNamed(outcome.restored) || LIBRARY_COMPLETE;
       sayWhereAsked(`${said}${passed}`.trim(), unverified > 0);
     }
     /*

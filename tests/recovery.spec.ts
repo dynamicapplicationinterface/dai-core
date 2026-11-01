@@ -184,9 +184,10 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
 
       // Recover again, the store back: the rest comes back, and what is here stays.
       await page.locator("#recover").click();
-      await expect(page.locator("#recovered li")).toHaveCount(2, { timeout: 30_000 });
-      // Every outcome is said on the chooser (Build 2b-2d item 3), in the library's order.
-      await expect(page.locator("#report")).toHaveText(`Recovered ${first} and ${second}.`);
+      // What this recovery restored, by name, and only that, in the list too (2b2dr5-L1): the first was here already.
+      await expect(page.locator("#report")).toHaveText(`Recovered ${second}.`, { timeout: 30_000 });
+      await expect(page.locator("#recovered li")).toHaveCount(1);
+      await expect(page.locator(`#recovered button[data-document="${ids[second]}"]`)).toBeVisible();
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
       // Still offered with the owner signed in (D304, amended 1 November): a later Recover passes over what is here.
@@ -298,7 +299,8 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
         .toEqual([ids[first], ids[second]].sort());
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
-      await expect(page.locator("#recovered li")).toHaveCount(2);
+      // The list holds what this run brought back, only (2b2dr5-L1): the first was here already.
+      await expect(page.locator("#recovered li")).toHaveCount(1);
       // 2b2f-M2 (Build 2b-2fr item 3): one sentence over the document naming what this run restored (R-Z sentence 5).
       await expect(page.locator("#doc-note")).toHaveText(`Recovered ${second}. Your library is complete.`, { timeout: 10_000 });
       expect(await page.locator("#report").textContent(), "the chooser's line, unchanged").toBe(chooserLine);
@@ -855,6 +857,45 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await expect(page.locator("#recovered")).toBeHidden();
       expect(await page.evaluate(() => (window as Any).__runner.listLibrary()), "nothing restored").toEqual([]);
       expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner unchanged").toBe(y);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * The review of Build 2b-2dr5 (2b2dr5-L1): the chooser's sentence named
+   * documents that were here already, so an owner whose documents are all
+   * here read "Recovered …" when nothing was restored. The chooser says what
+   * the recovery sheet says, through one function the two share: what this
+   * recovery restored, by name, and, when everything kept is here already,
+   * the sheet's words for that, "Your library is complete."; the list holds
+   * only what came back.
+   */
+  test("an owner whose documents are all here taps Recover on the chooser: the sentence says the library is complete, and names nothing as recovered", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page } = await openerWithStore(context, store.base);
+      const file = await buildNotes(mkdtempSync(join(tmpdir(), "dai-recover-all-here-")), "Ydoc");
+      const app = await openFile(page, file);
+      const id = await uuidOf(page);
+      const owner = await enrollHere(page);
+      await typeNote(app, "y-text");
+      await waitSettledKept(page, id);
+      // The document put away: the chooser, with everything kept held here.
+      await page.evaluate(() => (window as Any).__runner.eject());
+      await expect(page.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
+      await expect(page.locator("#recover")).toBeVisible();
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText("Your library is complete.", { timeout: 30_000 });
+      await expect(page.locator("#report")).not.toContainText("Recovered");
+      await expect(page.locator("#recovered li")).toHaveCount(0);
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
     } finally {
       await context.close();
       await store.close();
