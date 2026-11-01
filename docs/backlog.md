@@ -11658,6 +11658,9 @@ loss is its navigation ending the shell, the worker and the opener
 together, which no device leave did.
 **Acceptance:** the device reading is recorded for each way of leaving, and
 any that loses a write has its own entry with the fix.
+**Seen again, 1 November:** the D195 re-key test (`owner-enrollment.spec.ts`)
+met the runner case: its `page.goto` came inside the autosave window, and the
+save carrying the row was asked and never written (Build 2b-2dr5 item 5; D306).
 
 #### D295 — WebKit: `launch-address` 123 failed both tries once on `main`
 
@@ -12174,35 +12177,44 @@ part, or a signal that the person touched the document before the save.
 
 #### D306 — `storedHolds` matches bytes, not rows
 
-*Status: open. Filed 1 November, from Build 2b-2dr5 item 5 (2b2dr5d-M1).
-Owed by the build that introduced `storedHolds`, 3232cb59 ("owner
-enrollment, chosen, local, with a non-extractable author key").*
+*Status: open. Filed 1 November, from Build 2b-2dr5 item 5 (2b2dr5d-M1),
+amended the same day from the review of item 5 (2b2dr5e-M1). Owed by the
+build that introduced `storedHolds`, 3232cb59 ("owner enrollment, chosen,
+local, with a non-extractable author key").*
 
 `storedHolds(page, uuid, text)` in tests/owner.ts answers true when the text
-is anywhere in the stored file: an old page, a freed page, or the change log
-counts. A wait on it can pass with the table the app reads empty. The D195
-re-key test did: its wait before the reload passed on text the stored
-`notes` table no longer held, and the reload mounted a table with no row.
-The helper is used across the specs (66 calls in 14 spec files on 1
-November). The replacement is `storedRow(page, uuid, table, where)`, from
-item 5, which reads the rows with SQLite in Node, as a reopen will. Migrating
-the callers is the item; item 5 changed only the wait that test's reload
-depends on.
+is anywhere in the stored file, and the stored file holds its schema. The
+schema's text holds "first", "one", "C", "kept" and "ab" from the first
+save, a notes document opened and not touched included: the `_dai_replicas`
+definition reads "When *this* copy first saw that replica". A wait on one of
+those needles is true at once, the table the app reads empty or not, and
+waits for nothing. The D195 re-key test's wait before its reload did that:
+it passed on the schema, and the reload mounted a table with no row.
 
-#### D307 — A save asked as the page is torn down is not written
+The eight committed waits on such a needle, on 1 November:
 
-*Status: open, a host decision of its own, not for this branch. Filed 1
-November, from Build 2b-2dr5 item 5 (2b2dr5d-M1).*
+- `kept.spec.ts:52` ("first"), `kept.spec.ts:155` ("ab"),
+  `no-ed25519.spec.ts:182` ("one"), `own-address.spec.ts:111` ("first"),
+  `own-address.spec.ts:359` and `:633` ("C"), `recovery.spec.ts:805`
+  ("kept"), `status-words.spec.ts:90` ("one").
+- Covered by the wait after them: `own-address.spec.ts:359` and `:633` (every
+  save written first) and `recovery.spec.ts:805` (`waitSettledKept`).
+- Changed in Build 2b-2dr5 item 6 to wait for the row with `storedRow`:
+  `own-address.spec.ts:111` (the `atOwnAddress` helper every own-address
+  test starts from, which reloads at once), `kept.spec.ts:155`,
+  `no-ed25519.spec.ts:182` and `status-words.spec.ts:90`. Left as it is:
+  `kept.spec.ts:52`, whose next step, `waitSettledKept`, flushes the
+  document and waits for every save written.
 
-The trace of the D195 re-key test's failures: the first page asked save 2
-(under the key it then had) and was reloaded before "save 2 written"; the
-reopen mounted a stored `notes` table with no row. The save was asked and
-never written, and nothing said so. A person who reloads or leaves inside
-the autosave window loses the last change the same way, with nothing said.
-Wanted: a write that survives the page going away, either a flush on
-`pagehide` or `visibilitychange`, or a write held by a worker that outlives
-the page. tests/README.md already says "a save *asked* is not a save
-*written*" for tests; this is the product half of that rule.
+The replacement is `storedRow(page, uuid, table, where)`, from item 5, which
+reads the rows with SQLite in Node, as a reopen will. **Still open:** the
+migration of the other 58 calls to `storedHolds`. The review of item 5 found
+their needles in no untouched notes file, but they match bytes, not rows, so
+a needle that later collides with the schema, or with an old page, waits for
+nothing.
+
+The save the D195 test's reload cut is D294's runner case (seen again,
+1 November), not a fault of the document.
 
 ### Branch review residue (filed 8 October)
 
