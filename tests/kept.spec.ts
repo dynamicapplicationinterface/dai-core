@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf } from "./owner.js";
+import { RUNNER_URL, buildNotes, openFile, pointAtStore, storedHolds, storedRow, typeNote, uuidOf } from "./owner.js";
 import { KEYS } from "../src/keys.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keepingLog, keptRecord, libraryRevision, openerWithStore, pillText, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
@@ -152,7 +152,8 @@ test.describe("Kept (R-Z sentences 2 and 4, Build 2b-2 item 3)", () => {
         await page.locator("#save-state").click();
         await page.locator("#keep-not-now").click();
         await typeNote(app, "b");
-        await expect.poll(() => storedHolds(page, uuid, "ab"), { timeout: 30_000 }).toBe(true);
+        // The row itself: "ab" is in the stored schema from the first save, so the text alone waits for nothing (D306).
+        await expect.poll(async () => (await storedRow(page, uuid, "notes", "body = ?", ["ab"])).length, { timeout: 30_000 }).toBe(1);
         await expect.poll(() => pillText(page)).toBe("Saved in this browser");
         await collect();
 

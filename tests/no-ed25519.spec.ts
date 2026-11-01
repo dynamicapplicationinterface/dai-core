@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { appIn, buildNotes, keepFromMenu, openFile, pointAtStore, storedHolds, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
+import { appIn, buildNotes, keepFromMenu, openFile, pointAtStore, storedHolds, storedRow, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
 import { watchKeychain, wipe } from "./keychain.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keptRecord, openerWithStore, savesSettled, waitSettledKept, watchDocumentTop } from "./keeping.js";
@@ -179,7 +179,8 @@ test.describe("an engine whose WebCrypto has no Ed25519 (D302, Build 2b-2fr item
       const uuid = await uuidOf(page);
       let app = appIn(page);
       await typeNote(app, "one");
-      await expect.poll(() => storedHolds(page, uuid, "one"), { timeout: 30_000 }).toBe(true);
+      // The row itself: "one" is in the stored schema from the first save, so the text alone waits for nothing (D306).
+      await expect.poll(async () => (await storedRow(page, uuid, "notes", "body = ?", ["one"])).length, { timeout: 30_000 }).toBe(1);
       // The store away while the owner is enrolled, so nothing registers; then the record as D302 left it: no verifier.
       store.setMode("unavailable");
       const owner = await enrollHere(page);

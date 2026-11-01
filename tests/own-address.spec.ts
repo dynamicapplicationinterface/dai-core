@@ -9,7 +9,7 @@ import { inlineLink } from "../src/link.js";
 import { publish } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, withKeyStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, storedRow, typeNote, withKeyStore } from "./owner.js";
 import { watchKeychain, wipe } from "./keychain.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 import { enrollHere, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
@@ -108,7 +108,8 @@ async function atOwnAddress(page: Page): Promise<{ address: string; uuid: string
   const app = await mounted(page, null);
   const uuid = await page.evaluate(() => (window as Any).__runner.loaded.manifest.documentUuid as string);
   await typeNote(app, "first");
-  await expect.poll(() => storedHolds(page, uuid, "first"), { timeout: 30_000 }).toBe(true);
+  // The reload mounts the stored table: wait for the row. "first" is in the stored schema from the first save, so the text alone waits for nothing (D306).
+  await expect.poll(async () => (await storedRow(page, uuid, "notes", "body = ?", ["first"])).length, { timeout: 30_000 }).toBe(1);
   await page.reload();
   await mounted(page, uuid);
   const address = page.url();

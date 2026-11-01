@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { cutTheNetwork } from "./offline.js";
-import { RUNNER_URL, buildNotes, openFile, savesWritten, storedHolds, typeNote, uuidOf, waitMounted } from "./owner.js";
+import { RUNNER_URL, buildNotes, openFile, savesWritten, storedHolds, storedRow, typeNote, uuidOf, waitMounted } from "./owner.js";
 import { storageSentence, storageWords } from "../apps/runner/src/status.js";
 
 /**
@@ -87,7 +87,8 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
     const app = await openFile(page, file);
     const uuid = await uuidOf(page);
     await firstChange(page, app, "one");
-    await expect.poll(() => storedHolds(page, uuid, "one"), { timeout: 30_000 }).toBe(true);
+    // The row itself: "one" is in the stored schema from the first save, so the text alone waits for nothing (D306).
+    await expect.poll(async () => (await storedRow(page, uuid, "notes", "body = ?", ["one"])).length, { timeout: 30_000 }).toBe(1);
 
     // The opener resumes the document on load; nothing is typed, and nothing need be saved.
     await page.reload();
