@@ -12224,7 +12224,9 @@ The save the D195 test's reload cut is D294's runner case (seen again,
 #### D308 — A library read that did not answer is taken for "nothing held"
 
 *Status: open. Filed 1 November, from the review of Build 2b-2dr6 item 1b
-(2b2dr6b-L1), whose tap is fixed in item 1c. 2b2dr3-H1's class.*
+(2b2dr6b-L1), whose tap is fixed in item 1c; widened from the review of item
+1c (2b2dr6c-L1). No code change for the paths below in Build 2b-2dr6.
+2b2dr3-H1's class. Scope: apps/runner/src/main.ts and apps/runner/src/owner.ts.*
 
 `listCartridgesFromLibrary()` in apps/runner/src/opfs.ts answers `[]` when
 its read times out (5 s) or fails, the same as a library that holds nothing.
@@ -12234,12 +12236,20 @@ document was gone that was still here; item 1c decides it on one record read
 (`libraryRecord`, bounded, rejecting when the read did not answer) and
 says "The library could not be read. Try again." instead.
 
-The other decision paths in apps/runner/src/main.ts that read the list so, on
-1 November (line numbers at the item 1c commit):
+**Lasting effects first.**
 
+- **`letGoOfOwner`** (`owner.ts:482`): it returns to this browser the data
+  key of each document the list names under the owner, then drops the owner
+  record. On an empty list the record goes and every document stays wrapped
+  under an owner no longer here, so each is refused as another owner's.
 - **The resume on load** (`main.ts:6834`): the document open last not found
-  in the list, the resume key is forgotten (`forgetOpen`), a lasting effect
-  of a read that did not answer.
+  in the list, the resume key is forgotten (`forgetOpen`). The next load
+  shows the chooser, which has no library list, so the document held here is
+  reached only by an icon or address, or a Recover that lists it as here.
+
+**The other list reads on decision paths in main.ts** (all ten list reads
+named; line numbers at the item 1c commit):
+
 - **An icon or reference address with nothing to read** (`main.ts:6675`,
   `hintOnly`): the document not found, the launch goes on as for a document
   not held here.
@@ -12253,18 +12263,36 @@ The other decision paths in apps/runner/src/main.ts that read the list so, on
 - **Keeping what was written here** (`main.ts:4102` `writtenHere`,
   `main.ts:4116` `keepHeldRevisions`): nothing is asked of the store; a later
   change asks again (benign).
-- Related, by the record read: recovery's `held` and `snapshot`
-  (`main.ts:4244`, `main.ts:4245`) read with `.catch(() => null)`, so a failed
-  read is taken for a document not held here, and `restore` would treat it as
+- Not decision paths: the diagnostics' "library holds it" line
+  (`main.ts:1063`, which says "error" on a throw) and the test hooks
+  (`main.ts:7209`, `main.ts:7280`).
+
+**The record reads, their own family.** 27 lines in main.ts read one record
+with `getCartridgeFromLibrary(…).catch(() => null)`, so a failed read is taken
+for no record. Several then write a record built from that null, losing
+fields rather than words:
+
+- **The restore's install** (`installRestored`, `main.ts:4225`): the record
+  saved from `held ?? {}`, so a failed read drops what the held record
+  carried (its keys, shares, link).
+- **The save path's revision read** (`learnRevision` `main.ts:760`,
+  `readStored` `main.ts:776`, the save's check `main.ts:3790`, the seal's
+  `main.ts:3706`): a failed read is revision 0, so a save can be refused as
+  saved elsewhere, or the floor taken from nothing.
+- **A game's key** (`ensureSessionKey`, `main.ts:6249`): a failed read finds
+  no key and mints one, where one may be held.
+- **`ingest`'s held record** (`main.ts:2174`): a document held here met as
+  not held.
+- **Recovery's `held` and `snapshot`** (`main.ts:4244`, `main.ts:4245`): a
+  failed read is a document not held here, and `restore` would treat it as
   one to restore.
+- The rest read for words or for a choice the next read makes again (the
+  link, shares, the version check, the diagnostics' key lines).
 
-Not decision paths: the diagnostics' "library holds it" line
-(`main.ts:1063`, which says "error" on a throw) and the test hooks
-(`main.ts:7209`, `main.ts:7280`).
-
-Wanted: each decision path told a read that did not answer from an empty
-library (a rejecting read, as `libraryRecord`), and a sentence, or nothing
-done, where it did not answer.
+Wanted: each decision path, and each write built from a read, told a read
+that did not answer from an empty library or an absent record (a rejecting
+read, as `libraryRecord`), and a sentence, or nothing done, where it did not
+answer.
 
 ### Branch review residue (filed 8 October)
 
