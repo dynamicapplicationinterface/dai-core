@@ -659,9 +659,11 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
   /*
    * The review of Build 2b-2dr5 item 2 (2b2dr5b-L2): a recovery that breaks
    * off names what it wrote, from its own record of writes, never from a
-   * library read, which a stalled IndexedDB leaves empty. Every library
-   * `getAll` stalls (a request that never fires) while the chooser's recovery
-   * runs and breaks off at the second document.
+   * library read, which a stalled IndexedDB leaves empty. While the chooser's
+   * recovery runs and breaks off at the second document, every library
+   * `getAll` stalls (a request that never fires) and every record read
+   * `restore` makes (`get`) answers late, so the stall is met (2b2dr5c-L2);
+   * the owner's record keeps its recovering mark after.
    */
   test("a recovery that breaks off while the library read stalls still names exactly what it restored", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
@@ -677,9 +679,23 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
           }
           return real.apply(this, args as Parameters<typeof real>);
         };
+        // The record reads `restore` makes: answered, but late, as a stalled IndexedDB answers when it comes back.
+        const realGet = IDBObjectStore.prototype.get;
+        IDBObjectStore.prototype.get = function (this: IDBObjectStore, ...args: Any[]) {
+          const request = realGet.apply(this, args as Parameters<typeof realGet>);
+          if ((window as Any).__stallLibraryRead === true && this.name === "cartridges") {
+            (window as Any).__stalledRecordReads = ((window as Any).__stalledRecordReads ?? 0) + 1;
+            let handler: ((this: IDBRequest, event: Event) => void) | null = null;
+            request.addEventListener("success", (event) => {
+              window.setTimeout(() => handler?.call(request, event), 1_500);
+            });
+            Object.defineProperty(request, "onsuccess", { configurable: true, get: () => handler, set: (fn) => (handler = fn) });
+          }
+          return request;
+        };
       });
       const { page, provider } = await openerWithStore(context, store.base);
-      const { ids, first, second } = await twoKept(page);
+      const { ids, owner, first, second } = await twoKept(page);
       await wipe(page, provider.cdp);
       await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
       // The second document's Heads answered with its key and no heads: the recovery breaks off there.
@@ -699,8 +715,13 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await page.evaluate(() => {
         (window as Any).__stallLibraryRead = false;
       });
+      expect(await page.evaluate(() => (window as Any).__stalledRecordReads ?? 0), "the stall was met by the reads restore makes").toBeGreaterThan(0);
       await expect(page.locator("#recovered li")).toHaveCount(1);
       await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toBeVisible();
+      expect(
+        await withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`),
+        "the owner's record marked recovering",
+      ).toBe(true);
     } finally {
       await context.close();
       await store.close();
