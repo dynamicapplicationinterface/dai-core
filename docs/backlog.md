@@ -12131,9 +12131,10 @@ when it was never saved into a container; no field is added to the address.
 *Status: open, part built in Build 2b-2dr5 (filed 31 October, amended 1
 November). Filed from the code review of Build 2b-2d (2b2d-M1).*
 
-The chooser's Recover is hidden once an owner is signed in, so a context
-that joined an owner cannot bring that owner's other documents here, and
-cannot bring the newest line of a document it holds. Wanted after 2b-3:
+The chooser's Recover was hidden once an owner was signed in, until 1
+November (the amendment below), so a context that joined an owner could not
+bring that owner's other documents here, and could not bring the newest line
+of a document it holds. Wanted after 2b-3:
 Recover in the ⋯ menu while signed in, for documents the store holds that
 this context does not, and for a document whose newest kept line is not the
 one shown here.
@@ -12208,10 +12209,12 @@ The eight committed waits on such a needle, on 1 November:
 
 The replacement is `storedRow(page, uuid, table, where)`, from item 5, which
 reads the rows with SQLite in Node, as a reopen will. **Still open:** the
-migration of the other 58 calls to `storedHolds`. The review of item 5 found
-their needles in no untouched notes file, but they match bytes, not rows, so
-a needle that later collides with the schema, or with an old page, waits for
-nothing.
+migration of the other 58 calls to `storedHolds`. Of the needles the review
+of item 5 tested (seventeen literals, in one untouched notes file), only the
+five above matched; needles held in variables, several other literals, and
+other apps (chess, the fixture app) were not tested. And every call matches
+bytes, not rows, so a needle that collides with a schema, or with an old
+page, waits for nothing.
 
 The save the D195 test's reload cut is D294's runner case (seen again,
 1 November), not a fault of the document.
