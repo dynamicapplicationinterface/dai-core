@@ -12170,6 +12170,40 @@ the line kept last. Nothing is lost and the lines are said, but the kept
 copy is not what is shown. Wanted with D301: a saved time in the sealed
 part, or a signal that the person touched the document before the save.
 
+### Build 2b-2dr5 (filed 1 November)
+
+#### D306 — `storedHolds` matches bytes, not rows
+
+*Status: open. Filed 1 November, from Build 2b-2dr5 item 5 (2b2dr5d-M1).
+Owed by the build that introduced `storedHolds`, 3232cb59 ("owner
+enrollment, chosen, local, with a non-extractable author key").*
+
+`storedHolds(page, uuid, text)` in tests/owner.ts answers true when the text
+is anywhere in the stored file: an old page, a freed page, or the change log
+counts. A wait on it can pass with the table the app reads empty. The D195
+re-key test did: its wait before the reload passed on text the stored
+`notes` table no longer held, and the reload mounted a table with no row.
+The helper is used across the specs (66 calls in 14 spec files on 1
+November). The replacement is `storedRow(page, uuid, table, where)`, from
+item 5, which reads the rows with SQLite in Node, as a reopen will. Migrating
+the callers is the item; item 5 changed only the wait that test's reload
+depends on.
+
+#### D307 — A save asked as the page is torn down is not written
+
+*Status: open, a host decision of its own, not for this branch. Filed 1
+November, from Build 2b-2dr5 item 5 (2b2dr5d-M1).*
+
+The trace of the D195 re-key test's failures: the first page asked save 2
+(under the key it then had) and was reloaded before "save 2 written"; the
+reopen mounted a stored `notes` table with no row. The save was asked and
+never written, and nothing said so. A person who reloads or leaves inside
+the autosave window loses the last change the same way, with nothing said.
+Wanted: a write that survives the page going away, either a flush on
+`pagehide` or `visibilitychange`, or a write held by a worker that outlives
+the page. tests/README.md already says "a save *asked* is not a save
+*written*" for tests; this is the product half of that rule.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)

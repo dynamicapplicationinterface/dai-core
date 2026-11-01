@@ -3784,6 +3784,8 @@ window.addEventListener("message", (event) => {
         // the mount gave, waited on here so no save goes through before it.
         const mount = asking.writes;
         const writes = mount ? await mount.decided : null;
+        // A diagnostic: which key this save writes under, so a trace can tell a lost save from one made under a key since replaced (2b2dr5d-M1).
+        console.info(`dai: save ${saveNumber} under ${writes && !("refused" in writes) ? writes.me.author : writes ? "a refused key" : "no key decided"}`);
         if (writes && "refused" in writes) throw new Error(writes.refused);
         const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
         const current = held?.revision ?? 0;

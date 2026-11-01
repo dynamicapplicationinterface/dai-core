@@ -15,6 +15,7 @@ import {
   savesWritten,
   storedDigest,
   storedHolds,
+  storedRow,
   typeNote,
   uuidOf,
   pointAtStore,
@@ -140,7 +141,8 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     let app = await openFile(page, file);
     const uuid = await uuidOf(page);
     await typeNote(app, "first");
-    await expect.poll(() => storedHolds(page, uuid, "first"), { timeout: 30_000 }).toBe(true);
+    // The reload below mounts the stored table: wait for the row in it, not for the text in the bytes (storedRow says why).
+    await expect.poll(async () => (await storedRow(page, uuid, "notes", "body = ?", ["first"])).length, { timeout: 30_000 }).toBe(1);
 
     const kept = await withKeyStore<{ extractable: boolean; exported: string }>(
       page,
@@ -172,11 +174,38 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
       return btoa(String.fromCharCode(...id)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     });
 
+    // A diagnostic, printed on failure only: the stored rows before the reload, then the opener's own lines (2b2dr5d-M1).
+    const said: string[] = [`stored rows before the reload: ${JSON.stringify(await storedRow(page, uuid, "notes", "1"))}`];
+    page.on("console", (message) => {
+      if (message.text().startsWith("dai:")) said.push(`${Date.now()} ${message.text().slice(0, 200)}`);
+    });
     // The opener resumes the document open last: that is this one, reopened.
     await page.goto(RUNNER_URL);
     app = await waitMounted(page, file);
+    said.push(
+      `${Date.now()} typing into ${JSON.stringify(await app.locator("#note").inputValue())}; the frame's rows ${await app
+        .locator("#note")
+        .evaluate(async () => JSON.stringify(await (window as Any).__db.query("SELECT id, body FROM notes")))
+        .catch((e: unknown) => String(e))}`,
+    );
     await typeNote(app, " second");
-    await expect.poll(() => storedHolds(page, uuid, "first second"), { timeout: 30_000 }).toBe(true);
+    said.push(`${Date.now()} typed`);
+    try {
+      await expect.poll(() => storedHolds(page, uuid, "first second"), { timeout: 30_000 }).toBe(true);
+    } catch (error) {
+      // On failure only: what the field shows and what was stored, beside the opener's own lines (2b2dr5d-M1).
+      const field = await app.locator("#note").inputValue({ timeout: 2_000 }).catch((e: unknown) => `(unread: ${String(e)})`);
+      const stored = await page
+        .evaluate(async (id) => {
+          const bytes: Uint8Array | null = await (window as Any).__runner.loadStored(id);
+          const text = bytes ? new TextDecoder("latin1").decode(bytes) : "";
+          return { first: text.includes("first"), second: text.includes("second"), firstSecond: text.includes("first second") };
+        }, uuid)
+        .catch((e: unknown) => String(e));
+      const rows = await storedRow(page, uuid, "notes", "1").catch((e: unknown) => String(e));
+      console.log(`D195 re-key failure: field ${JSON.stringify(field)}; stored ${JSON.stringify(stored)}; stored rows ${JSON.stringify(rows)}\n${said.join("\n")}`);
+      throw error;
+    }
     const author = await page.evaluate(() => (window as Any).__runner.authorId() as Promise<string>);
     expect(author).not.toBe(planted);
     const replaced = await withKeyStore<boolean>(page, 'return (await get("dai:person-key")).privateKey.extractable;');
