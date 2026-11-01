@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -135,22 +135,30 @@ export async function storedHolds(page: Page, uuid: string, text: string): Promi
  * with SQLite: what a reopen will mount.
  *
  * `storedHolds` is not enough for a wait a reload depends on. It answers true
- * for the text anywhere in the stored file, an old page or the change log
- * included, so it can pass with the table empty: the D195 re-key test did,
- * and its reload then mounted a table with no row (2b2dr5d-M1). This reads
- * the row itself.
+ * for the text anywhere in the stored file, the stored schema included, and
+ * the schema holds "first", "one", "C", "kept" and "ab" from the first save
+ * ("When *this* copy first saw that replica", in `_dai_replicas`), so a wait
+ * on one of them passes with the table empty. The D195 re-key test did, and its
+ * reload then mounted a table with no row (2b2dr5d-M1, 2b2dr5e-M1; D306).
+ * This reads the row itself.
  */
 export async function storedRow(page: Page, uuid: string, table: string, where: string, params: (string | number)[] = []): Promise<unknown[]> {
   const bytes = (await page.evaluate(async (id) => [...(((await (window as Any).__runner.loadStored(id)) as Uint8Array | null) ?? [])], uuid)) as number[];
   if (bytes.length === 0) return [];
   const { DatabaseSync } = await import("node:sqlite");
-  const path = join(mkdtempSync(join(tmpdir(), "dai-stored-row-")), "d.sqlite");
-  writeFileSync(path, Buffer.from(bytes));
-  const db = new DatabaseSync(path);
+  // A directory of its own for each read, removed after it: a poll reads dozens of times.
+  const directory = mkdtempSync(join(tmpdir(), "dai-stored-row-"));
   try {
-    return db.prepare(`SELECT * FROM "${table.replace(/"/g, '""')}" WHERE ${where}`).all(...params);
+    const path = join(directory, "d.sqlite");
+    writeFileSync(path, Buffer.from(bytes));
+    const db = new DatabaseSync(path);
+    try {
+      return db.prepare(`SELECT * FROM "${table.replace(/"/g, '""')}" WHERE ${where}`).all(...params);
+    } finally {
+      db.close();
+    }
   } finally {
-    db.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
