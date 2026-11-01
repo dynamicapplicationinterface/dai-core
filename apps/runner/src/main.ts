@@ -4329,22 +4329,24 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeFinishSheet();
 });
 async function showRecover(): Promise<void> {
-  // Offered with nobody signed in, and to an owner whose recovery the store cut short.
   const owner = await currentOwner().catch(() => null);
   const unfinished = owner !== null && (await ownerRecord(owner).catch(() => null))?.recovering === true;
-  const hidden = !storeBase() || (owner !== null && !unfinished);
-  if (recoverButton) recoverButton.hidden = hidden;
   /*
-   * The saved-password form, only where it can work (Build 2b-2d item 3): a
-   * store stamped, and nobody signed in here (or an owner whose recovery the
-   * store cut short, who finishes it here). Not WebAuthn: the saved password
-   * needs none, and an owner enrolled elsewhere may have it synced to this
-   * browser (2b2d-L3). Otherwise hidden, and why is said once in the console.
+   * The chooser's Recover and its saved-password form, wherever a store is
+   * stamped, an owner signed in here or not (D304, amended 1 November): the
+   * chooser is empty after "Remove from this device" with the owner still
+   * signed in, and the person who removed their last document is the one who
+   * wants Recover next. Under the owner signed in, a recovery brings what the
+   * store holds and this context does not, passing over what is here; a
+   * passkey or saved password naming another owner is refused and nothing
+   * changes (`restore`). Not WebAuthn: the saved password needs none
+   * (2b2d-L3). With no store, hidden, and why is said once in the console.
    */
-  const formHiddenFor = !storeBase() ? "no store is stamped" : owner !== null && !unfinished ? "an owner is signed in here" : null;
+  if (recoverButton) recoverButton.hidden = !storeBase();
+  const formHiddenFor = !storeBase() ? "no store is stamped" : null;
   if (formHiddenFor !== recoverFormHiddenFor) {
     recoverFormHiddenFor = formHiddenFor;
-    console.info(formHiddenFor === null ? "dai: recover form shown" : `dai: recover form hidden: ${formHiddenFor === "no store is stamped" ? "no store" : formHiddenFor}`);
+    console.info(formHiddenFor === null ? "dai: recover form shown" : "dai: recover form hidden: no store");
   }
   if (recoverKeychain) recoverKeychain.hidden = formHiddenFor !== null;
   const row = !!storeBase() && unfinished;

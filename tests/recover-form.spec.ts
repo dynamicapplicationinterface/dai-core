@@ -201,7 +201,7 @@ test.describe("the chooser's saved-password form on a phone (Build 2b-2d item 3)
     }
   });
 
-  test("the form is shown only where it can work: a store stamped, and no owner signed in here, after Remove from this device too", async ({ browser }) => {
+  test("the form is shown wherever a store is stamped, an owner signed in here or not: after Remove from this device, Recover and the form are on the chooser", async ({ browser }) => {
     // No store: no form, and the reason in the console.
     const bare = await browser.newContext({ viewport: PHONE });
     try {
@@ -216,7 +216,12 @@ test.describe("the chooser's saved-password form on a phone (Build 2b-2d item 3)
       await bare.close();
     }
 
-    // An owner signed in here, the document removed: the chooser comes back, and offers no recovery form.
+    /*
+     * An owner signed in here, the document removed: the chooser comes back,
+     * and offers Recover and the saved-password form, the owner unchanged
+     * (D304, amended 1 November: the person who removed their last document
+     * is the one who wants Recover next).
+     */
     const context = await browser.newContext({ viewport: PHONE });
     try {
       await pointAtStore(context, store.base);
@@ -233,8 +238,9 @@ test.describe("the chooser's saved-password form on a phone (Build 2b-2d item 3)
       await expect(page.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
       await expect(page.locator("#open")).toBeVisible();
       expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(owner);
-      await expect(page.locator("#recover-keychain")).toBeHidden();
-      await expect(page.locator("#recover")).toBeHidden();
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+      await expect(page.locator("#recover")).toBeVisible();
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner unchanged").toBe(owner);
     } finally {
       await context.close();
     }

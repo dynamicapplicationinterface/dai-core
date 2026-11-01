@@ -12125,8 +12125,8 @@ when it was never saved into a container; no field is added to the address.
 
 #### D304 — Recover while an owner is signed in
 
-*Status: open, after Build 2b-3. Filed 31 October, from the code review of
-Build 2b-2d (2b2d-M1).*
+*Status: open, part built in Build 2b-2dr5 (filed 31 October, amended 1
+November). Filed from the code review of Build 2b-2d (2b2d-M1).*
 
 The chooser's Recover is hidden once an owner is signed in, so a context
 that joined an owner cannot bring that owner's other documents here, and
@@ -12137,6 +12137,25 @@ one shown here.
 
 The half with nobody signed in is D303's ruling of 31 October: Recover in the
 ⋯ menu, a document held here unkept adopted and kept as a line.
+
+**Amended 1 November.** With a store stamped, the chooser's Recover button
+(#recover) and the saved-password form (#recover-keychain) are offered
+whether or not an owner is signed in here. Recovery under the owner signed
+in restores that owner's documents the store holds and this context does
+not, passing over what is here, as `restore` already does when
+`signedIn === asked.owner`. A passkey or saved password that names a
+different owner is refused and nothing changes: `restore` answers "another
+owner is signed in here" already, and the chooser says it in the words it
+uses for a refusal. The passkey is asked again for the signed-in owner.
+
+**Built in Build 2b-2dr5:** Recover and the saved-password form on the
+chooser while an owner is signed in, the passkey or saved password asked
+again, another owner's refused in the chooser's words for a refusal. Found
+from the screen: after "Remove from this device" with the owner still signed
+in, the chooser was empty and nothing on it offered recovery, and with no
+document there was no ⋯ menu either. **Still open:** recovery without a
+ceremony for the owner already signed in, and Recover in the ⋯ menu while
+signed in, after 2b-3.
 
 ### Build 2b-2dr3 (filed 31 October)
 

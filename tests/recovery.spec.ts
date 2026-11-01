@@ -189,7 +189,8 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       await expect(page.locator("#report")).toHaveText(`Recovered ${first} and ${second}.`);
       expect((await keptRecord(page, ids[second]!))?.owner).toBe(owner);
       expect(await storedHolds(page, ids[second]!, `${second}-text`)).toBe(true);
-      await expect(page.locator("#recover")).toBeHidden();
+      // Still offered with the owner signed in (D304, amended 1 November): a later Recover passes over what is here.
+      await expect(page.locator("#recover")).toBeVisible();
     } finally {
       await context.close();
       await store.close();
@@ -742,6 +743,118 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
       expect(await page.evaluate(() => (window as Any).__runner.listLibrary()), "nothing presented as recovered").toEqual([]);
       expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "and nobody signed in on nothing").toBeNull();
       expect(await page.evaluate(() => (window as Any).__runner.loaded ?? null)).toBeNull();
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * D304, amended 1 November. The chooser empty after "Remove from this
+   * device", with the owner still signed in: Recover and the saved-password
+   * form are offered whether or not an owner is signed in here. The owner's
+   * own passkey, asked again, brings back what the store holds and this
+   * context does not; a passkey naming another owner is refused, and nothing
+   * changes.
+   */
+  /** Opens the document from its file again and removes it from this device, answering the question. */
+  async function removeHere(page: Page, file: string, uuid: string): Promise<void> {
+    await openFile(page, file);
+    await expect.poll(() => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null), { timeout: 30_000 }).toBe(uuid);
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page.locator("#more").click();
+    await page.locator("#remove").click();
+    await expect(page.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect.poll(async () => ((await page.evaluate(() => (window as Any).__runner.listLibrary())) as Any[]).some((item) => item.documentUuid === uuid)).toBe(false);
+  }
+
+  test("every document removed with the owner still signed in: the chooser offers Recover, and the owner's passkey brings both back under that owner", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page } = await openerWithStore(context, store.base);
+      const scratch = mkdtempSync(join(tmpdir(), "dai-recover-signed-in-"));
+      const files = { First: await buildNotes(scratch, "First"), Second: await buildNotes(scratch, "Second") };
+      const ids: Record<string, string> = {};
+      let owner = "";
+      for (const [title, file] of Object.entries(files)) {
+        const app = await openFile(page, file);
+        ids[title] = await uuidOf(page);
+        if (!owner) owner = await enrollHere(page);
+        await typeNote(app, `${title}-text`);
+        await expect.poll(() => storedHolds(page, ids[title]!, `${title}-text`), { timeout: 30_000 }).toBe(true);
+        await waitSettledKept(page, ids[title]!);
+      }
+      // The one on screen first, then the other from the chooser.
+      for (const [title, file] of Object.entries(files).reverse()) await removeHere(page, file, ids[title]!);
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner still signed in").toBe(owner);
+
+      await expect(page.locator("#recover")).toBeVisible();
+      await expect(page.locator("#recover-keychain")).toBeVisible();
+      await page.locator("#recover").click();
+      await expect(page.locator("#recovered li")).toHaveCount(2, { timeout: 30_000 });
+      for (const title of Object.keys(files)) {
+        await expect(page.locator(`#recovered button[data-document="${ids[title]}"]`)).toBeVisible();
+        expect((await keptRecord(page, ids[title]!))?.owner, `${title} under the owner`).toBe(owner);
+        expect(await storedHolds(page, ids[title]!, `${title}-text`)).toBe(true);
+      }
+      await expect(page.locator("#report")).not.toHaveClass(/error/);
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner unchanged").toBe(owner);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  test("with an owner signed in, a passkey naming another owner is refused on the chooser, and nothing changes", async ({ browser, browserName }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      const { page, provider } = await openerWithStore(context, store.base);
+      const scratch = mkdtempSync(join(tmpdir(), "dai-recover-other-owner-"));
+      const credentials = async (): Promise<string[]> =>
+        ((await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id })) as { credentials: { credentialId: string }[] }).credentials.map((c) => c.credentialId);
+
+      // One context: owner X keeps a document.
+      const xFile = await buildNotes(scratch, "Xdoc");
+      let app = await openFile(page, xFile);
+      const xId = await uuidOf(page);
+      const x = await enrollHere(page);
+      await typeNote(app, "x-text");
+      await waitSettledKept(page, xId);
+      const xCredentials = await credentials();
+
+      // Here: owner Y keeps a document, then removes it, and stays signed in.
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+      const yFile = await buildNotes(scratch, "Ydoc");
+      app = await openFile(page, yFile);
+      const yId = await uuidOf(page);
+      const y = await enrollHere(page);
+      expect(y).not.toBe(x);
+      await typeNote(app, "y-text");
+      await waitSettledKept(page, yId);
+      await removeHere(page, yFile, yId);
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current())).toBe(y);
+
+      // The passkey that answers is X's: Y's own is taken out of the authenticator.
+      for (const id of await credentials()) {
+        if (!xCredentials.includes(id)) await provider.cdp.send("WebAuthn.removeCredential", { authenticatorId: provider.id, credentialId: id });
+      }
+      expect(await credentials()).toEqual(xCredentials);
+
+      await expect(page.locator("#recover")).toBeVisible();
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText("This passkey did not recover any documents. Nothing was restored.", { timeout: 30_000 });
+      await expect(page.locator("#report")).toHaveClass(/error/);
+      await expect(page.locator("#recovered")).toBeHidden();
+      expect(await page.evaluate(() => (window as Any).__runner.listLibrary()), "nothing restored").toEqual([]);
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner unchanged").toBe(y);
     } finally {
       await context.close();
       await store.close();
