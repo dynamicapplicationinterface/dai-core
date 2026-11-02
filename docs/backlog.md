@@ -12244,11 +12244,12 @@ says "The library could not be read. Try again." instead.
   under an owner no longer here, so each is refused as another owner's.
   It also signs the owner out (`KEYS.OWNER`); its one caller
   (`letGoIfUnregistrable`) passes the owner signed in. What is said: the
-  mount still says `OWNER_LET_GO_SAID` (`main.ts:675`), and here each part
-  of it is wrong: on the next load the documents are refused as another
-  owner's; "Keep beyond this browser" adopts only documents no owner
-  holds; the owner was never at the store, so no Recover brings it back;
-  and the sentence says the passkey and saved password can be deleted.
+  mount still says `OWNER_LET_GO_SAID` (`main.ts:675`), and two parts of it
+  mislead here: "choose "Keep beyond this browser" in the menu to set it
+  up again" (Keep passes over every document whose key names an owner, so
+  it adopts none of them again), and "Your work is still saved in this
+  browser" read as reachable (each document is refused from the next
+  load).
   The data keys stay in the key store, so nothing is gone from the device,
   but nothing in the opener reaches them. Its reach: only an owner record
   kept before D302's ruling on an engine with no Ed25519, so few or none
@@ -12304,6 +12305,21 @@ Wanted: each decision path, and each write built from a read, told a read
 that did not answer from an empty library or an absent record (a rejecting
 read, as `libraryRecord`), and a sentence, or nothing done, where it did not
 answer.
+
+#### D309 — Seven own-address tests each launch and close a whole Chromium
+
+*Status: open. Filed 1 November, from the review of Build 2b-2dr6 item 1e
+(2b2dr6e-L1). Test-only.*
+
+`keptElsewhere` in tests/own-address.spec.ts launches a second Chromium for
+each of the seven tests that use it (the owner and the kept copy are made
+there, the passkey with PRF being Chromium's virtual authenticator), and
+closes it at the end of the helper. Under load the close alone used up a
+test's 90 s budget: a run hung 71 s in `elsewhere.close()`, and under eight
+workers every run of the test took 60 to 78 s of its 90. Wanted: one browser
+for the file, launched in `beforeAll` and closed in `afterAll`, with a new
+context per test; never a raised `test.setTimeout` in its place. The first
+suspect if own-address times out in CI.
 
 ### Branch review residue (filed 8 October)
 

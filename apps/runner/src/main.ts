@@ -94,7 +94,7 @@ import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, dataKeyOf, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
 import { joinOwner, recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored } from "./recover.js";
-import { keepAgain, keepingLog, keepRevision, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
+import { keepAgain, keepingLog, keepRevision, keepRunning, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
@@ -934,6 +934,8 @@ function forgetOpen(): void {
 let keptOnDevice: boolean | null = null;
 /** Saves this host has written, as opposed to asked (`hostSaves`). Read by tests. */
 let hostSavesWritten = 0;
+/** The work behind written saves still running (the data key, its wrap, and the ask to keep): what a test waits for before it clears storage. */
+let afterSavesRunning = 0;
 
 /** How many saves the running document has asked this host for. Read by tests. */
 let hostSaves = 0;
@@ -3892,10 +3894,14 @@ window.addEventListener("message", (event) => {
           // save's path: the save is answered whatever this does.
           // Then, for a document under the owner signed in, the revision is
           // appended to the owner's store (R-C, R-Z sentence 2); behind the save.
+          afterSavesRunning += 1;
           void afterSaveWritten(documentUuid, data.payload?.authored === true)
             .then(() => keepRevision(landed))
             .catch((error: unknown) => {
               console.warn(`dai: data key for ${documentUuid} not kept: ${String(error)}`);
+            })
+            .finally(() => {
+              afterSavesRunning -= 1;
             });
           /*
            * A change of the person's has landed here: the moment to offer to keep
@@ -7179,6 +7185,10 @@ Object.defineProperty(window, "__runner", {
     get savesWritten() {
       return hostSavesWritten;
     },
+    /** The work behind written saves still running: the data key, its wrap, and the ask to keep. */
+    get afterSavesRunning() {
+      return afterSavesRunning;
+    },
     /** Sign requests finished with, answered or dropped. */
     get signsSettled() {
       return hostSignsSettled;
@@ -7296,6 +7306,7 @@ Object.defineProperty(window, "__runner", {
       kept: keptOf,
       base: storeBase,
       waiting: waitingDocuments,
+      running: keepRunning,
     },
     /** Decisions made about the offer to keep beyond this browser, one per written save. */
     get keepOfferDecided() {

@@ -167,6 +167,9 @@ export function keepAgain(documentUuid: string): void {
 /** Every document with a revision still waiting for the store. */
 export const waitingDocuments = (): string[] => [...waiting.keys()];
 
+/** Whether an append for a document is running now: its writes (the kept record, the owner and key marked at the store) still to come. */
+export const keepRunning = (documentUuid: string): boolean => running.has(documentUuid);
+
 async function pump(documentUuid: string): Promise<void> {
   running.add(documentUuid);
   try {

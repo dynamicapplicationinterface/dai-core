@@ -1,6 +1,5 @@
 import { expect, type BrowserContext, type Page } from "@playwright/test";
-import { RUNNER_URL, addPasskeyProvider, keepFromMenu, waitMounted, withKeyStore } from "./owner.js";
-import { dataKeyKey } from "../src/keys.js";
+import { RUNNER_URL, addPasskeyProvider, keepFromMenu, waitMounted } from "./owner.js";
 
 /**
  * What the keeping specs share (Build 2b-2): the opener pointed at a local
@@ -71,42 +70,59 @@ export async function watchDocumentTop(page: Page): Promise<() => Promise<{ from
  * What this page has written has landed, by state, not by a window
  * (tests/README.md, waiting for the needed state): what a test waits on before
  * it clears the origin under the live page, so no write of the page lands
- * after the clear and brings a record back (2b2dr6c-M1, 2b2dr6d-L1).
+ * after the clear and brings a record back (2b2dr6c-M1, 2b2dr6d-L1, 2b2dr6e-L2,
+ * L3). In one read of the page, each time it is asked:
  *
- * - The frame's pending writes flushed (`__runner.flush()`: the frame saves
- *   what it holds unsaved, the mount's replica settling included, and answers
- *   once that save is stored), then every save asked is written. A written save
- *   includes its library record: `savesWritten` counts after that write.
- * - Once a save was written on this page, the open document's data key is in
- *   the key store: the write `afterSaveWritten` makes behind a save, which
- *   nothing counts. A key store read that does not answer fails the wait.
- * - Checked, not assumed: no save was asked while these were waited for.
+ * - every save asked is written, after the frame's pending writes are flushed
+ *   (`__runner.flush()`: the frame saves what it holds unsaved, the mount's
+ *   replica settling included). A written save includes its library record:
+ *   `savesWritten` counts after that write;
+ * - the work behind every written save is done (`afterSavesRunning` 0): the
+ *   data key made or wrapped under the owner, and the revision handed to the
+ *   keeper;
+ * - no append is running for the open document (`keeping.running`): the kept
+ *   record, and the owner and key marked at the store, are written when an
+ *   append ends, kept, refused or unavailable alike.
  *
- * The open document only: a document written on this page and then put away
- * is not looked for.
+ * The counts are read in that same read, so a save asked while the wait ran
+ * is waited for too; it ends with the saves asked equal to those written and
+ * to the count it settled on.
  */
 export async function pageWritesLanded(page: Page): Promise<void> {
   await page.evaluate(() => (window as Any).__runner.loaded && (window as Any).__runner.flush());
+  let asked = -1;
   await expect
-    .poll(() => page.evaluate(() => (window as Any).__runner.saves === (window as Any).__runner.savesWritten), { timeout: 30_000 })
+    .poll(
+      async () => {
+        const now = (await page.evaluate(() => {
+          const runner = (window as Any).__runner;
+          const uuid: string | null = runner.loaded?.manifest?.documentUuid ?? null;
+          return {
+            asked: runner.saves as number,
+            written: runner.savesWritten as number,
+            behind: runner.afterSavesRunning as number,
+            appending: uuid !== null && (runner.keeping.running(uuid) as boolean),
+          };
+        })) as { asked: number; written: number; behind: number; appending: boolean };
+        asked = now.asked;
+        return now.asked === now.written && now.behind === 0 && !now.appending;
+      },
+      { timeout: 30_000 },
+    )
     .toBe(true);
-  const { asked, written, uuid } = (await page.evaluate(() => ({
-    asked: (window as Any).__runner.saves as number,
-    written: (window as Any).__runner.savesWritten as number,
-    uuid: ((window as Any).__runner.loaded?.manifest?.documentUuid ?? null) as string | null,
-  }))) as { asked: number; written: number; uuid: string | null };
-  if (written > 0 && uuid !== null) {
-    await expect
-      .poll(() => withKeyStore<boolean>(page, "return (await get(arg)) !== undefined", dataKeyKey(uuid)), { timeout: 30_000 })
-      .toBe(true);
-  }
-  expect(await page.evaluate(() => (window as Any).__runner.saves), "no save asked while the page's writes landed").toBe(asked);
+  const end = (await page.evaluate(() => ({ asked: (window as Any).__runner.saves as number, written: (window as Any).__runner.savesWritten as number }))) as {
+    asked: number;
+    written: number;
+  };
+  expect(end, "no save asked after the page's writes landed").toEqual({ asked, written: asked });
 }
 
 /**
- * Every save asked is written, and then a window of `ms` with nothing more
- * asked: long enough for whatever the host does after a save (its state
- * message, a keep, a sentence it would add or take away) to have happened.
+ * Every save asked is written, and then a window of `ms`: for an absence only
+ * a window can show, nothing more said or kept after a save (its state
+ * message, a keep, a sentence it would add or take away). The window is not
+ * checked: a save asked in it is not caught here. Not a wait for a write to
+ * land: that is `pageWritesLanded`.
  */
 export async function savesSettled(page: Page, ms = 2_500): Promise<void> {
   await page.evaluate(() => (window as Any).__runner.flush());
