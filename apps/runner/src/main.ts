@@ -635,6 +635,13 @@ let keepOffering = false;
 let heldAtOpen: string | undefined;
 let heldShown = false;
 /**
+ * The person asked to keep the open document beyond this browser and the
+ * ceremony answered: the status is the answer, so it is up from then, without
+ * waiting for a change (D312, ruled 1 November). The document it was asked
+ * over, so another one opened after it waits for its own change as before.
+ */
+let keepAnsweredFor: string | undefined;
+/**
  * What the owner's store last acknowledged for the document on screen, under
  * the owner signed in: the one source of "Kept" (R-Z sentence 2). "Kept" when
  * it is the revision on screen; otherwise the time of the last one.
@@ -685,7 +692,7 @@ const LIBRARY_UNREAD_NOTHING_CHANGED = "The library could not be read, so nothin
 let refusalSaid: string | null = null;
 onKept((documentUuid) => {
   if (documentUuid !== loaded?.manifest.documentUuid) return;
-  void refreshKept();
+  void refreshKept().then(sayJoinedIfKept);
   const refused = storeRefused(documentUuid);
   if (refused !== undefined && refusalSaid !== documentUuid) {
     refusalSaid = documentUuid;
@@ -723,7 +730,8 @@ function showStorage(): void {
   }
   if (offering) el.dataset.offer = "";
   else delete el.dataset.offer;
-  if (state === "failed" || ((personsChangeLanded || heldShown) && words !== "")) el.dataset.shown = "";
+  const keepAnswered = keepAnsweredFor !== undefined && keepAnsweredFor === loaded?.manifest.documentUuid;
+  if (state === "failed" || ((personsChangeLanded || heldShown || keepAnswered) && words !== "")) el.dataset.shown = "";
   else delete el.dataset.shown;
 }
 
@@ -1331,6 +1339,8 @@ function eject(): void {
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
   heldShown = false;
+  keepAnsweredFor = undefined;
+  joinedSayFor = undefined;
   const docNote = document.getElementById("doc-note");
   if (docNote) docNote.hidden = true;
   // What the arrival line and the loop guard say about the document that was
@@ -4091,13 +4101,52 @@ const NOT_JOINED = {
   refused: "This passkey did not open documents kept beyond this browser. Your work is still saved in this browser.",
   unavailable: "The store did not answer, so nothing was kept beyond this browser yet. Your work is still saved in this browser; try again when you are online.",
 } as const;
+/*
+ * The passkey the person already had signed them in here and what was saved
+ * here was adopted (D312, ruled 1 November): a ceremony they asked for answers
+ * at once, on screen. The pill is up as the join is done: the status a save
+ * shows while its keep is in flight, then "Kept" when the store acknowledges
+ * it. The one note row says this sentence with that acknowledgment, the held
+ * receipt for the open document under the owner signed in, and not before:
+ * "Kept" is said from a receipt and nothing else (R-Z sentence 2). The row goes
+ * when dismissed or at the next mount, never at a save, so nothing after it
+ * moves the document.
+ */
+const JOINED_SAID = "Kept beyond this browser with the passkey you already had.";
+/** The document a join was answered over, whose sentence waits for the store's receipt. */
+let joinedSayFor: string | undefined;
+/** Says JOINED_SAID once the open document's receipt under the owner signed in is held (`keptShown`). */
+function sayJoinedIfKept(): void {
+  const open = loaded?.manifest.documentUuid;
+  if (joinedSayFor === undefined || joinedSayFor !== open || keptShown === null) return;
+  joinedSayFor = undefined;
+  tellOverDocument(JOINED_SAID);
+}
 document.getElementById("keep-existing")?.addEventListener("click", () => {
   closeKeepWays("keep");
   // The ceremony first, inside the tap: recovery's, for the owner the passkey names.
   const joining = joinOwner(storeBase(), writtenHere);
   void joining.then((result) => {
-    if ("joined" in result) void keepHeldRevisions(result.adopted);
-    else {
+    if ("joined" in result) {
+      const open = loaded?.manifest.documentUuid;
+      if (open !== undefined) {
+        keepAnsweredFor = open;
+        /*
+         * Adopted, the open document is saved in this browser (only what was
+         * written here is adopted), so where no save has spoken on this page the
+         * status says so until the store's acknowledgment makes it "Kept".
+         */
+        const saveState = document.getElementById("save-state");
+        const state = saveState?.dataset.state;
+        if (saveState && result.adopted.includes(open) && state !== "saving" && state !== "saved" && state !== "failed") {
+          saveState.dataset.state = "saved";
+          saveState.hidden = false;
+        }
+      }
+      joinedSayFor = open;
+      void refreshKept().then(sayJoinedIfKept);
+      void keepHeldRevisions(result.adopted);
+    } else {
       const [kind, why] = "cancelled" in result ? (["cancelled", result.cancelled] as const) : "unavailable" in result ? (["unavailable", result.unavailable] as const) : (["refused", result.refused] as const);
       console.info(`dai: not joined (${kind}): ${why}`);
       tellOverDocument(NOT_JOINED[kind], kind !== "cancelled");

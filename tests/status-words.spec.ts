@@ -110,6 +110,13 @@ test.describe("the status words (R-Z sentences 2 and 4)", () => {
         const at = found.index;
         // The status's word for a store's acknowledgment (storageWords), whole and alone in its string.
         if (/^["'`]Kept["'`]$/.test(text.slice(at - 1, at + 5))) continue;
+        /*
+         * Named: the sentence that answers "Use the passkey I already have"
+         * (D312, ruled 1 November), said only once the open document's receipt
+         * under the owner signed in is held (`sayJoinedIfKept`), so a held
+         * receipt feeds it too (existing-owner.spec.ts pins when it is said).
+         */
+        if (text.slice(at - 1, at + 59) === '"Kept beyond this browser with the passkey you already had."') continue;
         said.push(`${name}: ${text.slice(Math.max(0, at - 40), at + 40)}`);
       }
     }
