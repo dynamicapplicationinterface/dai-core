@@ -2722,8 +2722,8 @@
       "tsup.config.ts"
     ],
     "tests/library-reads.spec.ts": [
-      "apps/owner-store/src/client.ts",
-      "apps/owner-store/src/envelope.ts",
+      "apps/owner-store/src/",
+      "apps/relay/src/",
       "apps/runner/",
       "src/bridge.ts",
       "src/bundle.ts",
@@ -2780,7 +2780,9 @@
       "tests/fixtures.ts",
       "tests/keeping.ts",
       "tests/library-reads.spec.ts",
-      "tests/owner.ts"
+      "tests/owner-store-memory.ts",
+      "tests/owner.ts",
+      "tests/relay-memory.ts"
     ],
     "tests/library-record.spec.ts": [
       "apps/runner/src/",

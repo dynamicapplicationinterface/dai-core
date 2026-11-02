@@ -674,6 +674,14 @@ const STORE_KEEPS_AGAIN = "The store keeps this document beyond this browser aga
  */
 const OWNER_LET_GO_SAID =
   'Keeping beyond this browser did not finish setting up here. Your work is still saved in this browser; choose "Keep beyond this browser" in the menu to set it up again. The passkey and saved password made the first time open nothing, and you can delete them.';
+/*
+ * The same owner due to be let go as the document mounts, and the library read
+ * that names its documents did not answer: nothing was changed, the owner and
+ * its sign-in as they were (D308, ruled 1 November). Not LIBRARY_UNREAD, which
+ * answers a tap: here the person asked nothing, so the sentence says that
+ * nothing changed. Said in the same row at the same moment as OWNER_LET_GO_SAID.
+ */
+const LIBRARY_UNREAD_NOTHING_CHANGED = "The library could not be read, so nothing was changed. Try again.";
 let refusalSaid: string | null = null;
 onKept((documentUuid) => {
   if (documentUuid !== loaded?.manifest.documentUuid) return;
@@ -1676,7 +1684,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
     hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME }),
     letGoIfUnregistrable().catch((error: unknown) => {
       console.warn(`dai: the owner was not checked at mount: ${String(error)}`);
-      return false;
+      return null;
     }),
   ]);
   const blob = new Blob([shell], { type: "text/html" });
@@ -1692,7 +1700,10 @@ async function mount(cartridge: Cartridge): Promise<void> {
   markOwnAddress(cartridge.manifest.documentUuid);
   const fromAddress = ownAddressArrival?.documentUuid === cartridge.manifest.documentUuid ? ownAddressArrival : undefined;
   ownAddressArrival = undefined;
-  tellOverDocument(letGo ? OWNER_LET_GO_SAID : fromAddress ? ownAddressSentence(fromAddress.at) : "", letGo);
+  tellOverDocument(
+    letGo === "let go" ? OWNER_LET_GO_SAID : letGo === "library unread" ? LIBRARY_UNREAD_NOTHING_CHANGED : fromAddress ? ownAddressSentence(fromAddress.at) : "",
+    letGo !== null,
+  );
   cartridgeFrame.src = mountedUrl;
 
   // The launch screen holds — the document's icon and name on a still

@@ -107,14 +107,15 @@ export const storeRefused = (documentUuid: string): string | undefined => refusa
  * key, as an opener before D302's ruling kept one on an engine with no
  * Ed25519. Asked as a document mounts, before the person can type, so what is
  * said about it is on screen when the document appears (R-Z, the host's fixed
- * presence). True when it let one go.
+ * presence). "let go" when it let one go; "library unread" when one was due to
+ * go and the library read did not answer, so nothing changed (D308); null when
+ * none was due.
  */
-export async function letGoIfUnregistrable(): Promise<boolean> {
+export async function letGoIfUnregistrable(): Promise<"let go" | "library unread" | null> {
   const signedIn = await keptInKeyStore<string>(KEYS.OWNER);
   const owner = signedIn ? await keptInKeyStore<OwnerRecord>(ownerRecordKey(signedIn)) : undefined;
-  if (!owner || owner.atStore || (owner.registration && owner.verifier)) return false;
-  await letGoOfOwner(owner.owner);
-  return true;
+  if (!owner || owner.atStore || (owner.registration && owner.verifier)) return null;
+  return (await letGoOfOwner(owner.owner)) ? "let go" : "library unread";
 }
 
 const listeners = new Set<(documentUuid: string) => void>();

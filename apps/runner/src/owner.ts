@@ -21,7 +21,7 @@
  * before the ceremony is made synchronously.
  */
 import { KEYS, dataKeyKey, ownerRecordKey } from "../../../src/keys.js";
-import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore, listCartridgesFromLibrary } from "./opfs.js";
+import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore, readLibrary } from "./opfs.js";
 import { keychainKey, keychainKeyDerivable } from "./keychain-key.js";
 
 /** One owner, as this browser context holds it. */
@@ -476,10 +476,23 @@ export async function signIn(ownerId?: string): Promise<"opened" | "refused" | "
  * back to this browser's, its data key unchanged, so nothing is lost and
  * "Keep beyond this browser" adopts it again; the record goes, and the owner
  * is signed out.
+ *
+ * Only on a library read that answered (D308, ruled 1 November): the list is
+ * what is given back, so a read that failed or did not answer would leave each
+ * document wrapped under an owner no longer here. Then nothing changes, the
+ * owner record and the sign-in as they were, and it answers false. True when
+ * it let the owner go.
  */
-export function letGoOfOwner(ownerId: string): Promise<void> {
+export function letGoOfOwner(ownerId: string): Promise<boolean> {
   return serially(async () => {
-    for (const { documentUuid } of await listCartridgesFromLibrary()) {
+    let library: Awaited<ReturnType<typeof readLibrary>>;
+    try {
+      library = await readLibrary();
+    } catch (error) {
+      console.warn(`dai: owner ${ownerId} not let go: the library read did not answer (${String(error)}); the owner record and the sign-in stay as they are`);
+      return false;
+    }
+    for (const { documentUuid } of library) {
       const held = await dataKeyOf(documentUuid);
       if (held?.owner === ownerId) await keepInKeyStore(dataKeyKey(documentUuid), { key: held.key } satisfies DataKeyRecord);
     }
@@ -487,6 +500,7 @@ export function letGoOfOwner(ownerId: string): Promise<void> {
     await dropFromKeyStore(ownerRecordKey(ownerId));
     console.info(`dai: owner ${ownerId} let go: the store could never register it`);
     announceOwnerChange();
+    return true;
   });
 }
 
