@@ -6837,9 +6837,20 @@ async function start(): Promise<void> {
   }
   if (!resume) return;
 
-  const item = (await listCartridgesFromLibrary()).find(
-    (candidate) => candidate.documentUuid === resume,
-  );
+  /*
+   * Decided on the one record, read so that a read that failed or did not
+   * answer is told from a library that answered without it (D308, ruled 1
+   * November). Only the second forgets the document open last. The first says
+   * nothing about what is held: this load shows the chooser, as a load with
+   * nothing to resume does, and the key stays for the next load.
+   */
+  let item: LibraryItem | null;
+  try {
+    item = await libraryRecord(resume);
+  } catch (error) {
+    console.warn(`dai: resume on load: the library read did not answer (${String(error)}); the chooser for this load, and ${resume} kept to resume next time`);
+    return;
+  }
   if (!item) {
     forgetOpen();
     return;
