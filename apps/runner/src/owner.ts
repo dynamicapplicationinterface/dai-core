@@ -77,6 +77,19 @@ export interface DataKeyRecord {
  */
 export const passkeyName = (): string => `Your documents · ${location.hostname}`;
 /**
+ * A new passkey's user name: the name and the day it was made, in the
+ * person's own calendar, "Your documents · <hostname> · <YYYY-MM-DD>" (D311,
+ * ruled 1 November). Two passkeys for one site looked the same in the
+ * browser's picker and in Settings; the day tells them apart. Its display
+ * name stays `passkeyName`. Only the names change: the user handle is the
+ * owner id, as before, and nothing on the wire changes (R-P). A passkey made
+ * before keeps the name it was made with.
+ */
+const passkeyUserName = (made: Date = new Date()): string => {
+  const day = `${made.getFullYear()}-${String(made.getMonth() + 1).padStart(2, "0")}-${String(made.getDate()).padStart(2, "0")}`;
+  return `${passkeyName()} · ${day}`;
+};
+/**
  * The saved password's account: the same name, and the owner id last, so each
  * owner's secret is its own entry and recovery reads the owner from it.
  */
@@ -299,7 +312,7 @@ export function enroll(
   const made = navigator.credentials.create({
     publicKey: {
       rp: { name: rpName },
-      user: { id: ownerBytes, name: passkeyName(), displayName: passkeyName() },
+      user: { id: ownerBytes, name: passkeyUserName(), displayName: passkeyName() },
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
