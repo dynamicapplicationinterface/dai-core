@@ -692,7 +692,7 @@ const LIBRARY_UNREAD_NOTHING_CHANGED = "The library could not be read, so nothin
 let refusalSaid: string | null = null;
 onKept((documentUuid) => {
   if (documentUuid !== loaded?.manifest.documentUuid) return;
-  void refreshKept().then(sayJoinedIfKept);
+  void refreshKept();
   const refused = storeRefused(documentUuid);
   if (refused !== undefined && refusalSaid !== documentUuid) {
     refusalSaid = documentUuid;
@@ -1340,7 +1340,6 @@ function eject(): void {
   if (saveState) saveState.hidden = true;
   heldShown = false;
   keepAnsweredFor = undefined;
-  joinedSayFor = undefined;
   const docNote = document.getElementById("doc-note");
   if (docNote) docNote.hidden = true;
   // What the arrival line and the loop guard say about the document that was
@@ -4102,26 +4101,17 @@ const NOT_JOINED = {
   unavailable: "The store did not answer, so nothing was kept beyond this browser yet. Your work is still saved in this browser; try again when you are online.",
 } as const;
 /*
- * The passkey the person already had signed them in here and what was saved
- * here was adopted (D312, ruled 1 November): a ceremony they asked for answers
- * at once, on screen. The pill is up as the join is done: the status a save
- * shows while its keep is in flight, then "Kept" when the store acknowledges
- * it. The one note row says this sentence with that acknowledgment, the held
- * receipt for the open document under the owner signed in, and not before:
- * "Kept" is said from a receipt and nothing else (R-Z sentence 2). The row goes
- * when dismissed or at the next mount, never at a save, so nothing after it
- * moves the document.
+ * The passkey the person already had signed them in here (D312, ruled 1
+ * November; as ruled on 2b2eb-H1): a ceremony they asked for answers at once,
+ * on screen, in its own answer and never deferred. The one note row says this
+ * sentence as the join answers, which claims no "Kept": the pill alone says
+ * that, from the store's receipt (R-Z sentence 2), and it is up from the join,
+ * "Saved in this browser" until the receipt lands. A sentence waiting for a
+ * receipt came at the person's next save where nothing was adopted, and moved
+ * the document under their typing (the class of 2b2fr-M2). The row goes when
+ * dismissed or at the next mount, never at a save.
  */
-const JOINED_SAID = "Kept beyond this browser with the passkey you already had.";
-/** The document a join was answered over, whose sentence waits for the store's receipt. */
-let joinedSayFor: string | undefined;
-/** Says JOINED_SAID once the open document's receipt under the owner signed in is held (`keptShown`). */
-function sayJoinedIfKept(): void {
-  const open = loaded?.manifest.documentUuid;
-  if (joinedSayFor === undefined || joinedSayFor !== open || keptShown === null) return;
-  joinedSayFor = undefined;
-  tellOverDocument(JOINED_SAID);
-}
+const JOINED_SAID = "Using the passkey you already had. Documents here are kept under it from now on.";
 document.getElementById("keep-existing")?.addEventListener("click", () => {
   closeKeepWays("keep");
   // The ceremony first, inside the tap: recovery's, for the owner the passkey names.
@@ -4143,8 +4133,8 @@ document.getElementById("keep-existing")?.addEventListener("click", () => {
           saveState.hidden = false;
         }
       }
-      joinedSayFor = open;
-      void refreshKept().then(sayJoinedIfKept);
+      sayWhereAsked(JOINED_SAID);
+      void refreshKept();
       void keepHeldRevisions(result.adopted);
     } else {
       const [kind, why] = "cancelled" in result ? (["cancelled", result.cancelled] as const) : "unavailable" in result ? (["unavailable", result.unavailable] as const) : (["refused", result.refused] as const);
