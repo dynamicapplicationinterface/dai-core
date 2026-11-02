@@ -12242,6 +12242,17 @@ says "The library could not be read. Try again." instead.
   key of each document the list names under the owner, then drops the owner
   record. On an empty list the record goes and every document stays wrapped
   under an owner no longer here, so each is refused as another owner's.
+  It also signs the owner out (`KEYS.OWNER`); its one caller
+  (`letGoIfUnregistrable`) passes the owner signed in. What is said: the
+  mount still says `OWNER_LET_GO_SAID` (`main.ts:675`), and here each part
+  of it is wrong: on the next load the documents are refused as another
+  owner's; "Keep beyond this browser" adopts only documents no owner
+  holds; the owner was never at the store, so no Recover brings it back;
+  and the sentence says the passkey and saved password can be deleted.
+  The data keys stay in the key store, so nothing is gone from the device,
+  but nothing in the opener reaches them. Its reach: only an owner record
+  kept before D302's ruling on an engine with no Ed25519, so few or none
+  now.
 - **The resume on load** (`main.ts:6834`): the document open last not found
   in the list, the resume key is forgotten (`forgetOpen`). The next load
   shows the chooser, which has no library list, so the document held here is

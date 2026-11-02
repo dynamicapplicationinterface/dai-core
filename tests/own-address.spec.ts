@@ -12,7 +12,7 @@ import { test } from "./fixtures.js";
 import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, storedRow, typeNote, withKeyStore } from "./owner.js";
 import { watchKeychain, wipe } from "./keychain.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
-import { enrollHere, putInKeyStore, savesSettled, waitKeptCurrent, waitSettledKept } from "./keeping.js";
+import { enrollHere, pageWritesLanded, putInKeyStore, waitKeptCurrent, waitSettledKept } from "./keeping.js";
 import { serveRelay } from "./relay-memory.js";
 import { play } from "./chess-play.js";
 
@@ -73,15 +73,15 @@ async function mounted(page: Page, uuid: string | null): Promise<FrameLocator> {
 
 /**
  * Every store this origin has, cleared under the live page, and the worker
- * unregistered. First the page's own writes are let land: every save asked is
- * written, and a quiet window after it for what the mount writes (the replica
- * set, the library record). A write still in flight that lands after the wipe
- * brings the record back, and the reload then mounts the library's own copy,
- * not the page's address: a save asked is not a save written (tests/README.md;
- * 2b2dr6c-M1).
+ * unregistered. First the page's own writes have landed, by state
+ * (`pageWritesLanded`): the mount's replica settling and its save, the save's
+ * library record, and the data key behind it. A write still in flight that
+ * lands after the wipe brings the record back, and the reload then mounts the
+ * library's own copy, not the page's address: a save asked is not a save
+ * written (tests/README.md; 2b2dr6c-M1, 2b2dr6d-L1).
  */
 async function wipeUnderLivePage(page: Page): Promise<void> {
-  await savesSettled(page);
+  await pageWritesLanded(page);
   await page.evaluate(async () => {
     const databases = (await (indexedDB as Any).databases?.()) ?? [];
     for (const database of databases) {

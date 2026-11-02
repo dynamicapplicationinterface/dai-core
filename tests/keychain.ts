@@ -1,5 +1,6 @@
 import { expect, type BrowserContext, type CDPSession, type Page } from "@playwright/test";
 import { RUNNER_URL } from "./owner.js";
+import { pageWritesLanded } from "./keeping.js";
 
 /**
  * What the keychain and restore specs share (Build 2b-2b): a password manager
@@ -55,6 +56,8 @@ export async function watchKeychain(context: BrowserContext, how: { asSafari?: b
 
 /** Wipes everything this origin keeps: storage, databases, the worker and its caches. The passkey is the authenticator's. */
 export async function wipe(page: Page, cdp: CDPSession): Promise<void> {
+  // The page's own writes landed first: a write still in flight would land after the clear (2b2dr6c-M1, 2b2dr6d-L1).
+  await pageWritesLanded(page);
   await cdp.send("Storage.clearDataForOrigin", { origin: new URL(RUNNER_URL).origin, storageTypes: "all" });
   await page.goto(RUNNER_URL);
   expect(await page.evaluate(() => (window as Any).__runner.listLibrary()), "nothing is left").toEqual([]);
