@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type BrowserContext, type CDPSession, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { RUNNER_URL, appIn, buildNotes, openFile, pointAtStore, storedHolds, storedRow, typeNote, uuidOf, withKeyStore } from "./owner.js";
 import { watchKeychain } from "./keychain.js";
 import { serveOwnerStore } from "./owner-store-memory.js";
 import { enrollHere, keptRecord, openerWithStore, savesSettled, waitSettledKept, watchDocumentTop } from "./keeping.js";
@@ -725,6 +725,78 @@ test.describe("recovery (R-Z sentence 5, Build 2b-2 item 5)", () => {
         await withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`),
         "the owner's record marked recovering",
       ).toBe(true);
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * D308, ruled 1 November: a record read that fails during a recovery is not
+   * "not held here". That document is neither restored over nor adopted, and
+   * nothing is written for it; it is named as not reached because the library
+   * could not be read (not because the store stopped answering), and the rest
+   * of the library goes on. A second Recover, the read answering, restores it.
+   */
+  test("a library record read that fails during Recover: that document is named as not reached, nothing is written for it, the rest is restored, and Recover again brings it", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      // While `__failRecordRead` names a document, the library's record read of it fails, as an IndexedDB request that fires its error.
+      await context.addInitScript(() => {
+        const real = IDBObjectStore.prototype.get;
+        IDBObjectStore.prototype.get = function (this: IDBObjectStore, ...args: Any[]) {
+          const failing: unknown = (window as Any).__failRecordRead;
+          if (typeof failing === "string" && this.name === "cartridges" && args[0] === failing) {
+            (window as Any).__failedRecordReads = ((window as Any).__failedRecordReads ?? 0) + 1;
+            const request: Any = { error: new DOMException("the record read failed", "UnknownError"), result: undefined, readyState: "done" };
+            window.setTimeout(() => request.onerror?.call(request, new Event("error")), 0);
+            return request as IDBRequest;
+          }
+          return real.apply(this, args as Parameters<typeof real>);
+        };
+      });
+      const { page, provider } = await openerWithStore(context, store.base);
+      const { ids, owner, first, second } = await twoKept(page);
+      await wipe(page, provider.cdp);
+      await page.evaluate((b) => (window as Any).__runner.useStore(b), store.base);
+
+      // The first in the library's order fails its record read; the second does not.
+      await page.evaluate((id) => {
+        (window as Any).__failRecordRead = id;
+      }, ids[first]);
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText(`Recovered ${second}. ${first} could not be reached: the library could not be read. Recover again.`, { timeout: 60_000 });
+      await expect(page.locator("#report")).toHaveClass(/error/);
+      expect(await page.evaluate(() => (window as Any).__failedRecordReads ?? 0), "the failed read was met").toBeGreaterThan(0);
+      await expect(page.locator(`#recovered button[data-document="${ids[second]}"]`)).toBeVisible();
+      await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toHaveCount(0);
+      // Nothing written for the one not reached: no library record, no data key, no kept record.
+      const listed = (await page.evaluate(() => (window as Any).__runner.listLibrary())) as { documentUuid: string }[];
+      expect(listed.map((item) => item.documentUuid), "only the second in the library").toEqual([ids[second]]);
+      expect(await withKeyStore(page, "return (await get(arg)) ?? null", `dai:data-key:${ids[first]}`), "no data key for it").toBeNull();
+      expect(await withKeyStore(page, "return (await get(arg)) ?? null", `dai:kept:${ids[first]}`), "no kept record for it").toBeNull();
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner signed in").toBe(owner);
+      expect(
+        await withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`),
+        "the owner's record marked recovering: the library is not complete here",
+      ).toBe(true);
+
+      // Recover again, the read answering: the first restored, the second here already.
+      await page.evaluate(() => {
+        (window as Any).__failRecordRead = undefined;
+      });
+      await page.locator("#recover").click();
+      await expect(page.locator("#report")).toHaveText(`Recovered ${first}.`, { timeout: 60_000 });
+      await expect(page.locator(`#recovered button[data-document="${ids[first]}"]`)).toBeVisible();
+      await expect(page.locator(`#recovered button[data-document="${ids[second]}"]`)).toHaveText(`${second} · here`);
+      expect(await storedRow(page, ids[first]!, "notes", "body = ?", [`${first}-text`]), "the first restored with its row").toHaveLength(1);
+      expect((await keptRecord(page, ids[first]!))?.owner, "under the owner").toBe(owner);
+      expect(await withKeyStore(page, "return (await get(arg))?.recovering ?? null", `dai:owner:${owner}`), "the library complete: no mark").toBeNull();
     } finally {
       await context.close();
       await store.close();

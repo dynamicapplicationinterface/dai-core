@@ -93,7 +93,7 @@ import { SAVE_REFUSED } from "../../../src/refusals.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { afterSaveWritten, answerKeepOffer, currentOwner, dataKeyOf, enroll, keepOfferAnswer, leave, libraryHere, mayOpenHere, onOwnerChange, ownerRecord, signIn, type NotEnrolled } from "./owner.js";
 import { storageSentence, storageWords, type KeptReading } from "./status.js";
-import { joinOwner, recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored } from "./recover.js";
+import { joinOwner, recover, recoverWithKeychain, type Here, type Install, type Recovered, type Restored, type Unread } from "./recover.js";
 import { keepAgain, keepingLog, keepRevision, keepRunning, keptOf, letGoIfUnregistrable, onKept, storeBase, storeRefused, useStore, waitingDocuments, type KeptRecord, type Revision } from "./keeping.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
@@ -4255,11 +4255,16 @@ function installRestored(one: Install): Promise<void> {
     });
   });
 }
-/** What recovery may write here, and what it finds here already. */
+/**
+ * What recovery may write here, and what it finds here already. A record read
+ * that fails or does not answer rejects, never "not held" (D308, ruled 1
+ * November): `restore` then neither restores over that document nor adopts
+ * it, and names it as not reached.
+ */
 const recoveryHere: Here = {
   install: installRestored,
-  held: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.appName ?? null,
-  snapshot: async (documentUuid) => (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.arrivedSnapshot === true,
+  held: async (documentUuid) => (await libraryRecord(documentUuid))?.appName ?? null,
+  snapshot: async (documentUuid) => (await libraryRecord(documentUuid))?.arrivedSnapshot === true,
 };
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
 /** Documents recovered on this page, not yet opened: the store's time for each, and whether it was restored over a snapshot held here. */
@@ -4528,6 +4533,21 @@ function libraryComplete(outcome: { passed?: readonly unknown[] }): string {
   return (outcome.passed ?? []).length > 0 ? "" : LIBRARY_COMPLETE;
 }
 /**
+ * The documents a recovery did not restore because the library here could not
+ * be read (D308, ruled 1 November): by name where the kept copy verified, so
+ * the person knows which to recover again, ending in a space for what follows.
+ * Empty when there are none. It never says the store stopped answering: the
+ * store answered; this device's library did not.
+ */
+function unreadSaid(unread: readonly Unread[] | undefined): string {
+  if (!unread || unread.length === 0) return "";
+  const titles = unread.flatMap((one) => (one.title !== null ? [one.title] : []));
+  const unnamed = unread.length - titles.length;
+  const others = unnamed === 0 ? [] : unnamed === 1 ? [titles.length > 0 ? "another document" : "a document"] : [titles.length > 0 ? "other documents" : "some documents"];
+  const who = namesOf([...titles, ...others]);
+  return `${who.charAt(0).toUpperCase()}${who.slice(1)} could not be reached: the library could not be read. `;
+}
+/**
  * What a recovery restored, by name, for the chooser and the recovery sheet
  * alike: a document here already, from an earlier recovery, is not this
  * recovery's, and is not named (2b2dr5-L1). Empty when nothing was restored.
@@ -4677,6 +4697,8 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
     const unverified = outcome.refused.length;
     // Held here under another owner: passed over and said (D303, ruled on the review of Build 2b-2dr).
     const passed = (outcome.passed ?? []).map((one) => ` ${one.title} was left as it is: this browser holds it for another passkey.`).join("");
+    // Not reached because the library here could not be read, never because the store stopped answering (D308, ruled 1 November).
+    const unread = unreadSaid(outcome.unread);
     if (from === "menu") {
       /*
        * Over the open document, what this run restored, by name: one held here
@@ -4689,15 +4711,20 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
       if (outcome.unreached !== undefined) console.info(`dai: finish recovering cut short: ${outcome.unreached}`);
       const sentence =
         outcome.unreached !== undefined
-          ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.${passed}`
-          : `${recovered}${unverified > 0 ? notVerified : libraryComplete(outcome)}${passed}`;
-      sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0);
+          ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}${unread}The rest could not be reached: the store stopped answering. Finish recovering again when you are online.${passed}`
+          : unread !== ""
+            ? `${recovered}${unverified > 0 ? `${notVerified} ` : ""}${unread}Finish recovering again.${passed}`
+            : `${recovered}${unverified > 0 ? notVerified : libraryComplete(outcome)}${passed}`;
+      sayWhereAsked(sentence, outcome.unreached !== undefined || unverified > 0 || unread !== "");
     } else if (outcome.unreached !== undefined) {
       console.info(`dai: recovery cut short: ${outcome.unreached}`);
       sayWhereAsked(
-        `${recoveredNamed(outcome.restored, "Restored")}${recoveredNamed(outcome.restored) ? " " : ""}${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}The rest could not be reached: the store stopped answering. Recover again when you are online.${passed}`,
+        `${recoveredNamed(outcome.restored, "Restored")}${recoveredNamed(outcome.restored) ? " " : ""}${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}${unread}The rest could not be reached: the store stopped answering. Recover again when you are online.${passed}`,
         true,
       );
+    } else if (unread !== "") {
+      const named = recoveredNamed(outcome.restored);
+      sayWhereAsked(`${named ? `${named} ` : ""}${unverified > 0 ? "A kept copy could not be verified, so it was not restored. " : ""}${unread}Recover again.${passed}`, true);
     } else {
       const said =
         outcome.restored.length === 0 && unverified === 0
