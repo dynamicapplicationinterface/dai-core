@@ -13,7 +13,7 @@ document:
 | **the opener** | `opendai.app` | Vercel, promoted by hand |
 | **the relay** | `dai-relay.opendai.workers.dev` | `wrangler`, from this machine |
 | the owner's store, dev | `dai-store-dev.opendai.workers.dev` | `wrangler`, from this machine |
-| the owner's store | `dai-store` (not yet deployed) | `wrangler --env production`, promoted by hand |
+| the owner's store | `dai-store.opendai.workers.dev` | `wrangler --env production`, by hand, from this machine |
 
 **The owner's store has two deployments** (`apps/owner-store/wrangler.toml`).
 `dai-store-dev` is the top level: `npx wrangler deploy --env=""` from
@@ -25,6 +25,18 @@ against it with the test owners the suite makes, so tests write there.
 deploy): it is deployed by hand once a commit has run green against dev, and
 the production opener names it in `DAI_STORE_BASE`. No test and no job writes
 to it. Each keeps envelopes in R2 and only the chain in its Durable Objects.
+
+**The production store was first deployed on 1 November.** The bucket
+`dai-store-owners` was made with `npx wrangler r2 bucket create
+dai-store-owners`; `npx wrangler deploy --env production` from
+`apps/owner-store` published `dai-store` at
+`https://dai-store.opendai.workers.dev` (version `cf9614e0`). The opener's
+Production `DAI_STORE_BASE` was set to that address, and the opener was
+redeployed and promoted. `npm run deploys` showed the opener serving the
+checkout, and the live page's `<meta name="dai-store">` names the address.
+An older bucket named `dai-store` is in the account, unused; it was left as
+it is, and nothing names it. Every later deploy of the store is by hand, as
+every production deploy is (D247): no job and no merge deploys it.
 
 **The relay has no custom domain, and no DNS step.** It answers on its
 `workers.dev` address, which is where it has always been and where the opener
@@ -121,6 +133,10 @@ their next open, and any wake owed to them before that is lost.
      is `/v` on the same worker and the opener derives it from this value's
      origin, so there is one address to set and not two.
    - `DAI_PUSH_PUBLIC_KEY` — the relay's VAPID public key, if push is on.
+   - `DAI_STORE_BASE` — the owner's store,
+     `https://dai-store.opendai.workers.dev`. With none set, a Production
+     build names no store and a preview names
+     `dai-store-dev`, which tests write to.
    - the store credentials, which `docs/deploying.md` lists.
 3. Promote that commit's deployment to production in Vercel. **A push is not a
    release**: a preview looks identical from outside.
