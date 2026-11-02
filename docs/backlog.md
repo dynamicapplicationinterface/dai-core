@@ -12321,6 +12321,71 @@ for the file, launched in `beforeAll` and closed in `afterAll`, with a new
 context per test; never a raised `test.setTimeout` in its place. The first
 suspect if own-address times out in CI.
 
+#### D310 — After a Remove, the restore sentence names a cleared browser
+
+*Status: open. Filed 1 November, from the device reading of 1 November,
+step 2 (handoff 26 October, "Pre-merge, PR #15"). Scope:
+`restoredSentence` and its callers in apps/runner/src/main.ts.*
+
+After "Remove from this device" and a recovery, the note row says "Restored
+the copy kept at 4:41 PM. Changes saved only in the cleared browser are not
+included." A Remove clears nothing: the browser was not cleared, only the
+document removed from it, and Recover then fills a context that holds
+nothing, which the sentence takes for a wipe. The clause belongs to the wipe
+only (2b2dr4-L1). Wanted: a sentence for the removed case that is true of
+it, and the clause kept for the wipe.
+
+#### D311 — Two passkeys for one site look the same
+
+*Status: open. Filed 1 November, from the device reading of 1 November,
+step 4.*
+
+Two passkeys for this site are both shown as "Your documents" (in the
+browser's picker, "Your documents · Passkey") and in Settings → Passwords;
+nothing tells them apart, so the person cannot tell which one to use or
+which to delete. Wanted: the passkey's user name carries what distinguishes
+it, when it was made at least. Today the only way to find the stray is
+Recover with it on the chooser, which says "Nothing kept was found for this
+passkey."
+
+#### D312 — "Use the passkey I already have" says nothing when it completes
+
+*Status: open. Filed 1 November, from the device reading of 1 November,
+step 4. R-Z's presence decision.*
+
+On the Home Screen copy, "Use the passkey I already have" completed with
+Face ID and nothing changed on screen, no pill and no sentence, until the
+next change landed and the pill read "Kept". The person asked, so the
+answer is due at once (R-Z): after a completed ceremony the status is shown
+then, as "Kept" in the pill or a sentence in the note row.
+
+#### D313 — The Home Screen copy reports no service worker
+
+*Status: open, to read on the device. Filed 1 November, from the device
+reading of 1 November, step 4.*
+
+The ⋯ sheet's diagnostics said "worker no worker" for the Home Screen copy:
+no service worker controlled that page. If none ever does there, "works
+offline" in the sheet may not hold for the installed copy, and the offer
+to save the password by form (`offerKeychainByForm`, which is not submitted
+when no worker controls the page, so the secret never reaches the network)
+would never be made there.
+Wanted: a reading on the device of whether the Home Screen copy is ever
+controlled (after a second launch, after going offline), and the words or
+the registration fixed by what it finds.
+
+#### D314 — On iOS, deleting one site's Website Data is not a wipe
+
+*Status: a device note, no fix of ours. Filed 1 November, from the device
+reading of 1 November, step 3.*
+
+On the iPhone, Settings → Safari → Advanced → Website Data, deleting the
+`vercel.app` row with every tab closed removed the row from the list and
+left this origin's storage in place: the document, the owner signed in, the
+library and the kept record were all there at the next load. The wipe a
+device reading means is Settings → Safari → Clear History and Website Data.
+A reading after a website-data wipe (R-L) names which one it used.
+
 ### Branch review residue (filed 8 October)
 
 The findings of the branch review (handoff 5 October, passes A, B and C)
