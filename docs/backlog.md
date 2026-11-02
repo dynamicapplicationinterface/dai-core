@@ -12226,7 +12226,10 @@ The save the D195 test's reload cut is D294's runner case (seen again,
 *Status: open. Filed 1 November, from the review of Build 2b-2dr6 item 1b
 (2b2dr6b-L1), whose tap is fixed in item 1c; widened from the review of item
 1c (2b2dr6c-L1). No code change for the paths below in Build 2b-2dr6.
-2b2dr3-H1's class. Scope: apps/runner/src/main.ts and apps/runner/src/owner.ts.*
+2b2dr3-H1's class. Scope: apps/runner/src/main.ts and apps/runner/src/owner.ts.
+Three paths ruled 1 November and fixed in Build 2b-2e (handoff 2 November):
+the resume on load (item 2), `letGoOfOwner` (item 3), and recovery's
+`held` and `snapshot` (item 4). The rest below still open.*
 
 `listCartridgesFromLibrary()` in apps/runner/src/opfs.ts answers `[]` when
 its read times out (5 s) or fails, the same as a library that holds nothing.
