@@ -82,7 +82,12 @@ export interface Install {
   revision: number;
 }
 
-/** What the opener lends recovery: a way to write one document into its library, and the title of one it holds already. */
+/**
+ * What the opener lends recovery: a way to write one document into its
+ * library, and the title of one it holds already. `held` and `snapshot` reject
+ * when the library read failed or did not answer, which says nothing about
+ * what is held (D308).
+ */
 export interface Here {
   install: (one: Install) => Promise<void>;
   held: (documentUuid: string) => Promise<string | null>;
@@ -90,13 +95,27 @@ export interface Here {
   snapshot: (documentUuid: string) => Promise<boolean>;
 }
 
+/** A document of the owner's library whose record here could not be read: nothing restored or written for it (D308). Its title when its kept copy verified, so it could be named. */
+export interface Unread {
+  documentUuid: string;
+  title: string | null;
+}
+
 export type Recovered =
   /**
    * `unreached`: the store stopped answering after these, and the rest of the
    * library was not reached. `passed`: held here under another owner, so
-   * passed over and left as they are.
+   * passed over and left as they are. `unread`: the library here could not be
+   * read for these, so whether each is held is not known, and they were
+   * neither restored over nor adopted (D308, ruled 1 November).
    */
-  | { restored: Restored[]; refused: { documentUuid: string; why: Unverified | string }[]; passed?: { documentUuid: string; title: string }[]; unreached?: string }
+  | {
+      restored: Restored[];
+      refused: { documentUuid: string; why: Unverified | string }[];
+      passed?: { documentUuid: string; title: string }[];
+      unread?: Unread[];
+      unreached?: string;
+    }
   | { unavailable: string }
   | { cancelled: string }
   | { refused: string };
@@ -337,7 +356,20 @@ async function restore(
   const restored: Restored[] = [];
   const refused: { documentUuid: string; why: string }[] = [];
   const passed: { documentUuid: string; title: string }[] = [];
+  const unread: Unread[] = [];
   let unreached: string | undefined;
+  /*
+   * A record read here that failed or did not answer says nothing about what
+   * is held (D308, ruled 1 November): that document is neither restored over
+   * nor adopted, and nothing is written for it. It is named when its kept copy
+   * verifies (read, never written), so the person knows which one to recover
+   * again; the rest of the library goes on.
+   */
+  const notRead = async (documentUuid: string, error: unknown): Promise<void> => {
+    console.warn(`dai: ${documentUuid} not restored: the library could not be read (${String(error)}); nothing written for it`);
+    const verified = await verifyOne(base, author, asked.owner, documentUuid, ownerKey, enrolled).catch(() => null);
+    unread.push({ documentUuid, title: verified && "verified" in verified ? verified.verified.title : null });
+  };
   /*
    * What this recovery wrote is its own record, kept as it goes: a document
    * that throws partway leaves the ones before it restored and named, as a
@@ -347,7 +379,15 @@ async function restore(
   try {
     for (const documentUuid of library.documents) {
       const kept = await keptInKeyStore<KeptRecord>(keptKey(documentUuid));
-      const title = kept?.owner === asked.owner ? await here.held(documentUuid) : null;
+      let title: string | null;
+      let heldHere: string | null;
+      try {
+        title = kept?.owner === asked.owner ? await here.held(documentUuid) : null;
+        heldHere = kept && title !== null ? title : await here.held(documentUuid);
+      } catch (error: unknown) {
+        await notRead(documentUuid, error);
+        continue;
+      }
       if (kept && title !== null) {
         restored.push({ documentUuid, title, at: kept.at, alreadyHere: true });
         continue;
@@ -363,7 +403,6 @@ async function restore(
        * not the person's work: the store's head is restored over it, and no
        * line is kept.
        */
-      const heldHere = await here.held(documentUuid);
       const heldOwner = heldHere !== null ? (await dataKeyOf(documentUuid))?.owner : undefined;
       // Held here under another owner: theirs, passed over, untouched, and said (D303, ruled on the review of Build 2b-2dr).
       if (heldHere !== null && heldOwner !== undefined && heldOwner !== asked.owner) {
@@ -372,7 +411,17 @@ async function restore(
         continue;
       }
       // A snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
-      if (heldHere !== null && !(await here.snapshot(documentUuid))) {
+      // Read only here, where it decides (2b2e-L1): a document here already, or another owner's, is decided without it.
+      let snapshot = false;
+      if (heldHere !== null) {
+        try {
+          snapshot = await here.snapshot(documentUuid);
+        } catch (error: unknown) {
+          await notRead(documentUuid, error);
+          continue;
+        }
+      }
+      if (heldHere !== null && !snapshot) {
         const heads = await headsOf(base, author, asked.owner, documentUuid);
         if (isUnavailable(heads)) {
           unreached = heads.unavailable;
@@ -414,10 +463,18 @@ async function restore(
   // Nothing written: nobody is signed in on nothing.
   if (unreached !== undefined && !writing) return { unavailable: unreached };
 
-  // Signed in only once there is something true to show.
-  await signIn(unreached !== undefined);
-  console.info(`dai: recovered owner ${asked.owner}: ${restored.length} restored, ${refused.length} refused${unreached ? `, the rest unreached: ${unreached}` : ""}`);
-  return { restored, refused, ...(passed.length > 0 ? { passed } : {}), ...(unreached !== undefined ? { unreached } : {}) };
+  // Signed in only once there is something true to show; marked recovering while any of the library is not here or not known to be.
+  await signIn(unreached !== undefined || unread.length > 0);
+  console.info(
+    `dai: recovered owner ${asked.owner}: ${restored.length} restored, ${refused.length} refused${unread.length > 0 ? `, ${unread.length} not restored (the library could not be read)` : ""}${unreached ? `, the rest unreached: ${unreached}` : ""}`,
+  );
+  return {
+    restored,
+    refused,
+    ...(passed.length > 0 ? { passed } : {}),
+    ...(unread.length > 0 ? { unread } : {}),
+    ...(unreached !== undefined ? { unreached } : {}),
+  };
 }
 
 /** One document: its newest head, verified back to the root, installed at that revision. */
@@ -431,6 +488,59 @@ async function restoreOne(
   ownerKey: CryptoKey,
   enrolled: ReadonlyMap<string, string>,
 ): Promise<{ restored: Restored | null } | { why: string } | { unavailable: string }> {
+  const outcome = await verifyOne(base, author, owner, documentUuid, ownerKey, enrolled);
+  if (!("verified" in outcome)) return outcome;
+  const { dataKey, wrapped, head, top, containerIn, html, publicKeyFingerprint, title, lines } = outcome.verified;
+  // Verified and ready: the owner first, then the key and the kept record, then the library record that lists it.
+  await beforeFirstWrite();
+  await keepInKeyStore(dataKeyKey(documentUuid), { key: dataKey, owner, wrapped, atStore: true } satisfies DataKeyRecord);
+  await keepInKeyStore(keptKey(documentUuid), {
+    owner,
+    revision: top.inside.checkpoint.revision,
+    digest: head.digest,
+    checkpoint: await checkpointDigest(top.inside.checkpoint),
+    release: top.inside.checkpoint.release,
+    at: head.at,
+    as: "head",
+    containerIn,
+  } satisfies KeptRecord);
+  await install({
+    documentUuid,
+    title,
+    database: top.database,
+    html,
+    publicKeyFingerprint,
+    revision: top.inside.checkpoint.revision,
+  });
+  return { restored: { documentUuid, title, at: head.at, ...(lines > 1 ? { lines } : {}) } };
+}
+
+/** One document's newest head, verified back to the root and ready to install, with nothing written: what `restoreOne` installs, and what names a document not restored (D308). */
+async function verifyOne(
+  base: string,
+  author: Author,
+  owner: string,
+  documentUuid: string,
+  ownerKey: CryptoKey,
+  enrolled: ReadonlyMap<string, string>,
+): Promise<
+  | {
+      verified: {
+        dataKey: CryptoKey;
+        wrapped: Uint8Array;
+        head: { digest: string; at: string };
+        top: Opened;
+        containerIn: string;
+        html: string;
+        publicKeyFingerprint: string | undefined;
+        title: string;
+        lines: number;
+      };
+    }
+  | { restored: null }
+  | { why: string }
+  | { unavailable: string }
+> {
   const heads = await headsOf(base, author, owner, documentUuid);
   if (isUnavailable(heads)) return { unavailable: heads.unavailable };
   if (isRefused(heads)) return { why: `heads: ${heads.refused}` };
@@ -521,26 +631,17 @@ async function restoreOne(
   const cartridge = await readCartridge(new File([container], `${top.inside.title}.dai.html`, { type: "text/html" }));
   if (cartridge.manifest.documentUuid !== documentUuid) return { why: "document" };
   const resealed = await resealCartridge(cartridge, top.database);
-  // Verified and ready: the owner first, then the key and the kept record, then the library record that lists it.
-  await beforeFirstWrite();
-  await keepInKeyStore(dataKeyKey(documentUuid), { key: dataKey, owner, wrapped: fromB64u(heads.key), atStore: true } satisfies DataKeyRecord);
-  await keepInKeyStore(keptKey(documentUuid), {
-    owner,
-    revision: top.inside.checkpoint.revision,
-    digest: head.digest,
-    checkpoint: await checkpointDigest(top.inside.checkpoint),
-    release: top.inside.checkpoint.release,
-    at: head.at,
-    as: "head",
-    containerIn,
-  } satisfies KeptRecord);
-  await install({
-    documentUuid,
-    title: top.inside.title,
-    database: top.database,
-    html: resealed.html,
-    publicKeyFingerprint: resealed.publicKeyFingerprint,
-    revision: top.inside.checkpoint.revision,
-  });
-  return { restored: { documentUuid, title: top.inside.title, at: head.at, ...(heads.heads.length > 1 ? { lines: heads.heads.length } : {}) } };
+  return {
+    verified: {
+      dataKey,
+      wrapped: fromB64u(heads.key),
+      head,
+      top,
+      containerIn,
+      html: resealed.html,
+      publicKeyFingerprint: resealed.publicKeyFingerprint,
+      title: top.inside.title,
+      lines: heads.heads.length,
+    },
+  };
 }

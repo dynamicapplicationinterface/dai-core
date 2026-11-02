@@ -21,7 +21,7 @@
  * before the ceremony is made synchronously.
  */
 import { KEYS, dataKeyKey, ownerRecordKey } from "../../../src/keys.js";
-import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore, listCartridgesFromLibrary } from "./opfs.js";
+import { dropFromKeyStore, keepInKeyStore, keepInKeyStoreOnce, keptInKeyStore, readLibrary } from "./opfs.js";
 import { keychainKey, keychainKeyDerivable } from "./keychain-key.js";
 
 /** One owner, as this browser context holds it. */
@@ -68,6 +68,8 @@ export interface DataKeyRecord {
   atStore?: boolean;
 }
 
+/** The words every name of the passkey and the saved password starts with: one string, so the names cannot drift apart (O3 of the review of 5b). */
+const PASSKEY_WORDS = "Your documents";
 /**
  * The name the passkey and the saved password carry (Build 2b-2d item 4): the
  * site, and that it is the one for all the person's documents. Two passkeys
@@ -75,7 +77,24 @@ export interface DataKeyRecord {
  * wanted (the device reading of 30 October). Passkeys made before keep the
  * name they were made with.
  */
-export const passkeyName = (): string => `Your documents · ${location.hostname}`;
+export const passkeyName = (): string => `${PASSKEY_WORDS} · ${location.hostname}`;
+/**
+ * A new passkey's user name: the day it was made, in the person's own
+ * calendar, and the site, "Your documents · <YYYY-MM-DD> · <hostname>" (D311,
+ * ruled 1 November). Two passkeys for one site looked the same in the
+ * browser's picker and in Settings; the day tells them apart. The day comes
+ * before the hostname (2b2eb-L1): WebAuthn lets an authenticator cut the user
+ * name to 64 bytes, and "Your documents · <day>" is the first 28 bytes (the
+ * middle dot is two in UTF-8), so the day survives on any host; a cut takes
+ * only the end of a hostname over 32 bytes. Its display name stays
+ * `passkeyName`. Only the names
+ * change: the user handle is the owner id, as before, and nothing on the wire
+ * changes (R-P). A passkey made before keeps the name it was made with.
+ */
+const passkeyUserName = (made: Date = new Date()): string => {
+  const day = `${made.getFullYear()}-${String(made.getMonth() + 1).padStart(2, "0")}-${String(made.getDate()).padStart(2, "0")}`;
+  return `${PASSKEY_WORDS} · ${day} · ${location.hostname}`;
+};
 /**
  * The saved password's account: the same name, and the owner id last, so each
  * owner's secret is its own entry and recovery reads the owner from it.
@@ -299,7 +318,7 @@ export function enroll(
   const made = navigator.credentials.create({
     publicKey: {
       rp: { name: rpName },
-      user: { id: ownerBytes, name: passkeyName(), displayName: passkeyName() },
+      user: { id: ownerBytes, name: passkeyUserName(), displayName: passkeyName() },
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
@@ -476,10 +495,23 @@ export async function signIn(ownerId?: string): Promise<"opened" | "refused" | "
  * back to this browser's, its data key unchanged, so nothing is lost and
  * "Keep beyond this browser" adopts it again; the record goes, and the owner
  * is signed out.
+ *
+ * Only on a library read that answered (D308, ruled 1 November): the list is
+ * what is given back, so a read that failed or did not answer would leave each
+ * document wrapped under an owner no longer here. Then nothing changes, the
+ * owner record and the sign-in as they were, and it answers false. True when
+ * it let the owner go.
  */
-export function letGoOfOwner(ownerId: string): Promise<void> {
+export function letGoOfOwner(ownerId: string): Promise<boolean> {
   return serially(async () => {
-    for (const { documentUuid } of await listCartridgesFromLibrary()) {
+    let library: Awaited<ReturnType<typeof readLibrary>>;
+    try {
+      library = await readLibrary();
+    } catch (error) {
+      console.warn(`dai: owner ${ownerId} not let go: the library read did not answer (${String(error)}); the owner record and the sign-in stay as they are`);
+      return false;
+    }
+    for (const { documentUuid } of library) {
       const held = await dataKeyOf(documentUuid);
       if (held?.owner === ownerId) await keepInKeyStore(dataKeyKey(documentUuid), { key: held.key } satisfies DataKeyRecord);
     }
@@ -487,6 +519,7 @@ export function letGoOfOwner(ownerId: string): Promise<void> {
     await dropFromKeyStore(ownerRecordKey(ownerId));
     console.info(`dai: owner ${ownerId} let go: the store could never register it`);
     announceOwnerChange();
+    return true;
   });
 }
 

@@ -565,36 +565,51 @@ export async function getCartridgeFromLibrary(documentUuid: string): Promise<Lib
   });
 }
 
-export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
-  try {
-    const db = await openIdb();
-    return new Promise((resolve) => {
-      // The transaction is bounded like the open: a request that never fires
-      // its event resolves to an empty library rather than hanging the launch.
-      const timer = setTimeout(() => {
-        noteIdbFailure("library read timed out after 5s");
-        resolve([]);
-      }, 5000);
-      const done = (items: LibraryItem[]): void => {
-        clearTimeout(timer);
-        resolve(items);
-      };
+/**
+ * The library, newest opened first, or a rejection when the read failed or did
+ * not answer in 5 s: a decision that rests on what is held reads it here, so
+ * "not known" is never taken for "none held" (D308).
+ */
+export async function readLibrary(): Promise<LibraryItem[]> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    // The transaction is bounded like the open: a request that never fires
+    // its event rejects rather than hanging the launch.
+    const timer = setTimeout(() => {
+      noteIdbFailure("library read timed out after 5s");
+      reject(new Error("library read timed out after 5s"));
+    }, 5000);
+    try {
       const tx = db.transaction(LIB_STORE, "readonly");
       const store = tx.objectStore(LIB_STORE);
       const req = store.getAll();
       req.onsuccess = () => {
+        clearTimeout(timer);
         const items = (req.result as LibraryItem[]) || [];
         items.sort(
           (a, b) =>
             new Date(b.lastOpened).getTime() - new Date(a.lastOpened).getTime(),
         );
-        done(items);
+        resolve(items);
       };
-      req.onerror = () => done([]);
-    });
-  } catch {
-    return [];
-  }
+      req.onerror = () => {
+        clearTimeout(timer);
+        reject(req.error ?? new Error("library read failed"));
+      };
+    } catch (error) {
+      clearTimeout(timer);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * The library, newest opened first; empty when the read failed or did not
+ * answer, the same as a library that holds nothing. For what lists or reads
+ * again; a decision on what is held reads `readLibrary` (D308).
+ */
+export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
+  return readLibrary().catch(() => []);
 }
 
 export async function deleteCartridgeFromLibrary(

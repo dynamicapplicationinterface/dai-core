@@ -44,7 +44,9 @@ test.describe("the passkey's name and the saved password's (Build 2b-2d item 4)"
       const owner = await enrollHere(page);
 
       const { credentials } = await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id });
-      expect(credentials.map((credential) => [credential.userName, credential.userDisplayName])).toEqual([[NAME, NAME]]);
+      // The user name carries the day it was made (D311; the day itself is pinned in the test below), the display name the site.
+      expect(credentials.map((credential) => credential.userDisplayName)).toEqual([NAME]);
+      expect(credentials.map((credential) => credential.userName)).toEqual([expect.stringMatching(/^Your documents · \d{4}-\d{2}-\d{2} · localhost$/)]);
       await expect.poll(() => handed.length, { timeout: 30_000 }).toBe(1);
       expect(handed[0]).toMatchObject({ by: "credential management", name: NAME, account: `${NAME} · ${owner}`, owner });
 
@@ -60,6 +62,43 @@ test.describe("the passkey's name and the saved password's (Build 2b-2d item 4)"
       await page.locator(`#recovered button[data-document="${uuid}"]`).click({ timeout: 30_000 });
       app = appIn(page);
       await expect(app.locator("#note")).toHaveValue("named", { timeout: 60_000 });
+    } finally {
+      await context.close();
+      await store.close();
+    }
+  });
+
+  /*
+   * D311, ruled 1 November: two passkeys for one site looked the same in the
+   * browser's picker and in Settings. A new passkey's user name carries the
+   * day it was made and the site, "Your documents · <YYYY-MM-DD> ·
+   * <hostname>" (the day before the hostname, so an authenticator that cuts
+   * the name at 64 bytes keeps it, 2b2eb-L1), its display name the site
+   * alone; the saved password's
+   * account is unchanged, and the owner is still read from its end. The day
+   * is the one the page's clock is pinned to, never read again later.
+   */
+  test("a new passkey's user name carries the site and the day it was made, its display name the site; the saved password's account is unchanged and still names the owner", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    const context = await browser.newContext();
+    try {
+      await pointAtStore(context, store.base);
+      const handed = await watchKeychain(context);
+      const { page, provider } = await openerWithStore(context, store.base);
+      await openFile(page, await buildNotes(mkdtempSync(join(tmpdir(), "dai-name-day-")), "Notes"));
+      // Midday on a chosen day, in this machine's zone, which the page shares: the day cannot turn while the test runs.
+      await page.clock.setFixedTime(new Date(2026, 2, 4, 12, 0, 0));
+      const owner = await enrollHere(page);
+      const { credentials } = await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id });
+      expect(credentials.map((credential) => [credential.userName, credential.userDisplayName])).toEqual([["Your documents · 2026-03-04 · localhost", NAME]]);
+      // The user handle is the owner id, as before: nothing on the wire changes.
+      expect(credentials.map((credential) => Buffer.from(credential.userHandle ?? "", "base64").toString("base64url"))).toEqual([owner]);
+      await expect.poll(() => handed.length, { timeout: 30_000 }).toBe(1);
+      expect(handed[0]).toMatchObject({ name: NAME, account: `${NAME} · ${owner}`, owner });
     } finally {
       await context.close();
       await store.close();

@@ -1,11 +1,11 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
-import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, typeNote, uuidOf, withKeyStore } from "./owner.js";
+import { RUNNER_URL, addPasskeyProvider, appIn, buildNotes, openFile, pointAtStore, storedHolds, storedRow, typeNote, uuidOf, waitMounted, withKeyStore } from "./owner.js";
 import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
-import { enrollHere, keptRecord, pillText, waitSettledKept } from "./keeping.js";
+import { enrollHere, keptRecord, pageWritesLanded, pillText, waitSettledKept, watchDocumentTop } from "./keeping.js";
 import { wipe } from "./keychain.js";
 
 /**
@@ -31,6 +31,8 @@ import { wipe } from "./keychain.js";
 type Any = any;
 
 const offer = (page: Page) => page.locator("#save-state[data-offer]");
+/** Said in the note row as the join with the passkey the person already had answers (D312, as ruled on 2b2eb-H1): no claim of "Kept", which the pill alone says. */
+const JOINED_SAID = "Using the passkey you already had. Documents here will be kept under it.";
 /** The owners the store holds: each owner object with an owner record. */
 const ownersAt = (store: ServedStore): string[] =>
   store.values().filter((value) => value.object.startsWith("o:") && value.key === "owner").map((value) => value.object.slice(2));
@@ -90,7 +92,8 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       expect((await keptRecord(page, second))!.owner).toBe(enrolled);
       await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
       expect((await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id })).credentials.length, "no passkey made").toBe(passkeys);
-      await expect(page.locator("#doc-note")).toBeHidden();
+      // The ceremony answered in the one note row (D312, ruled 1 November).
+      await expect(page.locator("#doc-note")).toHaveText(JOINED_SAID);
 
       // A third context: Recover lists both documents.
       await wipe(page, provider.cdp);
@@ -101,6 +104,128 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       await expect(appIn(page).locator("#note")).toHaveValue("second-text", { timeout: 60_000 });
     } finally {
       await context.close();
+      await store.close();
+    }
+  });
+
+  /**
+   * On a phone-size page: an owner kept in one context, the browser wiped, a
+   * second document opened from its file in what is now another context.
+   * `written`: a change saved and the page loaded again, so the document was
+   * written here (the join adopts it) and no change of the person's has
+   * landed on this page; otherwise opened and not changed, as a document in
+   * the Home Screen copy (written nowhere here, so the join adopts nothing).
+   * Then "Use the passkey I already have" from the menu, with no change made.
+   */
+  async function joinedOnAPhone(browser: Browser, store: ServedStore, written: boolean): Promise<{ page: Page; app: FrameLocator; second: string; enrolled: string }> {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await pointAtStore(context, store.base);
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    const provider = await addPasskeyProvider(context, page);
+    const scratch = mkdtempSync(join(tmpdir(), "dai-existing-phone-"));
+    const files = { First: await buildNotes(scratch, "First"), Second: await buildNotes(scratch, "Second") };
+
+    let app = await openFile(page, files.First);
+    const first = await uuidOf(page);
+    const enrolled = await enrollHere(page);
+    await typeNote(app, "first-text");
+    await expect.poll(async () => (await storedRow(page, first, "notes", "body = ?", ["first-text"])).length, { timeout: 30_000 }).toBe(1);
+    await waitSettledKept(page, first);
+
+    await wipe(page, provider.cdp);
+    app = await openFile(page, files.Second);
+    const second = await uuidOf(page);
+    if (written) {
+      await typeNote(app, "second-text");
+      await expect.poll(async () => (await storedRow(page, second, "notes", "body = ?", ["second-text"])).length, { timeout: 30_000 }).toBe(1);
+      await pageWritesLanded(page);
+      await page.reload();
+      app = await waitMounted(page, files.Second);
+    } else {
+      await pageWritesLanded(page);
+    }
+    expect(await owner(page)).toBeNull();
+
+    await page.locator("#more").click();
+    await page.locator("#keep-beyond").click();
+    await expect(page.locator("#keep-ways")).toBeVisible();
+    await page.locator("#keep-existing").click();
+    await expect.poll(() => owner(page), { timeout: 30_000 }).toBe(enrolled);
+    return { page, app, second, enrolled };
+  }
+
+  /** Where the document's frame is, from the top of the page: what moves when the note row comes or goes. */
+  const frameTop = (page: Page): Promise<number> => page.locator("#cartridge").evaluate((frame) => frame.getBoundingClientRect().top);
+
+  /*
+   * D312 as ruled on the review of items 4b to 7 (2b2eb-H1): a sentence the
+   * person asked for is said in the ceremony's own answer and never deferred.
+   * A document opened in this context and not changed, as on the Home Screen
+   * copy: the join adopts nothing, so nothing is kept yet. The sentence is in
+   * the note row as the join answers, with no claim of "Kept"; the pill says
+   * "Saved in this browser". Then a change, saved and kept: the note row is as
+   * it was and the document has not moved.
+   */
+  test("on a phone-size page, the passkey already had over a document not changed here: the sentence at the join, and the first change kept moves nothing and says nothing more", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    try {
+      const { page, app, second, enrolled } = await joinedOnAPhone(browser, store, false);
+      // The join's own answer: the sentence, the pill up as "Saved in this browser", nothing kept yet.
+      await expect.soft(page.locator("#doc-note"), "the sentence, at the join").toHaveText(JOINED_SAID, { timeout: 5_000 });
+      await expect(page.locator("#save-state[data-shown]"), "the pill is up").toBeVisible({ timeout: 5_000 });
+      expect(await pillText(page)).toBe("Saved in this browser");
+      expect(await keptRecord(page, second), "nothing kept yet").toBeNull();
+      const said = (await page.locator("#doc-note").isVisible()) ? await page.locator("#doc-note").innerText() : "";
+      const before = await frameTop(page);
+
+      // A change, saved and kept: nothing more said and nothing moved.
+      await typeNote(app, "after the join");
+      await expect.poll(async () => (await storedRow(page, second, "notes", "body = ?", ["after the join"])).length, { timeout: 30_000 }).toBe(1);
+      await expect.poll(async () => (await keptRecord(page, second))?.owner ?? null, { timeout: 45_000 }).toBe(enrolled);
+      await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
+      await pageWritesLanded(page);
+      const after = (await page.locator("#doc-note").isVisible()) ? await page.locator("#doc-note").innerText() : "";
+      expect.soft(after, "the note row as it was at the join").toBe(said);
+      expect(await frameTop(page), "the document's top, before and after the change").toBe(before);
+    } finally {
+      await store.close();
+    }
+  });
+
+  /*
+   * The same ruling where the document was written here, so the join adopts
+   * it and keeps it at once: the sentence at the join; the pill goes to
+   * "Kept" when the receipt lands, and the note row is unchanged by it.
+   */
+  test("on a phone-size page, the passkey already had over a document written here: the sentence at the join, the pill to Kept at the receipt, the note row unchanged by it", async ({
+    browser,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the passkey with PRF is Chromium's virtual authenticator");
+    const store = await serveOwnerStore();
+    try {
+      const { page, app, second, enrolled } = await joinedOnAPhone(browser, store, true);
+      await expect(page.locator("#doc-note"), "the sentence, at the join").toHaveText(JOINED_SAID, { timeout: 5_000 });
+      await expect(page.locator("#doc-note")).not.toHaveClass(/error/);
+      await expect(page.locator("#save-state[data-shown]"), "the pill is up").toBeVisible({ timeout: 5_000 });
+      expect(["Saved in this browser", "Kept"]).toContain(await pillText(page));
+      const top = await watchDocumentTop(page);
+      await expect.poll(() => pillText(page), { timeout: 45_000 }).toBe("Kept");
+      expect((await keptRecord(page, second))?.owner).toBe(enrolled);
+      await expect(page.locator("#doc-note"), "unchanged by the receipt").toHaveText(JOINED_SAID);
+      // A change and its save after it: nothing moves, nothing taken away.
+      await typeNote(app, "-more");
+      await expect.poll(async () => (await storedRow(page, second, "notes", "body = ?", ["second-text-more"])).length, { timeout: 30_000 }).toBe(1);
+      await pageWritesLanded(page);
+      const moved = await top();
+      expect(moved, "the document's top, from the sentence through the receipt and a save").toEqual({ from: moved.from, min: moved.from, max: moved.from });
+      await expect(page.locator("#doc-note")).toHaveText(JOINED_SAID);
+    } finally {
       await store.close();
     }
   });
@@ -213,7 +338,8 @@ test.describe("a context meets an existing owner (R-Z, amended 31 October)", () 
       const here = (await keptRecord(page, uuid))!;
       expect(here.digest).not.toBe(kept.digest);
       await expect.poll(() => pillText(page), { timeout: 15_000 }).toBe("Kept");
-      await expect(page.locator("#doc-note")).toBeHidden();
+      // No refusal: the row holds the join's own sentence (D312, ruled 1 November).
+      await expect(page.locator("#doc-note")).toHaveText(JOINED_SAID);
       expect(ownersAt(store), "the store lists one owner").toEqual([enrolled]);
 
       // Recover elsewhere opens the newest line, which is this one, under the one data key.

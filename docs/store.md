@@ -42,7 +42,6 @@ names where.
 - **The keychain path on a device** (D298): whether Safari and a Home Screen
   app offer to save the secret from the form, and fill it at recovery, is a
   device reading still owed.
-- **Production** (`dai-store`) is configured and not deployed.
 
 ## Trust
 
@@ -340,9 +339,12 @@ signatures) and `client.ts` (the requests), shared by the host and the store.
   `dai-store-dev` for the envelopes. A preview of the opener with no
   `DAI_STORE_BASE` points at it, and CI's node job runs the store suite
   against it with the test owners the suite makes. Tests write here.
-- **`dai-store`**, `--env production`, with its own bucket: deployed by
-  hand once a commit has run green against dev, and never written by a test
-  or a job. [deploy.md](deploy.md) has the commands.
+- **`dai-store`**, `--env production`, with its own bucket
+  (`dai-store-owners`): deployed by hand once a commit has run green against
+  dev, and never written by a test or a job. [deploy.md](deploy.md) has the
+  commands. First deployed 1 November, at
+  `https://dai-store.opendai.workers.dev` (version `cf9614e0`), and named
+  in the production opener's `DAI_STORE_BASE` the same day.
 
 ## The local test store
 
