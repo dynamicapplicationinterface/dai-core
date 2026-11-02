@@ -381,11 +381,9 @@ async function restore(
       const kept = await keptInKeyStore<KeptRecord>(keptKey(documentUuid));
       let title: string | null;
       let heldHere: string | null;
-      let snapshot: boolean;
       try {
         title = kept?.owner === asked.owner ? await here.held(documentUuid) : null;
         heldHere = kept && title !== null ? title : await here.held(documentUuid);
-        snapshot = heldHere !== null && (await here.snapshot(documentUuid));
       } catch (error: unknown) {
         await notRead(documentUuid, error);
         continue;
@@ -413,6 +411,16 @@ async function restore(
         continue;
       }
       // A snapshot, unchanged since it arrived: restored over below, no line kept for it (D303).
+      // Read only here, where it decides (2b2e-L1): a document here already, or another owner's, is decided without it.
+      let snapshot = false;
+      if (heldHere !== null) {
+        try {
+          snapshot = await here.snapshot(documentUuid);
+        } catch (error: unknown) {
+          await notRead(documentUuid, error);
+          continue;
+        }
+      }
       if (heldHere !== null && !snapshot) {
         const heads = await headsOf(base, author, asked.owner, documentUuid);
         if (isUnavailable(heads)) {

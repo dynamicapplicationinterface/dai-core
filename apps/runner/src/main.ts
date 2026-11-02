@@ -4543,9 +4543,9 @@ function unreadSaid(unread: readonly Unread[] | undefined): string {
   if (!unread || unread.length === 0) return "";
   const titles = unread.flatMap((one) => (one.title !== null ? [one.title] : []));
   const unnamed = unread.length - titles.length;
-  const others = unnamed === 0 ? [] : unnamed === 1 ? [titles.length > 0 ? "another document" : "a document"] : [titles.length > 0 ? "other documents" : "some documents"];
-  const who = namesOf([...titles, ...others]);
-  return `${who.charAt(0).toUpperCase()}${who.slice(1)} could not be reached: the library could not be read. `;
+  // The unnamed words open the sentence only when nothing is named, and only they are capitalized: a title is said as it is written (2b2e-L3).
+  const others = unnamed === 0 ? [] : unnamed === 1 ? [titles.length > 0 ? "another document" : "A document"] : [titles.length > 0 ? "other documents" : "Some documents"];
+  return `${namesOf([...titles, ...others])} could not be reached: the library could not be read. `;
 }
 /**
  * What a recovery restored, by name, for the chooser and the recovery sheet
