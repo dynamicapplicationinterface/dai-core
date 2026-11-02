@@ -87,6 +87,13 @@ export async function watchDocumentTop(page: Page): Promise<() => Promise<{ from
  * The counts are read in that same read, so a save asked while the wait ran
  * is waited for too; it ends with the saves asked equal to those written and
  * to the count it settled on.
+ *
+ * Not waited for: two appends that start from reads of their own, outside
+ * what this reads until the append is running: `keepHeldRevisions` (at every
+ * load, and after an enroll, a join or a recovery) and `keepAgain` when the
+ * browser comes back online (2b2dr6f-L1). A caller that enrolls, joins,
+ * recovers or goes online and then wipes at once waits for the kept record
+ * first (`waitSettledKept`).
  */
 export async function pageWritesLanded(page: Page): Promise<void> {
   await page.evaluate(() => (window as Any).__runner.loaded && (window as Any).__runner.flush());
