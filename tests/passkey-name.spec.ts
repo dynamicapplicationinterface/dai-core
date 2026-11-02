@@ -46,7 +46,7 @@ test.describe("the passkey's name and the saved password's (Build 2b-2d item 4)"
       const { credentials } = await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id });
       // The user name carries the day it was made (D311; the day itself is pinned in the test below), the display name the site.
       expect(credentials.map((credential) => credential.userDisplayName)).toEqual([NAME]);
-      expect(credentials.map((credential) => credential.userName)).toEqual([expect.stringMatching(/^Your documents · localhost · \d{4}-\d{2}-\d{2}$/)]);
+      expect(credentials.map((credential) => credential.userName)).toEqual([expect.stringMatching(/^Your documents · \d{4}-\d{2}-\d{2} · localhost$/)]);
       await expect.poll(() => handed.length, { timeout: 30_000 }).toBe(1);
       expect(handed[0]).toMatchObject({ by: "credential management", name: NAME, account: `${NAME} · ${owner}`, owner });
 
@@ -71,8 +71,10 @@ test.describe("the passkey's name and the saved password's (Build 2b-2d item 4)"
   /*
    * D311, ruled 1 November: two passkeys for one site looked the same in the
    * browser's picker and in Settings. A new passkey's user name carries the
-   * site and the day it was made, "Your documents · <hostname> ·
-   * <YYYY-MM-DD>", its display name the site alone; the saved password's
+   * day it was made and the site, "Your documents · <YYYY-MM-DD> ·
+   * <hostname>" (the day before the hostname, so an authenticator that cuts
+   * the name at 64 bytes keeps it, 2b2eb-L1), its display name the site
+   * alone; the saved password's
    * account is unchanged, and the owner is still read from its end. The day
    * is the one the page's clock is pinned to, never read again later.
    */
@@ -92,7 +94,7 @@ test.describe("the passkey's name and the saved password's (Build 2b-2d item 4)"
       await page.clock.setFixedTime(new Date(2026, 2, 4, 12, 0, 0));
       const owner = await enrollHere(page);
       const { credentials } = await provider.cdp.send("WebAuthn.getCredentials", { authenticatorId: provider.id });
-      expect(credentials.map((credential) => [credential.userName, credential.userDisplayName])).toEqual([[`${NAME} · 2026-03-04`, NAME]]);
+      expect(credentials.map((credential) => [credential.userName, credential.userDisplayName])).toEqual([["Your documents · 2026-03-04 · localhost", NAME]]);
       // The user handle is the owner id, as before: nothing on the wire changes.
       expect(credentials.map((credential) => Buffer.from(credential.userHandle ?? "", "base64").toString("base64url"))).toEqual([owner]);
       await expect.poll(() => handed.length, { timeout: 30_000 }).toBe(1);

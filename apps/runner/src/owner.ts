@@ -77,17 +77,21 @@ export interface DataKeyRecord {
  */
 export const passkeyName = (): string => `Your documents · ${location.hostname}`;
 /**
- * A new passkey's user name: the name and the day it was made, in the
- * person's own calendar, "Your documents · <hostname> · <YYYY-MM-DD>" (D311,
+ * A new passkey's user name: the day it was made, in the person's own
+ * calendar, and the site, "Your documents · <YYYY-MM-DD> · <hostname>" (D311,
  * ruled 1 November). Two passkeys for one site looked the same in the
- * browser's picker and in Settings; the day tells them apart. Its display
- * name stays `passkeyName`. Only the names change: the user handle is the
- * owner id, as before, and nothing on the wire changes (R-P). A passkey made
- * before keeps the name it was made with.
+ * browser's picker and in Settings; the day tells them apart. The day comes
+ * before the hostname (2b2eb-L1): WebAuthn lets an authenticator cut the user
+ * name to 64 bytes, and "Your documents · <day>" is the first 28 bytes (the
+ * middle dot is two in UTF-8), so the day survives on any host; a cut takes
+ * only the end of a hostname over 32 bytes. Its display name stays
+ * `passkeyName`. Only the names
+ * change: the user handle is the owner id, as before, and nothing on the wire
+ * changes (R-P). A passkey made before keeps the name it was made with.
  */
 const passkeyUserName = (made: Date = new Date()): string => {
   const day = `${made.getFullYear()}-${String(made.getMonth() + 1).padStart(2, "0")}-${String(made.getDate()).padStart(2, "0")}`;
-  return `${passkeyName()} · ${day}`;
+  return `Your documents · ${day} · ${location.hostname}`;
 };
 /**
  * The saved password's account: the same name, and the owner id last, so each
