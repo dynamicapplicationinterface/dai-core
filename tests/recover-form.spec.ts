@@ -488,4 +488,51 @@ test.describe("the saved password after Remove from this device, on a phone (Bui
       await context.close();
     }
   });
+
+  /*
+   * D310, ruled 1 November: the clause about a cleared browser is said only
+   * when no owner was signed in here as Recover was asked, as a wipe leaves
+   * none. After "Remove from this device" the owner is still signed in, the
+   * browser was not cleared, and the sentence says what it leaves out: changes
+   * not yet kept. Decided from the signed-in state when Recover was asked.
+   */
+  test("the restored sentence names a cleared browser only when nobody was signed in as Recover was asked; after Remove it says changes not yet kept are not included", async ({ browser }) => {
+    const kept = await keptElsewhere();
+    const context = await browser.newContext({ viewport: PHONE });
+    try {
+      await pointAtStore(context, store.base);
+      const page = await context.newPage();
+      await page.goto(RUNNER_URL);
+      const row = page.locator(`#recovered button[data-document="${kept.uuid}"]`);
+      const opened = (): Promise<string | null> => page.evaluate(() => (window as Any).__runner.loaded?.manifest?.documentUuid ?? null);
+      const recoverWithThePassword = async (): Promise<void> => {
+        await page.locator("#recover-owner").fill(kept.account);
+        await page.locator("#recover-secret").fill(kept.secret);
+        await page.locator("#recover-with-password").click();
+        await expect(page.locator("#report")).toHaveText("Recovered Notes.", { timeout: 30_000 });
+      };
+
+      // A context that holds nothing, nobody signed in, as after a wipe: the cleared browser's clause.
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "nobody signed in").toBeNull();
+      await recoverWithThePassword();
+      await row.click();
+      await expect.poll(opened, { timeout: 30_000 }).toBe(kept.uuid);
+      await expect(page.locator("#doc-note")).toHaveText(/^Restored the copy kept at [^.]+\. Changes saved only in the cleared browser are not included\.$/, { timeout: 30_000 });
+      await expect.poll(async () => (await storedRow(page, kept.uuid, "notes", "body = ?", ["kept-copy"])).length, { timeout: 30_000 }).toBe(1);
+
+      // Remove from this device, the owner still signed in; Recover again, and open it.
+      page.once("dialog", (dialog) => void dialog.accept());
+      await page.click("#more");
+      await page.click("#remove");
+      await expect(page.locator("body")).not.toHaveClass(/loaded/, { timeout: 30_000 });
+      expect(await page.evaluate(() => (window as Any).__runner.owner.current()), "the owner still signed in").toBe(kept.owner);
+      await recoverWithThePassword();
+      await row.click();
+      await expect.poll(opened, { timeout: 30_000 }).toBe(kept.uuid);
+      await expect(page.locator("#doc-note")).toHaveText(/^Restored the copy kept at [^.]+\. Changes not yet kept are not included\.$/, { timeout: 30_000 });
+      await expect(appIn(page).locator("#note")).toHaveValue("kept-copy", { timeout: 60_000 });
+    } finally {
+      await context.close();
+    }
+  });
 });

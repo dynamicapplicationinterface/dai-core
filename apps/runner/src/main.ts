@@ -3296,7 +3296,7 @@ window.addEventListener("message", (event) => {
       restoredNotes.delete(shown.manifest.documentUuid);
       const before = recoveredSaid?.documentUuid === shown.manifest.documentUuid ? recoveredSaid.sentence : "";
       recoveredSaid = undefined;
-      tellOverDocument(`${before ? `${before} ` : ""}${restoredSentence(restored.at, restored.over)}`);
+      tellOverDocument(`${before ? `${before} ` : ""}${restoredSentence(restored.at, restored.over, restored.signedIn)}`);
     }
     frameSessionLanes = data.payload?.sessionLanes === true;
 
@@ -4316,8 +4316,8 @@ const recoveryHere: Here = {
   snapshot: async (documentUuid) => (await libraryRecord(documentUuid))?.arrivedSnapshot === true,
 };
 const recoveredList = document.getElementById("recovered") as HTMLUListElement | null;
-/** Documents recovered on this page, not yet opened: the store's time for each, and whether it was restored over a snapshot held here. */
-const restoredNotes = new Map<string, { at: string; over: boolean }>();
+/** Documents recovered on this page, not yet opened: the store's time for each, whether it was restored over a snapshot held here, and whether an owner was signed in here as Recover was asked. */
+const restoredNotes = new Map<string, { at: string; over: boolean; signedIn: boolean }>();
 const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 /*
  * The restored revision, in words (R-Z). The clause about the cleared browser
@@ -4325,11 +4325,22 @@ const shortTime = (iso: string): string => new Date(iso).toLocaleTimeString([], 
  * over a snapshot that arrived from the page's own address after its browser
  * was cleared (2b2dr4-L1). Any other snapshot restored over was this
  * browser's own arrival, not a clearing, so its sentence stops at the time
- * (2b2dr3-L1).
+ * (2b2dr3-L1). And a wipe leaves no owner: with an owner signed in here as
+ * Recover was asked, as after "Remove from this device", nothing was cleared,
+ * and what the restored copy leaves out is what was not yet kept (D310, ruled
+ * 1 November). Decided from the signed-in state when Recover was asked, never
+ * from the library.
  */
-function restoredSentence(at: string, over = false): string {
-  return `Restored the copy kept at ${shortTime(at)}.${over ? "" : " Changes saved only in the cleared browser are not included."}`;
+function restoredSentence(at: string, over = false, signedInAtAsk = false): string {
+  const leftOut = over ? "" : signedInAtAsk ? " Changes not yet kept are not included." : " Changes saved only in the cleared browser are not included.";
+  return `Restored the copy kept at ${shortTime(at)}.${leftOut}`;
 }
+/**
+ * Whether an owner is signed in here, read as Recover is asked: started in
+ * the tap, after the ceremony has begun, so it is queued before anything the
+ * recovery writes and reads the state the person asked from (D310).
+ */
+const signedInNow = (): Promise<boolean> => currentOwner().then((owner) => owner !== null, () => false);
 const recoverKeychain = document.getElementById("recover-keychain") as HTMLFormElement | null;
 const recoverOwnerField = document.getElementById("recover-owner") as HTMLInputElement | null;
 const recoverSecretField = document.getElementById("recover-secret") as HTMLInputElement | null;
@@ -4448,7 +4459,7 @@ type AskedFrom = "chooser" | "menu";
  * offered, and nothing is said. Otherwise the sheet closes and the answer is
  * said over the document.
  */
-function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): void {
+function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, signedInAtAsk: boolean): void {
   finishRunning(false);
   if ("cancelled" in outcome) {
     console.info(`dai: finish recovering: no ${path === "passkey" ? "passkey answered" : "saved password filled in"} (${outcome.cancelled}); the recovery sheet stays, both ways offered`);
@@ -4457,7 +4468,7 @@ function finishAnswered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS): 
   }
   closeFinishSheet();
   // Recover from the menu is a recovery, said in the chooser's words; finishing one is said as finishing.
-  showRecovered(outcome, path, finishSheetFor === "recover" ? "chooser" : "menu");
+  showRecovered(outcome, path, finishSheetFor === "recover" ? "chooser" : "menu", signedInAtAsk);
 }
 /**
  * A recovery, answered whatever happens inside it (R-Z sentence 5, "If
@@ -4486,14 +4497,15 @@ function answeredAlways(recovering: Promise<Recovered>, path: keyof typeof RECOV
 function recoverWithPasskey(from: AskedFrom): void {
   // The ceremony first, inside the tap.
   const recovering = answeredAlways(recover(storeBase(), recoveryHere), "passkey");
+  const signedInAtAsk = signedInNow();
   if (from === "menu") {
     // What the note row says stays until the answer replaces it: a ceremony not used changes nothing on screen.
     finishRunning(true);
-    void recovering.then((outcome) => finishAnswered(outcome, "passkey"));
+    void Promise.all([recovering, signedInAtAsk]).then(([outcome, signedIn]) => finishAnswered(outcome, "passkey", signedIn));
     return;
   }
   sayWhereAsked(RECOVERING);
-  void recovering.then((outcome) => showRecovered(outcome, "passkey", from));
+  void Promise.all([recovering, signedInAtAsk]).then(([outcome, signedIn]) => showRecovered(outcome, "passkey", from, signedIn));
 }
 recoverButton?.addEventListener("click", () => recoverWithPasskey("chooser"));
 finishRecovering?.addEventListener("click", () => openFinishSheet("finish"));
@@ -4506,14 +4518,15 @@ finishPasskey?.addEventListener("click", () => recoverWithPasskey("menu"));
  * the tap.
  */
 function recoverWithPassword(owner: string, secret: string, from: AskedFrom): void {
+  const signedInAtAsk = signedInNow();
   const recovering = answeredAlways(recoverWithKeychain(storeBase(), owner, secret, recoveryHere), "keychain");
   if (from === "menu") {
     finishRunning(true);
-    void recovering.then((outcome) => finishAnswered(outcome, "keychain"));
+    void Promise.all([recovering, signedInAtAsk]).then(([outcome, signedIn]) => finishAnswered(outcome, "keychain", signedIn));
     return;
   }
   sayWhereAsked(RECOVERING);
-  void recovering.then((outcome) => showRecovered(outcome, "keychain", from));
+  void Promise.all([recovering, signedInAtAsk]).then(([outcome, signedIn]) => showRecovered(outcome, "keychain", from, signedIn));
 }
 /*
  * The chooser's form on a phone (Build 2b-2d item 3). The device reading of
@@ -4687,7 +4700,7 @@ function libraryRecord(documentUuid: string): Promise<LibraryItem | null> {
     );
   });
 }
-function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom): void {
+function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, from: AskedFrom, signedInAtAsk: boolean): void {
   if (path === "keychain") {
     /*
      * Answered, whatever the outcome: nothing left in the password field to
@@ -4739,7 +4752,7 @@ function showRecovered(outcome: Recovered, path: keyof typeof RECOVERY_WORDS, fr
       }
       // Held here and kept as a line: no sentence about where it came from.
       // Restored over a snapshot from the page's own address: a cleared browser, so the whole sentence (2b2dr4-L1).
-      if (!one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true && !arrivedFromOwnAddress.has(one.documentUuid) });
+      if (!one.joined) restoredNotes.set(one.documentUuid, { at: one.at, over: one.over === true && !arrivedFromOwnAddress.has(one.documentUuid), signedIn: signedInAtAsk });
       if (open) open.textContent = `${one.title} · kept ${shortTime(one.at)}`;
     }
     if (recoveredList) recoveredList.hidden = recoveredList.childElementCount === 0;
