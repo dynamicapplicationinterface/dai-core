@@ -4104,14 +4104,16 @@ const NOT_JOINED = {
  * The passkey the person already had signed them in here (D312, ruled 1
  * November; as ruled on 2b2eb-H1): a ceremony they asked for answers at once,
  * on screen, in its own answer and never deferred. The one note row says this
- * sentence as the join answers, which claims no "Kept": the pill alone says
- * that, from the store's receipt (R-Z sentence 2), and it is up from the join,
+ * sentence as the join answers, which claims no "Kept": "will be kept" is a
+ * promise about what follows, not a status (ruled on O1 of the review of 5b:
+ * a document not written here is kept only from its first change). The pill
+ * alone says "Kept", from the store's receipt (R-Z sentence 2), and it is up from the join,
  * "Saved in this browser" until the receipt lands. A sentence waiting for a
  * receipt came at the person's next save where nothing was adopted, and moved
  * the document under their typing (the class of 2b2fr-M2). The row goes when
  * dismissed or at the next mount, never at a save.
  */
-const JOINED_SAID = "Using the passkey you already had. Documents here are kept under it from now on.";
+const JOINED_SAID = "Using the passkey you already had. Documents here will be kept under it.";
 document.getElementById("keep-existing")?.addEventListener("click", () => {
   closeKeepWays("keep");
   // The ceremony first, inside the tap: recovery's, for the owner the passkey names.

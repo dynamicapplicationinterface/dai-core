@@ -68,6 +68,8 @@ export interface DataKeyRecord {
   atStore?: boolean;
 }
 
+/** The words every name of the passkey and the saved password starts with: one string, so the names cannot drift apart (O3 of the review of 5b). */
+const PASSKEY_WORDS = "Your documents";
 /**
  * The name the passkey and the saved password carry (Build 2b-2d item 4): the
  * site, and that it is the one for all the person's documents. Two passkeys
@@ -75,7 +77,7 @@ export interface DataKeyRecord {
  * wanted (the device reading of 30 October). Passkeys made before keep the
  * name they were made with.
  */
-export const passkeyName = (): string => `Your documents · ${location.hostname}`;
+export const passkeyName = (): string => `${PASSKEY_WORDS} · ${location.hostname}`;
 /**
  * A new passkey's user name: the day it was made, in the person's own
  * calendar, and the site, "Your documents · <YYYY-MM-DD> · <hostname>" (D311,
@@ -91,7 +93,7 @@ export const passkeyName = (): string => `Your documents · ${location.hostname}
  */
 const passkeyUserName = (made: Date = new Date()): string => {
   const day = `${made.getFullYear()}-${String(made.getMonth() + 1).padStart(2, "0")}-${String(made.getDate()).padStart(2, "0")}`;
-  return `Your documents · ${day} · ${location.hostname}`;
+  return `${PASSKEY_WORDS} · ${day} · ${location.hostname}`;
 };
 /**
  * The saved password's account: the same name, and the owner id last, so each

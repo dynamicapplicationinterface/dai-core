@@ -32,7 +32,7 @@ type Any = any;
 
 const offer = (page: Page) => page.locator("#save-state[data-offer]");
 /** Said in the note row as the join with the passkey the person already had answers (D312, as ruled on 2b2eb-H1): no claim of "Kept", which the pill alone says. */
-const JOINED_SAID = "Using the passkey you already had. Documents here are kept under it from now on.";
+const JOINED_SAID = "Using the passkey you already had. Documents here will be kept under it.";
 /** The owners the store holds: each owner object with an owner record. */
 const ownersAt = (store: ServedStore): string[] =>
   store.values().filter((value) => value.object.startsWith("o:") && value.key === "owner").map((value) => value.object.slice(2));
