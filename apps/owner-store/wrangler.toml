@@ -1,0 +1,48 @@
+# The owner's store (docs/store.md) — a Cloudflare Worker with one Durable
+# Object per owner and one per working document, envelopes in R2.
+#
+# Two deployments, under the account that runs dai-relay:
+#
+# - **dai-store-dev**, this file's top level: what a preview of the opener
+#   points at, and what CI's store suite runs against with test owners
+#   (tests/owner-store.spec.ts, "the deployed store"). `npx wrangler deploy`
+#   from this directory deploys it, and nothing else.
+# - **dai-store**, `[env.production]`: promoted by hand, `npx wrangler deploy
+#   --env production`, after the same commit has run on dev. No test, and no
+#   CI job, ever writes to it.
+#
+# Each has its own bucket, so nothing a test appends is in production's.
+
+name = "dai-store-dev"
+main = "src/worker.ts"
+compatibility_date = "2026-09-01"
+
+# One class: the owner's object and each document's are the same code, named
+# `o:<owner>` and `d:<owner>:<document>`.
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "StoreDO"
+
+# SQLite-backed, the kind the free plan creates. The object holds only the
+# chain: the owner's record, the authors, the library, the wrapped data key,
+# each envelope's parents, author, time and R2 key, and the heads.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["StoreDO"]
+
+# The envelopes' bytes, as the relay keeps its sealed batches in R2: an
+# envelope carries a ~1 MB container, past what one Durable Object value holds.
+[[r2_buckets]]
+binding = "ENVELOPES"
+bucket_name = "dai-store-dev"
+
+[env.production]
+name = "dai-store"
+
+[[env.production.durable_objects.bindings]]
+name = "STORE"
+class_name = "StoreDO"
+
+[[env.production.r2_buckets]]
+binding = "ENVELOPES"
+bucket_name = "dai-store-owners"

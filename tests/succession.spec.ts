@@ -220,4 +220,37 @@ test.describe("a document that replaces another", () => {
     await expect(inside(page).locator("#count")).toHaveText("1", { timeout: 60_000 });
     await expect(inside(page).locator("#first")).toHaveText("keep me");
   });
+
+  /*
+   * D303 (the review of Build 2b-2dr3, 2b2dr3-L2): a successor that adopts its
+   * predecessor's rows holds the person's work, carried across, and is not a
+   * snapshot: Recover must never restore over it.
+   */
+  test("a successor that adopts its predecessor's rows is held, not marked a snapshot", async ({ page }) => {
+    test.slow();
+    const key = await pem();
+    const v1 = await build({ key, schema: V1_SCHEMA });
+    await page.goto(RUNNER_URL);
+    await open(page, v1);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await inside(page).locator("#body").fill("carried");
+    await inside(page).locator("#add").click();
+    await expect(inside(page).locator("#count")).toHaveText("1", { timeout: 30_000 });
+    await settled(page);
+    await close(page);
+
+    const v2 = await build({ key, schema: V1_SCHEMA, upgradeOf: v1.path });
+    await page.setInputFiles("#file", v2.file);
+    await expect(page.locator("#card-succession")).toHaveAttribute("data-state", "adopting", { timeout: 60_000 });
+    await page.locator("#card-open").click();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(inside(page).locator("#first")).toHaveText("carried", { timeout: 60_000 });
+    type Held = { documentUuid: string; arrivedSnapshot?: boolean };
+    const record = await page.evaluate(async (id) => {
+      const runner = (window as unknown as { __runner: { listLibrary(): Promise<Held[]> } }).__runner;
+      return (await runner.listLibrary()).find((item) => item.documentUuid === id);
+    }, v2.uuid);
+    expect(record, "the successor is held").toBeTruthy();
+    expect(record?.arrivedSnapshot ?? null, "not a snapshot").toBeNull();
+  });
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type BrowserContext, type CDPSession, type FrameLocator, type Page } from "@playwright/test";
@@ -129,6 +130,38 @@ export async function storedHolds(page: Page, uuid: string, text: string): Promi
   );
 }
 
+/**
+ * The rows of `table` in the stored database that match `where`, read in Node
+ * with SQLite: what a reopen will mount.
+ *
+ * `storedHolds` is not enough for a wait a reload depends on. It answers true
+ * for the text anywhere in the stored file, the stored schema included, and
+ * the schema holds "first", "one", "C", "kept" and "ab" from the first save
+ * ("When *this* copy first saw that replica", in `_dai_replicas`), so a wait
+ * on one of them passes with the table empty. The D195 re-key test did, and its
+ * reload then mounted a table with no row (2b2dr5d-M1, 2b2dr5e-M1; D306).
+ * This reads the row itself.
+ */
+export async function storedRow(page: Page, uuid: string, table: string, where: string, params: (string | number)[] = []): Promise<unknown[]> {
+  const bytes = (await page.evaluate(async (id) => [...(((await (window as Any).__runner.loadStored(id)) as Uint8Array | null) ?? [])], uuid)) as number[];
+  if (bytes.length === 0) return [];
+  const { DatabaseSync } = await import("node:sqlite");
+  // A directory of its own for each read, removed after it: a poll reads dozens of times.
+  const directory = mkdtempSync(join(tmpdir(), "dai-stored-row-"));
+  try {
+    const path = join(directory, "d.sqlite");
+    writeFileSync(path, Buffer.from(bytes));
+    const db = new DatabaseSync(path);
+    try {
+      return db.prepare(`SELECT * FROM "${table.replace(/"/g, '""')}" WHERE ${where}`).all(...params);
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 /** SHA-256 of the stored database, hex: whether a step rewrote it. */
 export async function storedDigest(page: Page, uuid: string): Promise<string> {
   return page.evaluate(async (id) => {
@@ -194,10 +227,23 @@ export async function passkeysHeld(provider: { cdp: CDPSession; id: string }): P
   return credentials.length;
 }
 
-/** Opens the menu and taps "Keep beyond this browser". */
+/**
+ * Points every page of `context` at the owner's store at `base`, before the
+ * opener loads (`window.__daiOwnerStore`), so the address holds across the
+ * reloads a test drives, as a deploy's does. An opener offers to keep beyond
+ * this browser only when it has a store.
+ */
+export async function pointAtStore(context: BrowserContext, base: string): Promise<void> {
+  await context.addInitScript((address) => {
+    (window as Any).__daiOwnerStore = address;
+  }, base);
+}
+
+/** Opens the menu, taps "Keep beyond this browser", and takes the way that makes a new passkey (R-Z, amended 31 October). */
 export async function keepFromMenu(page: Page): Promise<void> {
   await page.locator("#more").click();
   await page.locator("#keep-beyond").click();
+  await page.locator("#keep-new").click();
 }
 
 /** The owner current in this browser context, as the opener kept it, or null. */

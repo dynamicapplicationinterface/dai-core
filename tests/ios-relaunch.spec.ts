@@ -8,6 +8,23 @@ import { compileDirectory } from "../src/compile.js";
 import { HINT_KEY } from "../src/link.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/**
+ * The document this tab is at its own address for: the address's hint, or,
+ * once the hint is off the address bar, the mark in the tab's history state
+ * (D303, ruled on the review of Build 2b-2dr). Asked while the page
+ * navigates (a relaunch), it answers null, as for a page not there yet, and
+ * the poll asks again.
+ */
+const ownAddressOf = (page: Page): Promise<string | null> =>
+  page
+    .evaluate((key) => {
+      const hinted = new RegExp(`[#&]${key}=([^&]+)`).exec(location.hash);
+      if (hinted) return hinted[1]!;
+      const state = history.state as { daiOwnAddress?: unknown } | null;
+      return typeof state?.daiOwnAddress === "string" ? state.daiOwnAddress : null;
+    }, HINT_KEY)
+    .catch(() => null);
+
 const RUNNER_URL = "http://localhost:5175/";
 /** Small enough for an inline link, and declares no colour. */
 const FIXTURE = resolve(repo, "tests", "fixture", "fixture.dai.html");
@@ -85,10 +102,7 @@ test.describe("opening a copy already on an iPhone", () => {
     await page.setInputFiles("#file", file);
     await page.locator("#card-open:visible, body.loaded").first().waitFor({ timeout: 60_000 });
     if (await page.locator("#card-open").isVisible()) await page.locator("#card-open").click();
-    await expect(page, "the first open lands at the document's address").toHaveURL(
-      new RegExp(`#.*${HINT_KEY}=${uuid}`),
-      { timeout: 60_000 },
-    );
+    await expect.poll(() => ownAddressOf(page), { message: "the first open lands at the document's address", timeout: 60_000 }).toBe(uuid);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await expect(page.locator("#sheet-arrival"), "the settled load, the one after the reload").toContainText(
       "iOS reload: taken on the load before this one",
@@ -103,10 +117,7 @@ test.describe("opening a copy already on an iPhone", () => {
     // Counted from before the visit: the visit itself is one load, the relaunch one more.
     loads = 0;
     await page.goto(RUNNER_URL);
-    await expect(page, "the resumed copy is moved to its own address").toHaveURL(
-      new RegExp(`#.*${HINT_KEY}=${uuid}`),
-      { timeout: 60_000 },
-    );
+    await expect.poll(() => ownAddressOf(page), { message: "the resumed copy is moved to its own address", timeout: 60_000 }).toBe(uuid);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await expect(page.locator("#launch")).toBeHidden({ timeout: 60_000 });
 
@@ -129,7 +140,8 @@ test.describe("opening a copy already on an iPhone", () => {
      */
     const address = new URL(page.url());
     expect(address.searchParams.has("relaunched"), "nothing of ours left in a person's address").toBe(false);
-    expect(address.hash, "and the document is still named in the fragment").toContain(`${HINT_KEY}=${uuid}`);
+    expect(address.hash, "the hint is off the address bar").not.toContain(`${HINT_KEY}=`);
+    expect(await ownAddressOf(page), "and the tab is still this document's own address").toBe(uuid);
     await page.waitForTimeout(3_000);
     expect(loads, "the visit and the resume's relaunch: two loads, not three").toBe(2);
 
@@ -174,7 +186,8 @@ test.describe("opening a copy already on an iPhone", () => {
     expect([...landed.searchParams.keys()], "and nothing left in the query: the mark is read and taken off").toEqual(
       [],
     );
-    expect(landed.hash, "the fragment is untouched — the document and its key are in it").toContain(`${HINT_KEY}=`);
+    expect(landed.hash, "the fragment is untouched — the document is in it").toMatch(/[#&]a=/);
+    expect(await ownAddressOf(page), "and the tab is that document's own address").not.toBeNull();
     await page.waitForTimeout(3_000);
     expect(heardAsLink, "the page's own fragment write is not a link arriving").toEqual([]);
     expect(loads, "the relaunch is exactly one load").toBe(1);
@@ -217,16 +230,14 @@ test.describe("opening a copy already on an iPhone", () => {
     await expect(page.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
       timeout: 60_000,
     });
-    expect(page.url()).toMatch(new RegExp(`[#&]${HINT_KEY}=${a.uuid}`));
+    expect(await ownAddressOf(page)).toBe(a.uuid);
 
     // A is put away, on this same page, and B is opened here.
     await page.evaluate(() => (window as unknown as { __runner: { eject(): void } }).__runner.eject());
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
     await open(b.file);
 
-    await expect(page, "B is moved to its own address").toHaveURL(new RegExp(`[#&]${HINT_KEY}=${b.uuid}`), {
-      timeout: 60_000,
-    });
+    await expect.poll(() => ownAddressOf(page), { message: "B is moved to its own address", timeout: 60_000 }).toBe(b.uuid);
     await expect(page.locator("#sheet-arrival"), "by a reload of its own").toContainText(
       "iOS reload: taken on the load before this one",
       { timeout: 60_000 },

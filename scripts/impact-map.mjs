@@ -170,6 +170,10 @@ const ALLOWED = [
   { path: "apps/desktop/scripts/stage-runtime.mjs", why: "stages the runtime into the Tauri host's build; runs only there" },
   // The relay's deploy configuration: applied by hand to Cloudflare.
   { path: "apps/relay/wrangler.toml", why: "deploy configuration for the relay, applied to Cloudflare by hand" },
+  {
+    path: "apps/owner-store/wrangler.toml",
+    why: "deploy configuration for the owner's store, applied to Cloudflare by hand; what it deploys is checked by CI's run of the store suite against dai-store-dev",
+  },
   { path: "apps/relay/README.md", why: "the relay's deploy instructions; prose" },
   { path: "apps/relay/scripts/vapid-keys.mjs", why: "makes and verifies the push key pair against the deployed config, by hand" },
   // Records of evaluation runs, kept as evidence, not code anything runs.

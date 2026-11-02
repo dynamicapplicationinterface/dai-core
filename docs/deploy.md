@@ -12,6 +12,19 @@ document:
 | the website | `www.dynamicapplicationinterface.io` | Vercel, promoted by hand |
 | **the opener** | `opendai.app` | Vercel, promoted by hand |
 | **the relay** | `dai-relay.opendai.workers.dev` | `wrangler`, from this machine |
+| the owner's store, dev | `dai-store-dev.opendai.workers.dev` | `wrangler`, from this machine |
+| the owner's store | `dai-store` (not yet deployed) | `wrangler --env production`, promoted by hand |
+
+**The owner's store has two deployments** (`apps/owner-store/wrangler.toml`).
+`dai-store-dev` is the top level: `npx wrangler deploy --env=""` from
+`apps/owner-store`. A preview of the opener points at it when no
+`DAI_STORE_BASE` is set, and CI's node job runs `tests/owner-store.spec.ts`
+against it with the test owners the suite makes, so tests write there.
+`dai-store` is `--env production`, with a bucket of its own
+(`dai-store-owners`, made with `npx wrangler r2 bucket create` before the first
+deploy): it is deployed by hand once a commit has run green against dev, and
+the production opener names it in `DAI_STORE_BASE`. No test and no job writes
+to it. Each keeps envelopes in R2 and only the chain in its Durable Objects.
 
 **The relay has no custom domain, and no DNS step.** It answers on its
 `workers.dev` address, which is where it has always been and where the opener

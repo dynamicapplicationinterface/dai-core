@@ -15,11 +15,14 @@ import {
   savesWritten,
   storedDigest,
   storedHolds,
+  storedRow,
   typeNote,
   uuidOf,
+  pointAtStore,
   waitMounted,
   withKeyStore,
 } from "./owner.js";
+import { serveOwnerStore, type ServedStore } from "./owner-store-memory.js";
 
 /**
  * Owner enrollment, Build 2b-1 (R-Z sentences 1, 3 and 8; R-D as amended).
@@ -82,6 +85,14 @@ const revisionOf = (page: Page, uuid: string): Promise<number> =>
 
 test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
   test.slow();
+  // An opener offers to keep beyond this browser only with a store to keep in: the tests that enroll have one.
+  let store: ServedStore;
+  test.beforeAll(async () => {
+    store = await serveOwnerStore();
+  });
+  test.afterAll(async () => {
+    await store?.close();
+  });
 
   test("with no owner and no connection, a document opens, is edited and saved in this browser, and its data key is minted unwrapped", async ({ browser, browserName }) => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
@@ -130,7 +141,8 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     let app = await openFile(page, file);
     const uuid = await uuidOf(page);
     await typeNote(app, "first");
-    await expect.poll(() => storedHolds(page, uuid, "first"), { timeout: 30_000 }).toBe(true);
+    // The reload below mounts the stored table: wait for the row in it, not for the text in the bytes (storedRow says why).
+    await expect.poll(async () => (await storedRow(page, uuid, "notes", "body = ?", ["first"])).length, { timeout: 30_000 }).toBe(1);
 
     const kept = await withKeyStore<{ extractable: boolean; exported: string }>(
       page,
@@ -162,11 +174,38 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
       return btoa(String.fromCharCode(...id)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     });
 
+    // A diagnostic, printed on failure only: the stored rows before the reload, then the opener's own lines (2b2dr5d-M1).
+    const said: string[] = [`stored rows before the reload: ${JSON.stringify(await storedRow(page, uuid, "notes", "1"))}`];
+    page.on("console", (message) => {
+      if (message.text().startsWith("dai:")) said.push(`${Date.now()} ${message.text().slice(0, 200)}`);
+    });
     // The opener resumes the document open last: that is this one, reopened.
     await page.goto(RUNNER_URL);
     app = await waitMounted(page, file);
+    said.push(
+      `${Date.now()} typing into ${JSON.stringify(await app.locator("#note").inputValue())}; the frame's rows ${await app
+        .locator("#note")
+        .evaluate(async () => JSON.stringify(await (window as Any).__db.query("SELECT id, body FROM notes")))
+        .catch((e: unknown) => String(e))}`,
+    );
     await typeNote(app, " second");
-    await expect.poll(() => storedHolds(page, uuid, "first second"), { timeout: 30_000 }).toBe(true);
+    said.push(`${Date.now()} typed`);
+    try {
+      await expect.poll(() => storedHolds(page, uuid, "first second"), { timeout: 30_000 }).toBe(true);
+    } catch (error) {
+      // On failure only: what the field shows and what was stored, beside the opener's own lines (2b2dr5d-M1).
+      const field = await app.locator("#note").inputValue({ timeout: 2_000 }).catch((e: unknown) => `(unread: ${String(e)})`);
+      const stored = await page
+        .evaluate(async (id) => {
+          const bytes: Uint8Array | null = await (window as Any).__runner.loadStored(id);
+          const text = bytes ? new TextDecoder("latin1").decode(bytes) : "";
+          return { first: text.includes("first"), second: text.includes("second"), firstSecond: text.includes("first second") };
+        }, uuid)
+        .catch((e: unknown) => String(e));
+      const rows = await storedRow(page, uuid, "notes", "1").catch((e: unknown) => String(e));
+      console.log(`D195 re-key failure: field ${JSON.stringify(field)}; stored ${JSON.stringify(stored)}; stored rows ${JSON.stringify(rows)}\n${said.join("\n")}`);
+      throw error;
+    }
     const author = await page.evaluate(() => (window as Any).__runner.authorId() as Promise<string>);
     expect(author).not.toBe(planted);
     const replaced = await withKeyStore<boolean>(page, 'return (await get("dai:person-key")).privateKey.extractable;');
@@ -174,11 +213,12 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     await context.close();
   });
 
-  test("enrolling afterwards wraps the data key the document already has, under an owner key both secrets open, and rewrites and uploads nothing", async ({ browser, browserName }) => {
+  test("enrolling afterwards wraps the data key the document already has, under an owner key both secrets open, rewrites nothing, and sends only what the owner's store is owed", async ({ browser, browserName }) => {
     test.skip(browserName !== "chromium", VIRTUAL_PASSKEY);
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await watchKeychain(page);
     await page.goto(RUNNER_URL);
@@ -208,7 +248,13 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
 
     expect(await passkeysHeld(provider)).toBe(1);
     expect({ digest: await storedDigest(page, uuid), revision: await revisionOf(page, uuid), saves: await savesWritten(page) }).toEqual(before);
-    expect(requests).toEqual([]);
+    // Since Build 2b-2d item 5, what enrolling adopted is kept at once: the owner registered, the wrapped key, the sealed revision, each to the owner's store and nowhere else.
+    await expect.poll(() => requests.length, { timeout: 30_000 }).toBe(3);
+    // The append acknowledged, and then a while with nothing sent: a fourth request, late, would be seen (2b2d-L1).
+    await expect.poll(() => page.evaluate((id) => (window as Any).__runner.keeping.kept(id), uuid), { timeout: 30_000 }).not.toBeNull();
+    await page.waitForTimeout(3_000);
+    const path = (request: string): string => request.replace(store.base, "").replace(/[A-Za-z0-9_-]{22}/, "<owner>").replace(uuid, "<document>");
+    expect(requests.map(path)).toEqual(["POST /o/<owner>/enroll", "PUT /d/<owner>/<document>/key", "POST /d/<owner>/<document>/append?as=head"]);
 
     const keychain = await page.evaluate(() => (window as Any).__keychain as string[]);
     expect(keychain).toHaveLength(1);
@@ -244,6 +290,7 @@ test.describe("owner enrollment (R-Z, Build 2b-1)", () => {
     const scratch = mkdtempSync(join(tmpdir(), "dai-owner-"));
     const file = await buildNotes(scratch, "Notes");
     const context = await browser.newContext();
+    await pointAtStore(context, store.base);
     const page = await context.newPage();
     await page.goto(RUNNER_URL);
     let provider = await addPasskeyProvider(context, page);
